@@ -9,7 +9,7 @@ import {
   renameSync,
   writeFileSync,
 } from 'node:fs';
-import { extname, relative, resolve, sep } from 'node:path';
+import { dirname, extname, relative, resolve, sep } from 'node:path';
 import { Project, SyntaxKind, type SourceFile } from 'ts-morph';
 import type { ProjectModel } from './discovery/discovery.js';
 import {
@@ -19,6 +19,7 @@ import {
 } from './discovery/discovery.js';
 import { config } from './config.js';
 import { assessGuardPacks, detectGuardPacks } from './analysis/packs.js';
+import { analyzeProjectImpact, type GuardImpactAnalysis } from './analysis/impact.js';
 import {
   guardAgentConfigSchema,
   guardConfigSchema,
@@ -130,6 +131,12 @@ export interface GuardFinding {
   fingerprint: string;
 }
 
+export interface GuardFileChange {
+  path: string;
+  status: 'added' | 'modified' | 'deleted' | 'renamed';
+  previousPath?: string;
+}
+
 export interface GuardContractIssue {
   contractId: string;
   field: 'scope' | 'reference' | 'definition';
@@ -156,6 +163,7 @@ export interface GuardReviewPacket {
   outcome: GuardOutcomeStatus;
   diffBase?: string;
   changedFiles: string[];
+  changes: GuardFileChange[];
   diff: string;
   truncated: boolean;
   redacted: boolean;
@@ -164,6 +172,7 @@ export interface GuardReviewPacket {
   contracts: GuardContract[];
   requirement?: string;
   deterministicFindings: GuardFinding[];
+  impact: GuardImpactAnalysis;
   reviewInstructions: string[];
 }
 
@@ -993,12 +1002,50 @@ function isSafeReviewFile(file: string): boolean {
 }
 
 function isSafeReviewPath(root: string, file: string): boolean {
+  const normalizedFile = file.replace(/\\/g, '/');
+  if (normalizedFile.startsWith('/') || normalizedFile.split('/').includes('..')) return false;
   try {
     const projectRoot = `${realpathSync(root)}${sep}`;
-    const target = realpathSync(resolve(root, file));
+    const targetPath = resolve(root, normalizedFile);
+    let target: string;
+    try {
+      target = realpathSync(targetPath);
+    } catch {
+      // Deleted files have no realpath. Validate their nearest existing parent instead.
+      target = realpathSync(dirname(targetPath));
+    }
     return target === projectRoot.slice(0, -1) || target.startsWith(projectRoot);
   } catch {
     return false;
+  }
+}
+
+function parseGitChanges(root: string, args: string[]): GuardFileChange[] {
+  try {
+    return execFileSync('git', ['diff', '--name-status', '-M', ...args], {
+      cwd: root,
+      stdio: 'pipe',
+    })
+      .toString()
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .flatMap((line): GuardFileChange[] => {
+        const [rawStatus, first, second] = line.split('\t');
+        if (!rawStatus || !first || !isSafeReviewFile(first) || !isSafeReviewPath(root, first)) {
+          return [];
+        }
+        const status = rawStatus[0];
+        if (status === 'R') {
+          if (!second || !isSafeReviewFile(second) || !isSafeReviewPath(root, second)) return [];
+          return [{ path: second, previousPath: first, status: 'renamed' as const }];
+        }
+        const mapped: GuardFileChange['status'] =
+          status === 'A' ? 'added' : status === 'D' ? 'deleted' : 'modified';
+        return [{ path: first, status: mapped }];
+      });
+  } catch {
+    return [];
   }
 }
 
@@ -1041,7 +1088,14 @@ function reviewDiff(
   root: string,
   maxChars: number,
   base?: string,
-): { diff: string; truncated: boolean; redacted: boolean; changedFiles: string[]; error?: string } {
+): {
+  diff: string;
+  truncated: boolean;
+  redacted: boolean;
+  changedFiles: string[];
+  changes: GuardFileChange[];
+  error?: string;
+} {
   try {
     if (base !== undefined && !isSafeGitRevision(base)) {
       return {
@@ -1049,6 +1103,7 @@ function reviewDiff(
         truncated: false,
         redacted: false,
         changedFiles: [],
+        changes: [],
         error: `Unsafe Git base ref rejected: ${base}`,
       };
     }
@@ -1137,6 +1192,16 @@ function reviewDiff(
       truncated: fullDiff.length > maxChars,
       redacted: redactedDiff.redacted || redactedUntracked,
       changedFiles: [...new Set([...trackedFilesForBase, ...trackedFiles, ...untracked])].sort(),
+      changes: [
+        ...parseGitChanges(root, base ? [`${base}...HEAD`] : ['HEAD']),
+        ...untracked.map((path): GuardFileChange => ({ path, status: 'added' })),
+      ].filter(
+        (change, index, all) =>
+          all.findIndex(
+            (candidate) =>
+              candidate.path === change.path && candidate.previousPath === change.previousPath,
+          ) === index,
+      ),
     };
   } catch (error) {
     const detail = error instanceof Error ? ` (${error.message})` : '';
@@ -1145,6 +1210,7 @@ function reviewDiff(
       truncated: false,
       redacted: false,
       changedFiles: [],
+      changes: [],
       error: base
         ? `Unable to resolve or read Git base ref: ${base}${detail}`
         : `Unable to read Git diff.${detail}`,
@@ -1202,11 +1268,13 @@ export function buildGuardReviewPacket(
     baseline,
     includeArchitectureInsights: true,
   });
+  const impact = analyzeProjectImpact(project, diff.changedFiles, guardConfig.contracts ?? []);
   return {
     version: 1,
     outcome: classifyGuardOutcome({ errors: diff.error ? 1 : 0, needsReview: !diff.error }),
     ...(base ? { diffBase: base } : {}),
     changedFiles: diff.changedFiles,
+    changes: diff.changes,
     diff: diff.diff,
     truncated: diff.truncated,
     redacted: diff.redacted,
@@ -1215,6 +1283,7 @@ export function buildGuardReviewPacket(
     contracts: guardConfig.contracts ?? [],
     ...(requirement ? { requirement } : {}),
     deterministicFindings: report.findings,
+    impact,
     reviewInstructions: [
       ...(requirement
         ? [

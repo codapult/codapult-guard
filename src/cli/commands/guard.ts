@@ -50,6 +50,7 @@ import {
 } from '../../adapters/agents/agent-integration.js';
 import { dim, fail, heading, info, success, warn } from '../ui.js';
 import { guardFindingsToSarif } from '../../core/output/sarif.js';
+import { analyzeProjectImpact } from '../../core/analysis/impact.js';
 
 function renderFindings(findings: ReturnType<typeof scanGuard>['findings']): void {
   for (const finding of findings) {
@@ -223,6 +224,33 @@ export function guardHistoryCommand(): void {
   }
 }
 
+export function guardImpactCommand(files: string[], options: { json?: boolean } = {}): void {
+  const root = getRoot();
+  if (files.length === 0) {
+    fail('Specify at least one project-relative file.');
+    process.exitCode = 1;
+    return;
+  }
+  const result = analyzeProjectImpact(
+    discoverProject(root),
+    files,
+    loadGuardConfig(root)?.contracts ?? [],
+  );
+  if (options.json) {
+    console.log(JSON.stringify({ status: 'ok', ...result }, null, 2));
+    return;
+  }
+  heading('Codapult Guard Impact');
+  info(`Requested: ${result.requestedFiles.join(', ')}`);
+  info(`Direct modules: ${result.directModules.join(', ') || 'none'}`);
+  info(`Dependencies: ${result.dependencies.join(', ') || 'none'}`);
+  info(`Transitive dependents: ${result.dependents.join(', ') || 'none'}`);
+  info(`Capabilities: ${result.capabilities.join(', ') || 'none'}`);
+  info(
+    `Relevant contracts: ${result.relevantContracts.map((contract) => contract.id).join(', ') || 'none'}`,
+  );
+}
+
 export function guardHistoryDiffCommand(
   from: string,
   to: string,
@@ -241,6 +269,11 @@ export function guardHistoryDiffCommand(
     info(`Removed files: ${diff.removedFiles.length}`);
     info(`Added dependencies: ${diff.addedDependencies.join(', ') || 'none'}`);
     info(`Removed dependencies: ${diff.removedDependencies.join(', ') || 'none'}`);
+    info(`Modules: +${diff.addedModules.length} / -${diff.removedModules.length}`);
+    info(
+      `Dependency edges: +${diff.addedDependencyEdges.length} / -${diff.removedDependencyEdges.length}`,
+    );
+    info(`Layer edges: +${diff.addedLayerEdges.length} / -${diff.removedLayerEdges.length}`);
     info(
       `Capabilities: +${diff.addedCapabilities.join(', ') || 'none'} / -${diff.removedCapabilities.join(', ') || 'none'}`,
     );

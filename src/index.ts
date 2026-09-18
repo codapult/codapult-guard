@@ -10,4 +10,5 @@ export * from './core/history/history.js';
 export * from './core/output/sarif.js';
 export * from './core/analysis/doctor.js';
 export * from './core/analysis/packs.js';
+export * from './core/analysis/impact.js';
 export * from './adapters/project-checks.js';

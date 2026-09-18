@@ -21,7 +21,31 @@ export interface GuardHistoryDiff {
   removedDependencies: string[];
   addedCapabilities: string[];
   removedCapabilities: string[];
+  addedModules: string[];
+  removedModules: string[];
+  addedDependencyEdges: string[];
+  removedDependencyEdges: string[];
+  addedLayerEdges: string[];
+  removedLayerEdges: string[];
   cycles: { from: number; to: number };
+}
+
+type SnapshotInsights = Partial<ProjectModel['insights']>;
+
+function snapshotInsights(model: ProjectModel): SnapshotInsights {
+  return (model as unknown as { insights?: SnapshotInsights }).insights ?? {};
+}
+
+function dependencyEdges(model: ProjectModel): string[] {
+  return (snapshotInsights(model).dependencyEdges ?? [])
+    .map((edge) => `${edge.from} -> ${edge.to}`)
+    .sort();
+}
+
+function layerEdges(model: ProjectModel): string[] {
+  return (snapshotInsights(model).layerEdges ?? [])
+    .map((edge) => `${edge.from} -> ${edge.to}`)
+    .sort();
 }
 
 function readSnapshot(root: string, revision: string): ProjectModel | undefined {
@@ -52,7 +76,7 @@ export function listGuardSnapshots(root: string): GuardSnapshotSummary[] {
               files: model.files.length,
               modules: model.modules.length,
               capabilities: Object.keys(model.capabilities).sort(),
-              cycles: model.insights.cycles.length,
+              cycles: snapshotInsights(model).cycles?.length ?? 0,
             },
           ]
         : [];
@@ -79,6 +103,8 @@ export function diffGuardSnapshots(
     ...after.project.dependencies,
     ...after.project.devDependencies,
   });
+  const beforeModules = before.modules.map((module) => module.path);
+  const afterModules = after.modules.map((module) => module.path);
   return {
     from,
     to,
@@ -94,6 +120,15 @@ export function diffGuardSnapshots(
       Object.keys(after.capabilities),
       Object.keys(before.capabilities),
     ),
-    cycles: { from: before.insights.cycles.length, to: after.insights.cycles.length },
+    addedModules: difference(beforeModules, afterModules),
+    removedModules: difference(afterModules, beforeModules),
+    addedDependencyEdges: difference(dependencyEdges(before), dependencyEdges(after)),
+    removedDependencyEdges: difference(dependencyEdges(after), dependencyEdges(before)),
+    addedLayerEdges: difference(layerEdges(before), layerEdges(after)),
+    removedLayerEdges: difference(layerEdges(after), layerEdges(before)),
+    cycles: {
+      from: snapshotInsights(before).cycles?.length ?? 0,
+      to: snapshotInsights(after).cycles?.length ?? 0,
+    },
   };
 }

@@ -477,17 +477,23 @@ function layerForPath(path: string): string {
   return 'other';
 }
 
-function buildModuleTargetGraph(modules: ModuleRecord[]): Map<string, string[]> {
+/** Build the internal module graph from AST resolution plus conservative fallback resolution.
+ *
+ * TypeScript resolution is authoritative when available, but it is not complete for every
+ * JavaScript/configuration shape. The fallback must be additive: using it only when there are
+ * no resolved imports silently drops unresolved edges from mixed projects.
+ */
+export function buildModuleTargetGraph(modules: ModuleRecord[]): Map<string, string[]> {
   const moduleSet = new Set(modules.map((candidate) => candidate.path));
   return new Map(
-    modules.map((module) => [
-      module.path,
-      module.resolvedImports.length > 0
-        ? module.resolvedImports
-        : module.imports
-            .map((importPath) => resolveInternalImport(module.path, importPath, moduleSet))
-            .filter((path): path is string => path !== undefined),
-    ]),
+    modules.map((module) => {
+      const targets = new Set(module.resolvedImports.filter((path) => moduleSet.has(path)));
+      for (const importPath of [...module.imports, ...module.dynamicImports]) {
+        const target = resolveInternalImport(module.path, importPath, moduleSet);
+        if (target) targets.add(target);
+      }
+      return [module.path, [...targets].sort()] as const;
+    }),
   );
 }
 

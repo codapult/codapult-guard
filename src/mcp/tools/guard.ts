@@ -26,6 +26,7 @@ import {
   validateGuardContracts,
   classifyGuardOutcome,
 } from '../../core/guard.js';
+import { analyzeProjectImpact } from '../../core/analysis/impact.js';
 import { z } from 'zod';
 import { runGuardVerification } from '../../core/verification/verify.js';
 
@@ -457,30 +458,10 @@ export function registerGuardTools(server: McpServer): void {
     ({ root: requestedRoot, files }) => {
       const root = getGuardRoot(requestedRoot);
       const model = discoverProject(root);
-      const changed = new Set(files);
-      const paths = model.insights.impactPaths.filter(
-        (impact) =>
-          impact.files.some((file) => changed.has(file)) || changed.has(impact.entrypoint),
-      );
-      const modules = model.modules.filter(
-        (module) =>
-          changed.has(module.path) || module.resolvedImports.some((file) => changed.has(file)),
-      );
-      const capabilities = Object.entries(model.capabilities)
-        .filter(([, signal]) => signal.files.some((file) => changed.has(file)))
-        .map(([id]) => id);
-      const contracts = (loadGuardConfig(root)?.contracts ?? []).filter((contract) =>
-        [...(contract.scope ?? []), ...(contract.entrypoints ?? [])].some((scope) =>
-          [...changed].some((file) => file === scope || file.startsWith(`${scope}/`)),
-        ),
-      );
+      const impact = analyzeProjectImpact(model, files, loadGuardConfig(root)?.contracts ?? []);
       return jsonToolResult({
         status: 'ok',
-        files,
-        affectedModules: modules.map((module) => module.path),
-        impactPaths: paths,
-        capabilities,
-        relevantContracts: contracts,
+        ...impact,
       });
     },
   );

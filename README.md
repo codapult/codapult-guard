@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/codapult/codapult-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/codapult/codapult-guard/actions/workflows/ci.yml)
 [![Fixtures](https://github.com/codapult/codapult-guard/actions/workflows/guard-fixtures.yml/badge.svg)](https://github.com/codapult/codapult-guard/actions/workflows/guard-fixtures.yml)
+[![npm](https://img.shields.io/npm/v/@codapult/guard?logo=npm)](https://www.npmjs.com/package/@codapult/guard)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js >=20.19](https://img.shields.io/badge/node-%3E%3D20.19-339933.svg?logo=node.js&logoColor=white)](package.json)
 [![TypeScript](https://img.shields.io/badge/TypeScript-first-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -11,8 +12,43 @@
 `@codapult/guard` is a local-first, model-agnostic architecture guard for JavaScript and
 TypeScript projects.
 
-It learns what already exists, records the project’s architectural memory, and protects future
-changes from introducing regressions.
+It learns what already exists, records the project’s architectural memory, and can protect future
+changes from introducing regressions covered by the project’s approved policy.
+
+### See the value in one change
+
+Suppose a SaaS project has an established boundary:
+
+```text
+Client → Server Action → Service → Repository → Database
+```
+
+An AI agent can still produce code that is valid TypeScript but crosses that boundary:
+
+```text
+Client → Database
+```
+
+After the project has explicitly approved a matching import rule or deterministic contract, Guard
+checks the changed files and reports matching violations deterministically:
+
+```text
+Codapult Guard (changed files)
+Scanned 1 source file(s); suppressed 12 baseline finding(s).
+
+src/app/settings/page.tsx:1 [client-no-persistence-import]
+  Client modules should not import persistence-layer modules.
+  import: @/lib/db/client
+
+✗ 1 issue(s) found
+Exit code: 1
+```
+
+The file path, rule ID, message, and counts depend on the project. This is the actual CLI output
+shape: Guard does not infer that every `Client → Database` edge is forbidden, and it does not
+activate proposals silently. The team approves the relevant policy first; then existing findings
+can be baselined while newly matching violations fail the gate and give the agent bounded evidence
+to repair.
 
 > **Guard does not tell every project to use the same architecture.**
 > It discovers the architecture that is already there, then lets the team decide what becomes policy.
@@ -164,6 +200,12 @@ init once → edit → check --changed → review → verify → commit / merge
    contract validation.
 5. `audit` inspects the complete current state, including findings accepted by the baseline.
 
+For a focused change explanation, use `codapult-guard impact <file...>` or the equivalent
+`codapult_guard_impact` MCP tool. It reports both directions of the dependency graph: what the
+changed module uses and which transitive callers may be affected. `review` includes the same
+impact packet plus typed Git changes (`added`, `modified`, `deleted`, and `renamed`) for the AI
+host.
+
 Guard state is stored in `.codapult/guard/`:
 
 ```text
@@ -244,19 +286,20 @@ real project shapes.
 
 ## CLI surface
 
-| Command                    | Purpose                                                         |
-| -------------------------- | --------------------------------------------------------------- |
-| `init`                     | Create project memory and the initial baseline.                 |
-| `analyze`                  | Refresh facts without changing policy or baseline.              |
-| `propose`                  | Generate evidence-based rule and contract proposals.            |
-| `check --changed`          | Enforce active policy on changed and untracked files.           |
-| `audit`                    | Scan the complete current project, including baseline findings. |
-| `review`                   | Create a bounded semantic-review packet for an AI host.         |
-| `verify`                   | Run the configured completion gate.                             |
-| `doctor`                   | Diagnose invalid or missing Guard artifacts.                    |
-| `history` / `history-diff` | Inspect project model evolution.                                |
-| `rules` / `contracts`      | Approve or reject proposed policy.                              |
-| `baseline`                 | Review or intentionally accept existing findings.               |
+| Command                    | Purpose                                                                                     |
+| -------------------------- | ------------------------------------------------------------------------------------------- |
+| `init`                     | Create project memory and the initial baseline.                                             |
+| `analyze`                  | Refresh facts without changing policy or baseline.                                          |
+| `propose`                  | Generate evidence-based rule and contract proposals.                                        |
+| `check --changed`          | Enforce active policy on changed and untracked files.                                       |
+| `audit`                    | Scan the complete current project, including baseline findings.                             |
+| `review`                   | Create a bounded semantic-review packet for an AI host.                                     |
+| `verify`                   | Run the configured completion gate.                                                         |
+| `doctor`                   | Diagnose invalid or missing Guard artifacts.                                                |
+| `history` / `history-diff` | Inspect project model, module graph, and architecture-edge evolution.                       |
+| `impact <files...>`        | Explain dependencies, transitive dependents, capabilities, and contracts affected by files. |
+| `rules` / `contracts`      | Approve or reject proposed policy.                                                          |
+| `baseline`                 | Review or intentionally accept existing findings.                                           |
 
 Run `pnpm exec codapult-guard <command> --help` for command-specific options.
 

@@ -242,7 +242,8 @@ command supports it for automation.
 | `codapult-guard propose`                   | Generate evidence-based rules/contracts for review. Does not activate them.                    |
 | `codapult-guard doctor`                    | Diagnose missing, invalid, or unsupported Guard artifacts.                                     |
 | `codapult-guard history`                   | List persisted project snapshots.                                                              |
-| `codapult-guard history-diff <from> <to>`  | Compare files, dependencies, capabilities, and cycles.                                         |
+| `codapult-guard history-diff <from> <to>`  | Compare files, modules, dependencies, capabilities, graph edges, and cycles.                   |
+| `codapult-guard impact <files...>`         | Explain direct/transitive dependencies, dependents, capabilities, and relevant contracts.      |
 | `codapult-guard check [--changed]`         | Enforce active Guard rules/contracts and report new findings.                                  |
 | `codapult-guard audit`                     | Run a full current Guard scan without baseline suppression and validate contracts.             |
 | `codapult-guard review`                    | Produce a bounded diff + project-context packet for semantic AI review.                        |
@@ -255,9 +256,15 @@ command supports it for automation.
 | `codapult-guard install-agent <target>`    | Add or update a managed Guard instruction block for an AI host.                                |
 
 `codapult-guard review` does not call an LLM. It creates input for one. A review packet includes changed
-files, a bounded/redacted diff, project model, contracts, deterministic findings, and review
-instructions. If the Git base is invalid, the packet contains `diffError` and has a failing
+files, typed file changes, a bounded/redacted diff, project model, contracts, deterministic
+findings, and review instructions. It also includes directional impact: the changed modules'
+dependencies, transitive dependents, affected capabilities, impact paths, relevant contracts,
+and graph edges. If the Git base is invalid, the packet contains `diffError` and has a failing
 outcome.
+
+`changes` distinguishes `added`, `modified`, `deleted`, and `renamed` paths. Deleted and renamed
+paths are still checked against the repository root safely; they are not silently discarded just
+because the old file no longer exists.
 
 Manage baseline entries without rebuilding the entire project state:
 
@@ -360,7 +367,8 @@ The model is useful for questions such as:
 - Which dependencies, environment variables, schemas, or configs are connected to a change?
 - Which capabilities are actually present, and what files provide the evidence?
 - Are there cycles, layer violations, high-fan-out modules, or changed impact paths?
-- How did the project model change between two saved snapshots?
+- Which modules depend on a changed module, and which callers may be affected transitively?
+- How did the project model, module graph, and layer edges change between two saved snapshots?
 
 Domain signals for payments, auth, jobs, email, AI, storage, database, deployment, security,
 observability, and other areas are review context by default. They do not become blocking rules
@@ -371,18 +379,18 @@ merely because a package name or filename resembles a domain.
 MCP exposes the same Guard model without requiring the host to parse CLI output. The Guard tools
 are:
 
-| MCP tool                         | Purpose                                                                        | Writes by default?                                            |
-| -------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------- |
-| `codapult_guard_context`         | Read current project facts, policy, architecture, and completion config.       | No                                                            |
-| `codapult_guard_propose`         | Generate evidence-based proposals.                                             | No; persistence requires `persist: true` and `confirm: true`. |
-| `codapult_guard_init`            | Initialize Guard.                                                              | Requires `confirm: true`; force also requires confirmation.   |
-| `codapult_guard_proposal_decide` | Approve/reject current proposals.                                              | Requires `confirm: true`.                                     |
-| `codapult_guard_check`           | Check active Guard policy and changed files.                                   | No                                                            |
-| `codapult_guard_review`          | Prepare a bounded/redacted semantic review packet.                             | No                                                            |
-| `codapult_guard_verify`          | Run the completion gate and return structured results.                         | Runs configured project commands; does not edit source.       |
-| `codapult_guard_audit`           | Full current scan and contract validation.                                     | No                                                            |
-| `codapult_guard_impact`          | Explain modules, impact paths, capabilities, and relevant contracts for files. | No                                                            |
-| `codapult_guard_explain`         | Explain one rule/contract, its evidence, and suggested next steps.             | No                                                            |
+| MCP tool                         | Purpose                                                                                                        | Writes by default?                                            |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `codapult_guard_context`         | Read current project facts, policy, architecture, and completion config.                                       | No                                                            |
+| `codapult_guard_propose`         | Generate evidence-based proposals.                                                                             | No; persistence requires `persist: true` and `confirm: true`. |
+| `codapult_guard_init`            | Initialize Guard.                                                                                              | Requires `confirm: true`; force also requires confirmation.   |
+| `codapult_guard_proposal_decide` | Approve/reject current proposals.                                                                              | Requires `confirm: true`.                                     |
+| `codapult_guard_check`           | Check active Guard policy and changed files.                                                                   | No                                                            |
+| `codapult_guard_review`          | Prepare a bounded/redacted semantic review packet.                                                             | No                                                            |
+| `codapult_guard_verify`          | Run the completion gate and return structured results.                                                         | Runs configured project commands; does not edit source.       |
+| `codapult_guard_audit`           | Full current scan and contract validation.                                                                     | No                                                            |
+| `codapult_guard_impact`          | Explain dependencies, transitive dependents, impact paths, capabilities, contracts, and graph edges for files. | No                                                            |
+| `codapult_guard_explain`         | Explain one rule/contract, its evidence, and suggested next steps.                                             | No                                                            |
 
 Every tool accepts an optional `root`. If omitted, the MCP process working directory is used. The
 host should pass a project root when its MCP process is not started there.

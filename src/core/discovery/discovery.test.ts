@@ -182,6 +182,34 @@ describe('discoverProject', () => {
     expect(model.insights.dependencyEdges).toContainEqual({ from: 'src/b.ts', to: 'src/a.ts' });
   });
 
+  it('keeps AST-resolved and fallback edges when a module mixes aliases and relative imports', () => {
+    const root = mkdtempSync(join(tmpdir(), 'guard-mixed-graph-'));
+    roots.push(root);
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'mixed-graph' }));
+    writeFileSync(
+      join(root, 'tsconfig.json'),
+      JSON.stringify({
+        compilerOptions: { baseUrl: '.', paths: { '@/*': ['src/*'] } },
+        include: ['src/**/*.ts'],
+      }),
+    );
+    writeFileSync(join(root, 'src/alias.ts'), 'export const alias = true;\n');
+    writeFileSync(join(root, 'src/relative.ts'), 'export const relative = true;\n');
+    writeFileSync(
+      join(root, 'src/entry.ts'),
+      `import { alias } from '@/alias';\nimport { relative } from './relative';\nexport { alias, relative };\n`,
+    );
+
+    const model = discoverProject(root);
+    expect(model.insights.dependencyEdges).toEqual(
+      expect.arrayContaining([
+        { from: 'src/entry.ts', to: 'src/alias.ts' },
+        { from: 'src/entry.ts', to: 'src/relative.ts' },
+      ]),
+    );
+  });
+
   it('uses AST for route exports and environment references, ignoring comments and strings', () => {
     const root = mkdtempSync(join(tmpdir(), 'guard-adversarial-'));
     roots.push(root);

@@ -12,6 +12,7 @@ import {
   guardDoctorCommand,
   guardHistoryCommand,
   guardHistoryDiffCommand,
+  guardImpactCommand,
   guardInitCommand,
   guardInstallAgentCommand,
   guardProposeCommand,
@@ -40,6 +41,7 @@ guard.command('install-agent [target]').option('--json').action(guardInstallAgen
 guard.command('doctor').option('--json').action(guardDoctorCommand);
 guard.command('history').action(guardHistoryCommand);
 guard.command('history-diff <from> <to>').option('--json').action(guardHistoryDiffCommand);
+guard.command('impact <files...>').option('--json').action(guardImpactCommand);
 guard
   .command('check')
   .option('--changed')
