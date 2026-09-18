@@ -387,6 +387,44 @@ are:
 Every tool accepts an optional `root`. If omitted, the MCP process working directory is used. The
 host should pass a project root when its MCP process is not started there.
 
+### Registering the MCP server
+
+Install Guard in the project that the agent will inspect:
+
+```bash
+pnpm add -D @codapult/guard
+```
+
+Guard exposes a local stdio MCP server through the `codapult-guard` executable:
+
+```bash
+pnpm exec codapult-guard mcp-server
+```
+
+Register that command in the selected AI host and use the project root as its working directory.
+For example, Cursor can use `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "codapult-guard": {
+      "command": "pnpm",
+      "args": ["exec", "codapult-guard", "mcp-server"],
+      "cwd": "."
+    }
+  }
+}
+```
+
+For a client with a generic stdio configuration, use the same command and set `cwd` to the
+repository root. Do not use `@codapult/cli` for standalone Guard projects: that package is the
+Codapult SaaS CLI and is a separate integration. Host-specific setup and instruction files are
+available in [`docs/integrations/`](integrations/README.md).
+
+After connecting, verify the server by calling `codapult_guard_context` or
+`codapult_guard_audit`. If the MCP process starts outside the repository, pass the absolute
+project path as the tool's `root` argument.
+
 Recommended agent sequence:
 
 ```text

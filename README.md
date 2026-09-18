@@ -194,6 +194,25 @@ Start the standalone MCP server over stdio:
 pnpm exec codapult-guard mcp-server
 ```
 
+Register that command in the MCP client from the project root. For example, Cursor can use
+`.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "codapult-guard": {
+      "command": "pnpm",
+      "args": ["exec", "codapult-guard", "mcp-server"],
+      "cwd": "."
+    }
+  }
+}
+```
+
+For clients that accept a generic stdio server, use the same command and set its working
+directory to the project root. Guard reads local files only; no API key or model provider is
+required. Host-specific examples are in [`docs/integrations/`](docs/integrations/).
+
 Recommended agent loop:
 
 ```text
