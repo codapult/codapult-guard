@@ -1,0 +1,46 @@
+name: Guard
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  guard:
+    name: Architecture Guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Install @codapult/guard as a pinned dev dependency in the project first.
+      # Run `codapult-guard init` once locally and commit the generated Guard memory.
+      - name: Verify Guard and project checks
+        run: pnpm exec codapult-guard verify --tools auto --json
+
+      - name: Export Guard findings as SARIF
+        if: always()
+        continue-on-error: true
+        run: pnpm exec codapult-guard check --changed --sarif > guard-results.sarif
+
+      - name: Upload Guard findings
+        if: always() && hashFiles('guard-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: guard-results.sarif

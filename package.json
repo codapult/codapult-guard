@@ -1,0 +1,117 @@
+{
+  "name": "@codapult/guard",
+  "version": "0.1.0",
+  "description": "Local-first architecture guardrails for JavaScript and TypeScript projects, with first-class support for Next.js SaaS and AI-assisted development",
+  "license": "MIT",
+  "packageManager": "pnpm@11.22.0+sha512.1ff870c4c6133dfd88fb2afc46dd13d47f09c9794b438c6fdb47ca98caf3bc16381ee0be93a091b8e3824cf01f889f46d7d9e20910fb0be1ab0fb5baa80dd621",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "type": "module",
+  "bin": {
+    "codapult-guard": "./dist/cli/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp/tools/guard.d.ts",
+      "import": "./dist/mcp/tools/guard.js"
+    },
+    "./commands/guard": {
+      "types": "./dist/cli/commands/guard.d.ts",
+      "import": "./dist/cli/commands/guard.js"
+    },
+    "./mcp/prompts": {
+      "types": "./dist/mcp/prompts.d.ts",
+      "import": "./dist/mcp/prompts.js"
+    },
+    "./mcp/resources": {
+      "types": "./dist/mcp/resources.d.ts",
+      "import": "./dist/mcp/resources.js"
+    },
+    "./project-checks": {
+      "types": "./dist/adapters/project-checks.d.ts",
+      "import": "./dist/adapters/project-checks.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "clean": "node scripts/clean-dist.mjs",
+    "build": "pnpm clean && tsc -p tsconfig.build.json",
+    "dev": "tsc --watch",
+    "lint": "eslint .",
+    "lint:fix": "eslint --fix .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "release:check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build && npm pack --dry-run",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:guard:coverage": "vitest run src/core src/adapters/project-checks.test.ts --coverage --coverage.include='src/core/**/*.ts' --coverage.include='src/adapters/project-checks.ts'",
+    "test:guard:fixtures": "pnpm build && node scripts/guard-fixture-smoke.mjs",
+    "test:guard:fixtures:regression": "pnpm build && node scripts/guard-fixture-regression.mjs",
+    "test:guard:fixtures:native": "pnpm build && node scripts/guard-fixture-native.mjs",
+    "test:guard:pr": "pnpm build && node scripts/guard-pr-review.mjs",
+    "test:guard:golden": "pnpm build && node scripts/guard-golden-demo.mjs",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "tsc -p tsconfig.build.json",
+    "release": "release-it"
+  },
+  "keywords": [
+    "codapult",
+    "architecture",
+    "guardrails",
+    "ai-agents",
+    "cli",
+    "nextjs",
+    "javascript",
+    "typescript",
+    "react",
+    "mcp",
+    "saas"
+  ],
+  "homepage": "https://github.com/codapult/codapult-guard",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/codapult/codapult-guard.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "commander": "^15.0.0",
+    "picocolors": "^1.1.1",
+    "semver": "^7.8.5",
+    "ts-morph": "^28.0.0",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@js-toolkit/config-utils": "^1.0.1",
+    "@js-toolkit/eslint-config": "^1.1.4",
+    "@js-toolkit/prettier-config": "^1.0.1",
+    "@js-toolkit/tsconfig": "^1.0.1",
+    "@release-it/conventional-changelog": "^12.0.0",
+    "@types/node": "^26.2.0",
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "@vitest/coverage-v8": "^4.1.11",
+    "eslint": "^9.39.4",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.6",
+    "prettier": "^3.9.6",
+    "release-it": "^21.0.2",
+    "typescript-eslint": "^8.67.0",
+    "vitest": "^4.1.11"
+  }
+}

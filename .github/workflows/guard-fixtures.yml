@@ -1,0 +1,55 @@
+name: Guard fixture smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  fixtures:
+    name: Universal project fixture matrix
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Guard
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install CLI dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Clone fixture projects
+        run: |
+          mkdir -p ../guard-fixtures
+          git clone --depth=1 https://github.com/vercel/next-learn.git ../guard-fixtures/next-learn
+          git -C ../guard-fixtures/next-learn fetch --depth=1 origin bb2558441a6673ab76c89914c25018bffa27a2ba
+          git -C ../guard-fixtures/next-learn checkout --detach bb2558441a6673ab76c89914c25018bffa27a2ba
+          git clone --depth=1 https://github.com/simerlec/vite-react-ts-starter.git ../guard-fixtures/vite-react-ts-starter
+          git -C ../guard-fixtures/vite-react-ts-starter fetch --depth=1 origin 087a2581feaabeb9184515c72b0f7ff2325cd603
+          git -C ../guard-fixtures/vite-react-ts-starter checkout --detach 087a2581feaabeb9184515c72b0f7ff2325cd603
+          git clone --depth=1 https://github.com/honojs/node-server.git ../guard-fixtures/hono-node-server
+          git -C ../guard-fixtures/hono-node-server fetch --depth=1 origin 64dc09e0c37eab30b51d33d61a3a2bae3fdee263
+          git -C ../guard-fixtures/hono-node-server checkout --detach 64dc09e0c37eab30b51d33d61a3a2bae3fdee263
+          git clone --depth=1 https://github.com/changesets/changesets.git ../guard-fixtures/changesets
+          git -C ../guard-fixtures/changesets fetch --depth=1 origin c9269c01af5f3f7463adc648890fc3a8a729dd18
+          git -C ../guard-fixtures/changesets checkout --detach c9269c01af5f3f7463adc648890fc3a8a729dd18
+          git clone --depth=1 https://github.com/expressjs/express.git ../guard-fixtures/express
+          git -C ../guard-fixtures/express fetch --depth=1 origin 9a34acf03cb818ff3f8bc40e44176e277a25cbb9
+          git -C ../guard-fixtures/express checkout --detach 9a34acf03cb818ff3f8bc40e44176e277a25cbb9
+
+      - name: Run Guard fixture matrix
+        run: pnpm test:guard:fixtures
+
+      - name: Run Guard mutation regression matrix
+        run: pnpm test:guard:fixtures:regression
