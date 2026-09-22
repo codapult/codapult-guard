@@ -572,11 +572,18 @@ export function buildConventionsMemory(model: ProjectModel): Record<string, unkn
 export function buildGeneratedGuardConfig(model: ProjectModel): GuardConfig {
   const isPersistenceImport = (importPath: string): boolean =>
     /(?:^|\/)(?:database|db)(?:\/|$)/i.test(importPath) ||
-    /^(?:@prisma\codapult-guardent|prisma|drizzle-orm|drizzle-kit|typeorm|sequelize|mongoose|knex)(?:\/|$)/i.test(
+    /^(?:@prisma\/client|prisma|drizzle-orm|drizzle-kit|typeorm|sequelize|mongoose|knex)(?:\/|$)/i.test(
       importPath,
     );
+  const moduleReferences = (module: ProjectModel['modules'][number]): string[] => [
+    ...module.imports,
+    ...module.exports,
+    ...module.dynamicImports,
+  ];
   const persistenceImports = [
-    ...new Set(model.modules.flatMap((module) => module.imports).filter(isPersistenceImport)),
+    ...new Set(
+      model.modules.flatMap((module) => moduleReferences(module)).filter(isPersistenceImport),
+    ),
   ].sort();
   const clientPersistenceFiles =
     model.insights.boundaries
@@ -585,7 +592,7 @@ export function buildGeneratedGuardConfig(model: ProjectModel): GuardConfig {
         model.modules.some(
           (module) =>
             module.path === file &&
-            module.imports.some((importPath) => persistenceImports.includes(importPath)),
+            moduleReferences(module).some((importPath) => persistenceImports.includes(importPath)),
         ),
       ) ?? [];
   const proposedRules: GuardRule[] =
@@ -677,6 +684,26 @@ export function writeProjectSnapshot(root: string, model: ProjectModel): string 
   return revision;
 }
 
+function isProjectPath(root: string, value: string): boolean {
+  const normalized = value.replace(/\\/g, '/');
+  if (!normalized || normalized.startsWith('/') || normalized.split('/').includes('..')) {
+    return false;
+  }
+  try {
+    const projectRoot = `${realpathSync(root)}${sep}`;
+    const targetPath = resolve(root, normalized);
+    let target: string;
+    try {
+      target = realpathSync(targetPath);
+    } catch {
+      target = realpathSync(dirname(targetPath));
+    }
+    return target === projectRoot.slice(0, -1) || target.startsWith(projectRoot);
+  } catch {
+    return false;
+  }
+}
+
 export function validateGuardContracts(
   root: string,
   contracts: GuardContract[] = [],
@@ -704,7 +731,7 @@ export function validateGuardContracts(
       });
     }
     for (const scope of contract.scope ?? []) {
-      if (!existsSync(resolve(root, scope))) {
+      if (!isProjectPath(root, scope) || !existsSync(resolve(root, scope))) {
         issues.push({
           contractId: contract.id,
           field: 'scope',
@@ -714,7 +741,7 @@ export function validateGuardContracts(
       }
     }
     for (const entrypoint of contract.entrypoints ?? []) {
-      if (!existsSync(resolve(root, entrypoint))) {
+      if (!isProjectPath(root, entrypoint) || !existsSync(resolve(root, entrypoint))) {
         issues.push({
           contractId: contract.id,
           field: 'scope',
@@ -724,7 +751,7 @@ export function validateGuardContracts(
       }
     }
     for (const excluded of contract.exclude ?? []) {
-      if (!existsSync(resolve(root, excluded))) {
+      if (!isProjectPath(root, excluded) || !existsSync(resolve(root, excluded))) {
         issues.push({
           contractId: contract.id,
           field: 'scope',
@@ -734,7 +761,7 @@ export function validateGuardContracts(
       }
     }
     for (const reference of contract.references ?? []) {
-      if (!existsSync(resolve(root, reference))) {
+      if (!isProjectPath(root, reference) || !existsSync(resolve(root, reference))) {
         issues.push({
           contractId: contract.id,
           field: 'reference',
@@ -805,6 +832,17 @@ function importLine(sourceFile: SourceFile, importPath: string): number {
   return dynamicImport?.getStartLineNumber() ?? 1;
 }
 
+function moduleImportPaths(module: ProjectModel['modules'][number]): string[] {
+  return [
+    ...new Set([
+      ...module.imports,
+      ...module.exports,
+      ...module.dynamicImports,
+      ...module.resolvedImports,
+    ]),
+  ];
+}
+
 function scanFile(
   root: string,
   file: string,
@@ -823,9 +861,7 @@ function scanFile(
     }
   }
   const findings: GuardFinding[] = [];
-  const importPaths = [
-    ...new Set([...module.imports, ...module.exports, ...module.dynamicImports]),
-  ];
+  const importPaths = moduleImportPaths(module);
   for (const importPath of importPaths) {
     const line = sourceFile ? importLine(sourceFile, importPath) : 1;
     for (const rule of rules) {
@@ -860,7 +896,8 @@ function scanContracts(
       (item) => (!changed || changed.has(item.path)) && contractAppliesToFile(contract, item.path),
     )) {
       if (contract.kind === 'import-boundary') {
-        for (const importPath of module.imports) {
+        const importPaths = moduleImportPaths(module);
+        for (const importPath of importPaths) {
           if (contract.mustNotImport?.some((pattern) => patternMatches(importPath, pattern))) {
             findings.push({
               ruleId: `contract:${contract.id}`,
@@ -876,7 +913,7 @@ function scanContracts(
         if (
           contract.mustImport !== undefined &&
           contract.mustImport.length > 0 &&
-          !module.imports.some((importPath) =>
+          !moduleImportPaths(module).some((importPath) =>
             contract.mustImport?.some((pattern) => patternMatches(importPath, pattern)),
           )
         ) {
@@ -962,7 +999,9 @@ function architectureInsightFindings(
     /^(?:server-only|next\/(?:headers|cookies|server|cache)|node:fs|fs|node:child_process|child_process)(?:\/|$)/;
   for (const module of model.modules) {
     if (!clientFiles.has(module.path)) continue;
-    for (const importPath of module.imports.filter((value) => serverOnlyImports.test(value))) {
+    for (const importPath of [
+      ...new Set([...module.imports, ...module.exports, ...module.dynamicImports]),
+    ].filter((value) => serverOnlyImports.test(value))) {
       if (changed && !changed.has(module.path)) continue;
       findings.push({
         ruleId: 'client-server-boundary',
@@ -1002,22 +1041,7 @@ function isSafeReviewFile(file: string): boolean {
 }
 
 function isSafeReviewPath(root: string, file: string): boolean {
-  const normalizedFile = file.replace(/\\/g, '/');
-  if (normalizedFile.startsWith('/') || normalizedFile.split('/').includes('..')) return false;
-  try {
-    const projectRoot = `${realpathSync(root)}${sep}`;
-    const targetPath = resolve(root, normalizedFile);
-    let target: string;
-    try {
-      target = realpathSync(targetPath);
-    } catch {
-      // Deleted files have no realpath. Validate their nearest existing parent instead.
-      target = realpathSync(dirname(targetPath));
-    }
-    return target === projectRoot.slice(0, -1) || target.startsWith(projectRoot);
-  } catch {
-    return false;
-  }
+  return isProjectPath(root, file);
 }
 
 function parseGitChanges(root: string, args: string[]): GuardFileChange[] {

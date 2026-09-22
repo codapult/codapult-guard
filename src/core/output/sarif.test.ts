@@ -28,5 +28,37 @@ describe('guardFindingsToSarif', () => {
         },
       ],
     });
+
+    expect(JSON.stringify(sarif)).toBe(
+      JSON.stringify({
+        version: '2.1.0',
+        $schema: 'https://json.schemastore.org/sarif-2.1.0.json',
+        runs: [
+          {
+            tool: {
+              driver: {
+                name: 'Codapult Guard',
+                informationUri: 'https://codapult.dev/docs/developer-tools/guard',
+              },
+            },
+            results: [
+              {
+                ruleId: 'client-no-db',
+                level: 'error',
+                message: { text: 'Client code must not import the database.' },
+                locations: [
+                  {
+                    physicalLocation: {
+                      artifactLocation: { uri: 'src/client.ts' },
+                      region: { startLine: 7 },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    );
   });
 });

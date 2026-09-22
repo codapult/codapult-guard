@@ -4,30 +4,30 @@ const severity = z.enum(['error', 'warning', 'info']);
 const status = z.enum(['active', 'proposed']);
 
 export const guardRuleSchema = z.object({
-  id: z.string(),
-  description: z.string(),
+  id: z.string().trim().min(1),
+  description: z.string().trim().min(1),
   severity,
   kind: z.enum(['forbidden-import', 'client-forbidden-import']),
-  patterns: z.array(z.string()),
-  files: z.array(z.string()).optional(),
+  patterns: z.array(z.string().trim().min(1)).min(1),
+  files: z.array(z.string().trim().min(1)).optional(),
   status: status.optional(),
   confidence: z.enum(['high', 'medium', 'low']).optional(),
   evidence: z.array(z.string()).optional(),
 });
 
 export const guardContractSchema = z.object({
-  id: z.string(),
-  statement: z.string(),
+  id: z.string().trim().min(1),
+  statement: z.string().trim().min(1),
   kind: z.enum(['guidance', 'import-boundary', 'required-call']).optional(),
   severity: severity.optional(),
-  scope: z.array(z.string()).optional(),
-  entrypoints: z.array(z.string()).optional(),
-  exclude: z.array(z.string()).optional(),
-  guidance: z.array(z.string()).optional(),
-  references: z.array(z.string()).optional(),
-  mustImport: z.array(z.string()).optional(),
-  mustNotImport: z.array(z.string()).optional(),
-  mustCall: z.array(z.string()).optional(),
+  scope: z.array(z.string().trim().min(1)).optional(),
+  entrypoints: z.array(z.string().trim().min(1)).optional(),
+  exclude: z.array(z.string().trim().min(1)).optional(),
+  guidance: z.array(z.string().trim().min(1)).optional(),
+  references: z.array(z.string().trim().min(1)).optional(),
+  mustImport: z.array(z.string().trim().min(1)).optional(),
+  mustNotImport: z.array(z.string().trim().min(1)).optional(),
+  mustCall: z.array(z.string().trim().min(1)).optional(),
   status: status.optional(),
   confidence: z.enum(['high', 'medium', 'low']).optional(),
   evidence: z.array(z.string()).optional(),
@@ -45,7 +45,7 @@ export const guardContractsFileSchema = z.object({
 });
 
 export const guardProposalDecisionSchema = z.object({
-  id: z.string(),
+  id: z.string().trim().min(1),
   type: z.enum(['rule', 'contract']),
   decision: z.enum(['approved', 'rejected']),
   decidedAt: z.string(),
@@ -70,7 +70,12 @@ export const guardProposalSchema = z.object({
 export const guardAgentConfigSchema = z.object({
   version: z.literal(1),
   tools: z.enum(['auto', 'on', 'off']),
-  tooling: z.record(z.string(), z.object({ script: z.string(), enabled: z.boolean() })).default({}),
+  tooling: z
+    .record(
+      z.string().trim().min(1),
+      z.object({ script: z.string().trim().min(1), enabled: z.boolean() }),
+    )
+    .default({}),
   completionGate: z.object({
     enabled: z.boolean(),
     maxIterations: z.number().int().min(1).max(10),

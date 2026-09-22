@@ -5,13 +5,15 @@ import {
   readFileSync,
   rmSync,
   symlinkSync,
+  statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { discoverProject, discoverProjectWithMetrics } from './discovery.js';
+import { DiscoveryLimitError, discoverProject, discoverProjectWithMetrics } from './discovery.js';
 
 const roots: string[] = [];
 
@@ -20,6 +22,34 @@ afterEach(() => {
 });
 
 describe('discoverProject', () => {
+  it('fails explicitly when a project exceeds discovery limits', () => {
+    const root = mkdtempSync(join(tmpdir(), 'guard-discovery-limits-'));
+    roots.push(root);
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'limited' }));
+    writeFileSync(join(root, 'entry.ts'), 'export const value = true;\n');
+
+    expect(() => discoverProject(root, { maxFiles: 1 })).toThrow(DiscoveryLimitError);
+    expect(() => discoverProject(root, { maxFileBytes: 1 })).toThrow(/maxFileBytes/);
+  });
+
+  it('invalidates the cache when content changes without size or mtime changes', () => {
+    const root = mkdtempSync(join(tmpdir(), 'guard-cache-integrity-'));
+    roots.push(root);
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'cache-test' }));
+    writeFileSync(join(root, 'entry.ts'), 'export const value = 1;\n');
+
+    const first = discoverProject(root, { persistCache: false });
+    const originalTimes = statSync(join(root, 'entry.ts'));
+    writeFileSync(join(root, 'entry.ts'), 'export const value = 2;\n');
+    utimesSync(join(root, 'entry.ts'), originalTimes.atime, originalTimes.mtime);
+
+    const second = discoverProjectWithMetrics(root, { persistCache: false });
+
+    expect(second.metrics.cacheHit).toBe(false);
+    expect(second.metrics.reusedModules).toBe(0);
+    expect(second.model.modules[0]?.contentHash).not.toBe(first.modules[0]?.contentHash);
+  });
+
   it('builds a universal model from package metadata, source AST, tests, and patterns', () => {
     const root = mkdtempSync(join(tmpdir(), 'guard-discovery-'));
     roots.push(root);
@@ -146,6 +176,35 @@ describe('discoverProject', () => {
       expect.objectContaining({ path: 'apps/web', name: '@example/web', private: false }),
       expect.objectContaining({ path: 'packages/core', name: '@example/core', private: true }),
     ]);
+  });
+
+  it('loads package-level tsconfig files in monorepos', () => {
+    const root = mkdtempSync(join(tmpdir(), 'guard-monorepo-tsconfig-'));
+    roots.push(root);
+    mkdirSync(join(root, 'packages/web/src'), { recursive: true });
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true }));
+    writeFileSync(
+      join(root, 'packages/web/tsconfig.json'),
+      JSON.stringify({
+        compilerOptions: { baseUrl: '.', paths: { '@web/*': ['src/*'] } },
+        include: ['src/**/*.ts'],
+      }),
+    );
+    writeFileSync(
+      join(root, 'packages/web/package.json'),
+      JSON.stringify({ name: '@example/web' }),
+    );
+    writeFileSync(join(root, 'packages/web/src/db.ts'), 'export const db = true;\n');
+    writeFileSync(
+      join(root, 'packages/web/src/page.ts'),
+      `import { db } from '@web/db'; export const page = db;\n`,
+    );
+
+    const model = discoverProject(root);
+
+    expect(
+      model.modules.find((module) => module.path === 'packages/web/src/page.ts')?.resolvedImports,
+    ).toEqual(['packages/web/src/db.ts']);
   });
 
   it('resolves tsconfig aliases, re-exports, imported symbols, and calls through ts-morph', () => {

@@ -117,6 +117,24 @@ export interface DiscoveryMetrics {
   reusedModules: number;
 }
 
+export interface DiscoveryOptions {
+  persistCache?: boolean;
+  /** Maximum number of files included in one model. */
+  maxFiles?: number;
+  /** Maximum size of one included file in bytes. */
+  maxFileBytes?: number;
+}
+
+export class DiscoveryLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DiscoveryLimitError';
+  }
+}
+
+const DEFAULT_MAX_FILES = 100_000;
+const DEFAULT_MAX_FILE_BYTES = 25 * 1024 * 1024;
+
 const IGNORED_DIRECTORIES = new Set([
   '.git',
   '.next',
@@ -155,6 +173,7 @@ const CONFIG_NAMES = new Set([
 
 const discoveryCache = new Map<string, { signature: string; model: ProjectModel }>();
 const discoveryReuse = new Map<string, number>();
+const discoveryCacheHits = new Map<string, boolean>();
 // Bump when the persisted model shape changes; old cache entries must never
 // bypass discovery and return an incomplete ProjectModel.
 const DISCOVERY_CACHE_VERSION = 3;
@@ -302,11 +321,69 @@ function resolveInternalImport(
   return candidates.find((candidate) => modules.has(candidate));
 }
 
+interface PathAlias {
+  pattern: string;
+  baseDirectory: string;
+  targets: string[];
+}
+
+function pathAliases(root: string): PathAlias[] {
+  return listFiles(root)
+    .filter((path) => basename(path) === 'tsconfig.json' || basename(path) === 'jsconfig.json')
+    .flatMap((path) => {
+      const tsconfigJson = readJsonObject(resolve(root, path));
+      const compilerOptions =
+        tsconfigJson.compilerOptions !== null && typeof tsconfigJson.compilerOptions === 'object'
+          ? (tsconfigJson.compilerOptions as Record<string, unknown>)
+          : {};
+      const paths = compilerOptions.paths;
+      if (paths === null || typeof paths !== 'object') return [];
+      const baseUrl = typeof compilerOptions.baseUrl === 'string' ? compilerOptions.baseUrl : '.';
+      return Object.entries(paths).flatMap(([pattern, value]) => {
+        if (!Array.isArray(value)) return [];
+        const targets = value.filter((item): item is string => typeof item === 'string');
+        return targets.length > 0
+          ? [{ pattern, baseDirectory: resolve(root, dirname(path), baseUrl), targets }]
+          : [];
+      });
+    });
+}
+
+function resolveAliasedImport(
+  root: string,
+  importPath: string,
+  aliases: PathAlias[],
+  modules: Set<string>,
+): string | undefined {
+  for (const alias of aliases) {
+    const wildcard = alias.pattern.indexOf('*');
+    const prefix = wildcard >= 0 ? alias.pattern.slice(0, wildcard) : alias.pattern;
+    const suffix = wildcard >= 0 ? alias.pattern.slice(wildcard + 1) : '';
+    if (!importPath.startsWith(prefix) || (suffix && !importPath.endsWith(suffix))) continue;
+    const replacement = importPath.slice(prefix.length, importPath.length - suffix.length);
+    for (const target of alias.targets) {
+      const targetPath = target.replace('*', replacement);
+      const absoluteBase = resolve(alias.baseDirectory, targetPath);
+      const relativeBase = relative(root, absoluteBase);
+      const normalizedBase = relativeBase.replace(/^\.\//, '').replaceAll('\\', '/');
+      const candidates = [
+        normalizedBase,
+        ...[...SOURCE_EXTENSIONS].map((extension) => `${normalizedBase}${extension}`),
+        ...[...SOURCE_EXTENSIONS].map((extension) => `${normalizedBase}/index${extension}`),
+      ];
+      const projectCandidate = candidates.find((candidate) => modules.has(candidate));
+      if (projectCandidate) return projectCandidate;
+    }
+  }
+  return undefined;
+}
+
 function parseModule(
   project: Project,
   root: string,
   path: string,
   projectFiles: Set<string>,
+  aliases: PathAlias[],
 ): ModuleRecord | undefined {
   if (!SOURCE_EXTENSIONS.has(extname(path))) return undefined;
   let sourceFile: SourceFile;
@@ -334,7 +411,9 @@ function parseModule(
       importedSymbols.push(namedImport.getAliasNode()?.getText() ?? namedImport.getName());
     }
     const resolved = declaration.getModuleSpecifierSourceFile();
-    const resolvedPath = resolved && sourceFilePath(root, resolved, projectFiles);
+    const resolvedPath =
+      (resolved && sourceFilePath(root, resolved, projectFiles)) ??
+      resolveAliasedImport(root, importPath, aliases, projectFiles);
     if (resolvedPath) resolvedImports.add(resolvedPath);
   }
   for (const declaration of sourceFile.getExportDeclarations()) {
@@ -342,7 +421,9 @@ function parseModule(
     if (!moduleSpecifier) continue;
     exports.push(moduleSpecifier);
     const resolved = declaration.getModuleSpecifierSourceFile();
-    const resolvedPath = resolved && sourceFilePath(root, resolved, projectFiles);
+    const resolvedPath =
+      (resolved && sourceFilePath(root, resolved, projectFiles)) ??
+      resolveAliasedImport(root, moduleSpecifier, aliases, projectFiles);
     if (resolvedPath) resolvedImports.add(resolvedPath);
   }
   declarations.classes = sourceFile.getClasses().length;
@@ -362,7 +443,9 @@ function parseModule(
     const importPath = argument.getText().slice(1, -1);
     if (!importPath) continue;
     dynamicImports.push(importPath);
-    const resolvedPath = resolveInternalImport(path, importPath, projectFiles);
+    const resolvedPath =
+      resolveInternalImport(path, importPath, projectFiles) ??
+      resolveAliasedImport(root, importPath, aliases, projectFiles);
     if (resolvedPath) resolvedImports.add(resolvedPath);
   }
   const directives = sourceFile
@@ -947,35 +1030,71 @@ function buildInsights(
 function createAstProject(root: string): Project {
   const tsConfigPath = resolve(root, 'tsconfig.json');
   try {
-    return existsSync(tsConfigPath)
+    const project = existsSync(tsConfigPath)
       ? new Project({ tsConfigFilePath: tsConfigPath })
       : new Project({ skipAddingFilesFromTsConfig: true });
+    // Monorepos commonly keep compiler options and path aliases per package.
+    // Load those projects as well; files still remain bounded by listFiles().
+    for (const configPath of listFiles(root).filter((path) => basename(path) === 'tsconfig.json')) {
+      const absolutePath = resolve(root, configPath);
+      if (absolutePath === tsConfigPath) continue;
+      try {
+        project.addSourceFilesFromTsConfig(absolutePath);
+      } catch {
+        // A package config can be partial or reference an unavailable project.
+      }
+    }
+    return project;
   } catch {
     return new Project({ skipAddingFilesFromTsConfig: true });
   }
 }
 
-export function discoverProject(
-  root: string,
-  options: { persistCache?: boolean } = {},
-): ProjectModel {
+export function discoverProject(root: string, options: DiscoveryOptions = {}): ProjectModel {
   const packageJson = readJsonObject(resolve(root, 'package.json'));
   const dependencies = asStringRecord(packageJson.dependencies);
   const devDependencies = asStringRecord(packageJson.devDependencies);
   const scripts = asStringRecord(packageJson.scripts);
   const allFiles = listFiles(root);
+  const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES;
+  const maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
+  if (!Number.isInteger(maxFiles) || maxFiles < 1) {
+    throw new DiscoveryLimitError('Discovery maxFiles must be a positive integer.');
+  }
+  if (!Number.isInteger(maxFileBytes) || maxFileBytes < 1) {
+    throw new DiscoveryLimitError('Discovery maxFileBytes must be a positive integer.');
+  }
+  if (allFiles.length > maxFiles) {
+    throw new DiscoveryLimitError(
+      `Project contains ${allFiles.length} files; discovery limit is ${maxFiles}. ` +
+        'Use an ignore file or raise maxFiles deliberately.',
+    );
+  }
+  for (const path of allFiles) {
+    const bytes = statSync(resolve(root, path)).size;
+    if (bytes > maxFileBytes) {
+      throw new DiscoveryLimitError(
+        `File ${path} is ${bytes} bytes; discovery limit is ${maxFileBytes}. ` +
+          'Ignore the file or raise maxFileBytes deliberately.',
+      );
+    }
+  }
   const signature = JSON.stringify([
     JSON.stringify(packageJson),
     allFiles.map((path) => {
       const stat = statSync(resolve(root, path));
-      return [path, stat.size, stat.mtimeMs];
+      // Size/mtime alone can miss an in-place edit that preserves both values.
+      // The model is a correctness boundary, so include content in the cache key.
+      return [path, stat.size, stat.mtimeMs, contentHash(root, path)];
     }),
     runGit(root, ['rev-parse', 'HEAD']),
     runGit(root, ['status', '--porcelain']),
   ]);
   const cacheKey = resolve(root);
+  discoveryCacheHits.set(cacheKey, false);
   const cached = discoveryCache.get(cacheKey);
   if (cached?.signature === signature) {
+    discoveryCacheHits.set(cacheKey, true);
     discoveryReuse.set(cacheKey, cached.model.modules.length);
     return cached.model;
   }
@@ -994,6 +1113,7 @@ export function discoverProject(
     ) {
       previousModel = persisted.model as ProjectModel;
       if (persisted.signature === signature) {
+        discoveryCacheHits.set(cacheKey, true);
         discoveryCache.set(cacheKey, { signature, model: previousModel });
         discoveryReuse.set(cacheKey, previousModel.modules.length);
         return previousModel;
@@ -1009,6 +1129,7 @@ export function discoverProject(
   }));
   const projectFiles = new Set(files.map((file) => file.path));
   const astProject = createAstProject(root);
+  const aliases = pathAliases(root);
   const previousModules = new Map(previousModel?.modules.map((module) => [module.path, module]));
   const currentShape = files
     .filter((file) => file.kind === 'source' || file.kind === 'test')
@@ -1035,7 +1156,7 @@ export function discoverProject(
         reusedModules += 1;
         return previous;
       }
-      return parseModule(astProject, root, file.path, projectFiles);
+      return parseModule(astProject, root, file.path, projectFiles, aliases);
     })
     .filter((module): module is ModuleRecord => module !== undefined);
   const sourceFiles = files.filter((file) => file.kind === 'source').map((file) => file.path);
@@ -1120,10 +1241,9 @@ export function discoverProject(
 
 export function discoverProjectWithMetrics(
   root: string,
-  options: { persistCache?: boolean } = {},
+  options: DiscoveryOptions = {},
 ): { model: ProjectModel; metrics: DiscoveryMetrics } {
   const startedAt = Date.now();
-  const cacheHit = discoveryCache.has(resolve(root));
   const model = discoverProject(root, options);
   return {
     model,
@@ -1132,7 +1252,7 @@ export function discoverProjectWithMetrics(
       files: model.files.length,
       modules: model.modules.length,
       cacheAvailable: existsSync(discoveryCachePath(root)),
-      cacheHit,
+      cacheHit: discoveryCacheHits.get(resolve(root)) ?? false,
       changedFiles: model.git.changedFiles.length,
       reusedModules: discoveryReuse.get(resolve(root)) ?? 0,
     },

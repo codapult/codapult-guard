@@ -261,6 +261,39 @@ describe('guard contracts', () => {
     );
   });
 
+  it('matches import-boundary contracts against resolved aliases and re-exports', () => {
+    const root = createProject({
+      'tsconfig.json': JSON.stringify({
+        compilerOptions: { baseUrl: '.', paths: { '@/*': ['src/*'] } },
+        include: ['src/**/*.ts'],
+      }),
+      'src/action.ts': `export { db } from '@/db';`,
+      'src/db.ts': `export const db = {};`,
+    });
+    const report = scanGuard(root, {
+      version: 1,
+      rules: [],
+      contracts: [
+        {
+          id: 'actions-no-db-file',
+          statement: 'Actions must use the repository boundary.',
+          kind: 'import-boundary',
+          scope: ['src'],
+          mustNotImport: ['src/db.ts'],
+          status: 'active',
+        },
+      ],
+    });
+
+    expect(report.findings).toContainEqual(
+      expect.objectContaining({
+        ruleId: 'contract:actions-no-db-file',
+        file: 'src/action.ts',
+        importPath: 'src/db.ts',
+      }),
+    );
+  });
+
   it('limits contracts to entrypoints and excludes generated or helper files', () => {
     const root = createProject({
       'src/action.ts': `import { db } from './db'; export const action = () => db;`,
@@ -396,6 +429,68 @@ describe('guard contracts', () => {
       ]),
     ).toHaveLength(2);
   });
+
+  it('rejects contract paths that escape the project root', () => {
+    const root = createProject({ 'src/existing.ts': 'export const value = 1;' });
+
+    expect(
+      validateGuardContracts(root, [
+        {
+          id: 'outside',
+          statement: 'must stay in the repository',
+          scope: ['../outside'],
+          references: ['../outside/reference.ts'],
+        },
+      ]),
+    ).toEqual([
+      expect.objectContaining({ field: 'scope', value: '../outside' }),
+      expect.objectContaining({ field: 'reference', value: '../outside/reference.ts' }),
+    ]);
+  });
+
+  it('checks re-exports and dynamic imports for import-boundary contracts', () => {
+    const root = createProject({
+      'entry.ts': `export { value } from './server-only';\nexport const load = () => import('./server-only');\n`,
+      'server-only.ts': 'export const value = true;\n',
+    });
+
+    const report = scanGuard(root, {
+      version: 1,
+      rules: [],
+      contracts: [
+        {
+          id: 'no-server-boundary',
+          statement: 'This boundary is forbidden.',
+          kind: 'import-boundary',
+          mustNotImport: ['./server-only'],
+          scope: ['entry.ts'],
+        },
+      ],
+    });
+
+    expect(report.findings).toHaveLength(1);
+  });
+
+  it('detects server-only re-exports and dynamic imports from client modules', () => {
+    const root = createProject({
+      'client.ts': `'use client';\nexport { headers } from 'next/headers';\nexport const load = () => import('node:fs');\n`,
+    });
+
+    const report = scanGuard(
+      root,
+      { version: 1, rules: [], contracts: [] },
+      {
+        includeArchitectureInsights: true,
+      },
+    );
+
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ruleId: 'client-server-boundary', importPath: 'next/headers' }),
+        expect.objectContaining({ ruleId: 'client-server-boundary', importPath: 'node:fs' }),
+      ]),
+    );
+  });
 });
 
 describe('generated project memory', () => {
@@ -415,6 +510,7 @@ describe('generated project memory', () => {
         scripts: { test: 'vitest' },
       }),
       'client.tsx': `'use client';\nimport { db } from '@/lib/db';\n`,
+      'client-prisma.tsx': `'use client';\nexport { PrismaClient } from '@prisma/client';\n`,
       'lib/db.ts': `export const db = {};\n`,
       'app/page.tsx': `export default function Page() { return null; }\n`,
     });
@@ -431,8 +527,9 @@ describe('generated project memory', () => {
       id: 'client-no-persistence-import',
       status: 'proposed',
       confidence: 'medium',
-      evidence: ['client.tsx'],
     });
+    expect(generated.rules[0].evidence).toEqual(['client-prisma.tsx', 'client.tsx']);
+    expect(generated.rules[0].patterns).toContain('@prisma/client');
     expect(generated.rules[0].patterns).not.toContain('./svg/DrizzleIcon');
   });
 
