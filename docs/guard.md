@@ -227,6 +227,10 @@ Inspect Guard state and missing artifacts:
 pnpm exec codapult-guard doctor
 ```
 
+Guard fails closed when `rules.json` or `contracts.json` is malformed: `verify` returns a structured
+failure and CLI checks do not treat corrupted policy as an uninitialized project. Repair the file
+or review the diagnosis before using `init --force`.
+
 Compare persisted project states:
 
 ```bash
