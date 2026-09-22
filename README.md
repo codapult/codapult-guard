@@ -190,6 +190,15 @@ The model is framework-aware without being framework-dependent:
 Capabilities are evidence, not requirements. A Vite app, Express service, Hono project, Node
 package, monorepo, or Next.js SaaS can all use the same Guard core.
 
+## What Guard is — and is not
+
+Guard is an architecture control plane for AI-assisted development. It protects project-specific
+boundaries and change impact using local facts, approved policy, and deterministic verification.
+
+Guard is not a replacement for ESLint, TypeScript, tests, SAST, or a general-purpose PR bot. Those
+tools answer different questions; Guard connects their results with the architectural memory that
+an AI coding agent needs before and after changing a repository.
+
 ## The normal loop
 
 ```text

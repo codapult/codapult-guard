@@ -338,7 +338,9 @@ fields. A stale or unsafe contract is a policy problem, not a source-code findin
 verification to fail.
 
 Import-boundary contracts cover static imports, re-exports, and literal dynamic imports. Repeated
-references to the same module are deduplicated into one finding.
+references to the same module are deduplicated into one finding. When TypeScript resolves an alias
+or re-export, findings retain the original import specifier and expose the resolved project file as
+`resolvedPath`, so an agent can repair the actual boundary without losing source context.
 
 ### Proposals and approval
 
