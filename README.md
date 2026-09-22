@@ -168,6 +168,10 @@ Guard does not assume a fixed `UI → actions → services → repositories → 
 It can discover that shape when the project exhibits it, but observed patterns become enforceable
 only after explicit approval.
 
+Policy paths are validated as project-relative paths. Guard rejects traversal, absolute paths, and
+symlinks escaping the project root; import-boundary checks include imports, re-exports, and literal
+dynamic imports.
+
 ## What Guard discovers
 
 The model is framework-aware without being framework-dependent:

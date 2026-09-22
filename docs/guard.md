@@ -153,6 +153,11 @@ Guard stores its project memory under `.codapult/guard/`:
 | `cache.json`         | Optional discovery cache. Unchanged AST modules can be reused by content hash.                                            |
 | `history/`           | Project model snapshots used by `history-diff`.                                                                           |
 
+Discovery is bounded by default to 100,000 files and 25 MiB per file. These limits prevent an
+accidental scan of build artifacts or unusually large inputs from exhausting local resources.
+Use the public discovery API options `maxFiles` and `maxFileBytes` to raise them deliberately after
+configuring the project's ignore boundaries.
+
 Keep the policy and memory files under version control when the team wants shared architecture
 guardrails. Treat `cache.json` as disposable implementation cache if the team does not want it
 committed. Never commit secrets; Guard excludes common secret files from review input.
@@ -326,10 +331,14 @@ Example:
 }
 ```
 
-Scopes, entrypoints, exclusions, and references are repository-relative paths. `verify` and
+Scopes, entrypoints, exclusions, and references are repository-relative paths. Guard rejects
+absolute paths, `..` traversal, and symlinks that resolve outside the project root. `verify` and
 `audit` validate that these paths still exist and that contract definitions contain the required
-fields. A stale contract is a policy problem, not a source-code finding, and causes verification
-to fail.
+fields. A stale or unsafe contract is a policy problem, not a source-code finding, and causes
+verification to fail.
+
+Import-boundary contracts cover static imports, re-exports, and literal dynamic imports. Repeated
+references to the same module are deduplicated into one finding.
 
 ### Proposals and approval
 
