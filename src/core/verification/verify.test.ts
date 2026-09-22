@@ -100,6 +100,10 @@ describe('runGuardVerification', () => {
 
     const result = runGuardVerification(root, { projectChecks: false });
 
+    expect(result.impact).toBeDefined();
+    expect(Array.isArray(result.impact?.requestedFiles)).toBe(true);
+    expect(Array.isArray(result.impact?.affectedModules)).toBe(true);
+    expect(Array.isArray(result.impact?.relevantContracts)).toBe(true);
     expect(result.architecture?.findings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ ruleId: 'client-server-boundary', severity: 'error' }),

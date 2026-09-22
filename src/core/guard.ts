@@ -43,7 +43,8 @@ export function classifyGuardOutcome(input: {
 }
 export type GuardRuleKind = 'forbidden-import' | 'client-forbidden-import';
 export type GuardRuleStatus = 'active' | 'proposed';
-export type GuardContractKind = 'guidance' | 'import-boundary' | 'required-call';
+export type GuardContractKind =
+  'guidance' | 'import-boundary' | 'required-call' | 'package-boundary';
 
 export interface GuardContract {
   id: string;
@@ -58,6 +59,8 @@ export interface GuardContract {
   mustImport?: string[];
   mustNotImport?: string[];
   mustCall?: string[];
+  fromPackages?: string[];
+  mustNotImportPackages?: string[];
   status?: GuardRuleStatus;
   confidence?: 'high' | 'medium' | 'low';
   evidence?: string[];
@@ -732,6 +735,18 @@ export function validateGuardContracts(
         message: 'Required-call contracts need at least one mustCall pattern.',
       });
     }
+    if (
+      contract.kind === 'package-boundary' &&
+      ((contract.fromPackages?.length ?? 0) === 0 ||
+        (contract.mustNotImportPackages?.length ?? 0) === 0)
+    ) {
+      issues.push({
+        contractId: contract.id,
+        field: 'definition',
+        value: contract.kind,
+        message: 'Package-boundary contracts need fromPackages and mustNotImportPackages patterns.',
+      });
+    }
     for (const scope of contract.scope ?? []) {
       if (!isProjectPath(root, scope) || !existsSync(resolve(root, scope))) {
         issues.push({
@@ -842,6 +857,39 @@ interface ModuleImportReference {
 function moduleImportReferences(module: ProjectModel['modules'][number]): ModuleImportReference[] {
   const sources = [...new Set([...module.imports, ...module.exports, ...module.dynamicImports])];
   return sources.map((source) => ({ source, resolved: module.resolvedImportMap?.[source] }));
+}
+
+function packageSelectorMatches(value: string | undefined, selector: string): boolean {
+  if (!value) return false;
+  return selector.endsWith('*') ? value.startsWith(selector.slice(0, -1)) : value === selector;
+}
+
+function packageForFile(model: ProjectModel, file: string): string | undefined {
+  const packageInfo =
+    model.project.workspacePackages
+      .filter(
+        (workspace) =>
+          workspace.path === '.' ||
+          file === `${workspace.path}/package.json` ||
+          file.startsWith(`${workspace.path}/`),
+      )
+      .sort((left, right) => right.path.length - left.path.length)[0] ?? null;
+  return packageInfo === null ? undefined : (packageInfo.name ?? packageInfo.path);
+}
+
+function packageForImport(
+  model: ProjectModel,
+  reference: ModuleImportReference,
+): string | undefined {
+  const resolvedPackage = reference.resolved
+    ? packageForFile(model, reference.resolved)
+    : undefined;
+  if (resolvedPackage) return resolvedPackage;
+  return model.project.workspacePackages.find(
+    (workspace) =>
+      workspace.name === reference.source ||
+      (workspace.name !== undefined && reference.source.startsWith(`${workspace.name}/`)),
+  )?.name;
 }
 
 function scanFile(
@@ -963,6 +1011,36 @@ function scanContracts(
           message: contract.statement,
           fingerprint: `contract-required-call|${contract.id}|${module.path}`,
         });
+      }
+      if (contract.kind === 'package-boundary') {
+        const sourcePackage = packageForFile(model, module.path);
+        if (
+          !contract.fromPackages?.some((selector) =>
+            packageSelectorMatches(sourcePackage, selector),
+          )
+        ) {
+          continue;
+        }
+        for (const reference of moduleImportReferences(module)) {
+          const targetPackage = packageForImport(model, reference);
+          if (
+            !contract.mustNotImportPackages?.some((selector) =>
+              packageSelectorMatches(targetPackage, selector),
+            )
+          ) {
+            continue;
+          }
+          findings.push({
+            ruleId: `contract:${contract.id}`,
+            severity,
+            file: module.path,
+            line: 1,
+            importPath: reference.source,
+            ...(reference.resolved ? { resolvedPath: reference.resolved } : {}),
+            message: contract.statement,
+            fingerprint: `contract-package|${contract.id}|${module.path}|${reference.source}|${targetPackage ?? ''}`,
+          });
+        }
       }
     }
   }

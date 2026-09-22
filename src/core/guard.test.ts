@@ -295,6 +295,38 @@ describe('guard contracts', () => {
     );
   });
 
+  it('enforces package-boundary contracts across workspace packages', () => {
+    const root = createProject({
+      'package.json': JSON.stringify({ private: true, workspaces: ['packages/*'] }),
+      'packages/app/package.json': JSON.stringify({ name: '@example/app' }),
+      'packages/data/package.json': JSON.stringify({ name: '@example/data' }),
+      'packages/app/src/page.ts': `import { db } from '@example/data'; export const page = db;`,
+      'packages/data/src/db.ts': `export const db = {};`,
+    });
+    const report = scanGuard(root, {
+      version: 1,
+      rules: [],
+      contracts: [
+        {
+          id: 'app-no-data',
+          statement: 'The app package must use the service boundary.',
+          kind: 'package-boundary',
+          fromPackages: ['@example/app'],
+          mustNotImportPackages: ['@example/data'],
+          status: 'active',
+        },
+      ],
+    });
+
+    expect(report.findings).toContainEqual(
+      expect.objectContaining({
+        ruleId: 'contract:app-no-data',
+        file: 'packages/app/src/page.ts',
+        importPath: '@example/data',
+      }),
+    );
+  });
+
   it('limits contracts to entrypoints and excludes generated or helper files', () => {
     const root = createProject({
       'src/action.ts': `import { db } from './db'; export const action = () => db;`,

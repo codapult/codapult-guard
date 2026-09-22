@@ -18,7 +18,7 @@ export const guardRuleSchema = z.object({
 export const guardContractSchema = z.object({
   id: z.string().trim().min(1),
   statement: z.string().trim().min(1),
-  kind: z.enum(['guidance', 'import-boundary', 'required-call']).optional(),
+  kind: z.enum(['guidance', 'import-boundary', 'required-call', 'package-boundary']).optional(),
   severity: severity.optional(),
   scope: z.array(z.string().trim().min(1)).optional(),
   entrypoints: z.array(z.string().trim().min(1)).optional(),
@@ -28,6 +28,8 @@ export const guardContractSchema = z.object({
   mustImport: z.array(z.string().trim().min(1)).optional(),
   mustNotImport: z.array(z.string().trim().min(1)).optional(),
   mustCall: z.array(z.string().trim().min(1)).optional(),
+  fromPackages: z.array(z.string().trim().min(1)).optional(),
+  mustNotImportPackages: z.array(z.string().trim().min(1)).optional(),
   status: status.optional(),
   confidence: z.enum(['high', 'medium', 'low']).optional(),
   evidence: z.array(z.string()).optional(),

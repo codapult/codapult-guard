@@ -27,6 +27,7 @@ describe('Guard MCP transport', () => {
     const toolNames = tools.tools.map((tool) => tool.name);
 
     expect(toolNames).toEqual([
+      'codapult_guard_next_action',
       'codapult_guard_context',
       'codapult_guard_propose',
       'codapult_guard_init',

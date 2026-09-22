@@ -249,6 +249,7 @@ command supports it for automation.
 | `codapult-guard history`                   | List persisted project snapshots.                                                              |
 | `codapult-guard history-diff <from> <to>`  | Compare files, modules, dependencies, capabilities, graph edges, and cycles.                   |
 | `codapult-guard impact <files...>`         | Explain direct/transitive dependencies, dependents, capabilities, and relevant contracts.      |
+| `codapult-guard policy explain <id>`       | Explain an active or proposed rule/contract, its evidence, and approval history.               |
 | `codapult-guard check [--changed]`         | Enforce active Guard rules/contracts and report new findings.                                  |
 | `codapult-guard audit`                     | Run a full current Guard scan without baseline suppression and validate contracts.             |
 | `codapult-guard review`                    | Produce a bounded diff + project-context packet for semantic AI review.                        |
@@ -331,6 +332,26 @@ Example:
 }
 ```
 
+Package boundaries use workspace package names discovered from manifests. They are useful in
+monorepos where a relative path rule would be too fragile:
+
+```json
+{
+  "id": "apps-cannot-import-db-package",
+  "statement": "Application packages must not import the database package directly.",
+  "kind": "package-boundary",
+  "severity": "error",
+  "fromPackages": ["@acme/web", "@acme/admin"],
+  "mustNotImportPackages": ["@acme/db"],
+  "status": "active",
+  "confidence": "high"
+}
+```
+
+`verify` also returns an impact analysis: changed modules, direct dependencies, transitive
+dependents, affected capabilities, and relevant contracts. This is evidence for review, not an
+automatic claim that every dependent needs modification.
+
 Scopes, entrypoints, exclusions, and references are repository-relative paths. Guard rejects
 absolute paths, `..` traversal, and symlinks that resolve outside the project root. `verify` and
 `audit` validate that these paths still exist and that contract definitions contain the required
@@ -402,6 +423,7 @@ are:
 | `codapult_guard_audit`           | Full current scan and contract validation.                                                                     | No                                                            |
 | `codapult_guard_impact`          | Explain dependencies, transitive dependents, impact paths, capabilities, contracts, and graph edges for files. | No                                                            |
 | `codapult_guard_explain`         | Explain one rule/contract, its evidence, and suggested next steps.                                             | No                                                            |
+| `codapult_guard_next_action`     | Return the next bounded Guard action for an agent without changing project state.                              | No                                                            |
 
 Every tool accepts an optional `root`. If omitted, the MCP process working directory is used. The
 host should pass a project root when its MCP process is not started there.
@@ -448,6 +470,7 @@ Recommended agent sequence:
 
 ```text
 task complete
+  → codapult_guard_next_action
   → codapult_guard_context
   → codapult_guard_review(requirement, diff)
   → codapult_guard_verify(iteration: 1)
@@ -473,7 +496,8 @@ post-task hook syntax remain the responsibility of that AI platform. See the [in
 An agent instruction can be as short as:
 
 ```text
-Before declaring a task complete, call codapult_guard_context, then
+Before declaring a task complete, call codapult_guard_next_action, then
+follow its bounded next step. Normally call codapult_guard_context,
 codapult_guard_review with the requirement and diff, then codapult_guard_verify.
 If verification fails and canRetry is true, repair the code and repeat up to
 completionGate.maxIterations. Report warnings and unresolved requirements.

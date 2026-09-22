@@ -58,6 +58,7 @@ function renderFindings(findings: ReturnType<typeof scanGuard>['findings']): voi
       finding.severity === 'error' ? fail : finding.severity === 'warning' ? warn : info;
     printer(`${finding.file}:${finding.line} [${finding.ruleId}] ${finding.message}`);
     dim(`  import: ${finding.importPath}`);
+    if (finding.resolvedPath) dim(`  resolved: ${finding.resolvedPath}`);
   }
 }
 
@@ -546,6 +547,45 @@ export function guardRulesApproveCommand(ids?: string, options: { all?: boolean 
     selected.map((rule) => ({ id: rule.id, type: 'rule', decision: 'approved' as const })),
   );
   for (const rule of selected) success(`Activated ${rule.id}`);
+  process.exitCode = 0;
+}
+
+export function guardPolicyExplainCommand(id: string, options: { json?: boolean } = {}): void {
+  const root = getRoot();
+  const config = loadGuardConfig(root);
+  const proposals = loadGuardProposals(root);
+  if (!config) {
+    fail('Guard is not initialized. Run `codapult-guard init` first.');
+    process.exitCode = 1;
+    return;
+  }
+  const item = [...config.rules, ...(config.contracts ?? [])].find((entry) => entry.id === id);
+  const proposed = [...(proposals?.rules ?? []), ...(proposals?.contracts ?? [])].find(
+    (entry) => entry.id === id,
+  );
+  if (!item && !proposed) {
+    fail(`Policy item not found: ${id}`);
+    process.exitCode = 1;
+    return;
+  }
+  const result = {
+    id,
+    active: item?.status !== 'proposed' && item !== undefined,
+    definition: item ?? proposed,
+    proposal: proposed,
+    decisions: proposals?.decisions?.filter((decision) => decision.id === id) ?? [],
+  };
+  if (options.json) console.log(JSON.stringify(result, null, 2));
+  else {
+    heading(`Guard Policy: ${id}`);
+    info(`Status: ${result.active ? 'active' : 'proposed'}`);
+    const definition = result.definition;
+    if (definition && 'description' in definition) dim(definition.description);
+    if (definition && 'statement' in definition) dim(definition.statement);
+    if ((definition?.evidence?.length ?? 0) > 0)
+      dim(`Evidence: ${definition?.evidence?.join(', ')}`);
+    if (result.decisions.length > 0) dim(`Decisions: ${result.decisions.length}`);
+  }
   process.exitCode = 0;
 }
 

@@ -20,6 +20,7 @@ import {
   type GuardContractIssue,
   type GuardReport,
 } from '../guard.js';
+import { analyzeProjectImpact, type GuardImpactAnalysis } from '../analysis/impact.js';
 import { discoverProject } from '../discovery/discovery.js';
 
 export type GuardVerificationCheck = ProjectCheck;
@@ -33,6 +34,7 @@ export interface GuardVerificationResult {
   adapters: Partial<Record<GuardAdapter, CommandResult>>;
   runtime: ProjectRuntimeDiagnostics;
   architecture?: GuardReport;
+  impact?: GuardImpactAnalysis;
   contractIssues: GuardContractIssue[];
   requirement: {
     status: 'delegated-to-review';
@@ -79,6 +81,13 @@ export function runGuardVerification(
   const checks = projectChecks ? (options.checks ?? agentConfig.completionGate.checks) : [];
   const results = runProjectChecks(root, checks, { timeout: options.timeout });
   const workspaceModel = discoverProject(root);
+  const impact = analyzeProjectImpact(
+    workspaceModel,
+    options.changedOnly === false
+      ? workspaceModel.modules.map((module) => module.path)
+      : workspaceModel.git.changedFiles,
+    config.contracts ?? [],
+  );
   const workspaceChecks = runWorkspaceProjectChecks(
     root,
     workspaceModel.project.workspacePackages ?? [],
@@ -138,6 +147,7 @@ export function runGuardVerification(
     adapters,
     runtime,
     architecture,
+    impact,
     contractIssues,
     requirement,
   };

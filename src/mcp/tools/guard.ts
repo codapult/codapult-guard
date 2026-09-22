@@ -48,6 +48,78 @@ function jsonToolResult(
 
 export function registerGuardTools(server: McpServer): void {
   server.registerTool(
+    'codapult_guard_next_action',
+    {
+      title: 'Guard Next Action',
+      description:
+        'Return the next bounded action for an AI coding-agent loop without modifying project files.',
+      inputSchema: { root: rootSchema },
+    },
+    ({ root: requestedRoot }) => {
+      const root = getGuardRoot(requestedRoot);
+      const config = loadGuardConfig(root);
+      if (!config) {
+        return jsonToolResult({
+          status: 'needs-setup',
+          action: 'init',
+          reason: 'Guard policy is not initialized.',
+        });
+      }
+      const project = discoverProject(root);
+      const proposals = loadGuardProposals(root);
+      const proposedCount = [...(proposals?.rules ?? []), ...(proposals?.contracts ?? [])].filter(
+        (item) => item.status === 'proposed',
+      ).length;
+      if (proposals && getGuardProposalFreshness(project, proposals) === 'stale') {
+        return jsonToolResult({
+          status: 'needs-decision',
+          action: 'propose',
+          reason: 'Guard proposals are stale after project changes.',
+          canRetry: false,
+        });
+      }
+      if (proposedCount > 0) {
+        return jsonToolResult({
+          status: 'needs-decision',
+          action: 'policy-review',
+          reason: `${proposedCount} proposed policy item(s) await explicit approval or rejection.`,
+          canRetry: false,
+        });
+      }
+      const report = scanGuard(root, config, {
+        changedOnly: true,
+        baseline: loadBaseline(root),
+        includeArchitectureInsights: true,
+      });
+      const contractIssues = validateGuardContracts(root, config.contracts ?? []);
+      if (report.findings.some((finding) => finding.severity === 'error')) {
+        return jsonToolResult({
+          status: 'needs-repair',
+          action: 'repair',
+          reason: 'Active architecture findings remain in changed files.',
+          findings: report.findings,
+          canRetry: true,
+        });
+      }
+      if (contractIssues.length > 0) {
+        return jsonToolResult({
+          status: 'needs-decision',
+          action: 'policy-repair',
+          reason: 'Guard contracts are stale or invalid.',
+          contractIssues,
+          canRetry: false,
+        });
+      }
+      return jsonToolResult({
+        status: 'ready-for-verification',
+        action: 'verify',
+        reason: 'No changed-file architecture regressions remain.',
+        canRetry: true,
+      });
+    },
+  );
+
+  server.registerTool(
     'codapult_guard_context',
     {
       title: 'Guard Context',

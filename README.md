@@ -272,6 +272,7 @@ Recommended agent loop:
 
 ```text
 task finished
+  → codapult_guard_next_action
   → codapult_guard_context
   → codapult_guard_review(requirement, diff)
   → codapult_guard_verify
@@ -311,6 +312,7 @@ real project shapes.
 | `doctor`                   | Diagnose invalid or missing Guard artifacts.                                                |
 | `history` / `history-diff` | Inspect project model, module graph, and architecture-edge evolution.                       |
 | `impact <files...>`        | Explain dependencies, transitive dependents, capabilities, and contracts affected by files. |
+| `policy explain <id>`      | Explain a policy item, its evidence, and approval history.                                  |
 | `rules` / `contracts`      | Approve or reject proposed policy.                                                          |
 | `baseline`                 | Review or intentionally accept existing findings.                                           |
 

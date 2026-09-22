@@ -86,6 +86,7 @@ describe('registerGuardTools', () => {
     registerGuardTools(server as never);
 
     expect(server.tools.map((tool) => tool.name)).toEqual([
+      'codapult_guard_next_action',
       'codapult_guard_context',
       'codapult_guard_propose',
       'codapult_guard_init',
