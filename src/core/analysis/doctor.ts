@@ -53,12 +53,17 @@ function parseJson(root: string, path: string): unknown {
 export function diagnoseGuard(root: string): GuardDoctorReport {
   const initialized = existsSync(resolve(root, GUARD_BASELINE_FILE));
   const items: GuardDoctorItem[] = requiredArtifacts.map((path) => {
-    const guardConfig = path === GUARD_CONTRACTS_FILE ? loadGuardConfig(root) : undefined;
     if (!existsSync(resolve(root, path))) {
       return { path, status: 'missing', message: 'Artifact is missing.' };
     }
-    if (path === GUARD_RULES_FILE && !loadGuardConfig(root)) {
-      return { path, status: 'invalid', message: 'Guard rules are invalid or unsupported.' };
+    if (path === GUARD_RULES_FILE) {
+      try {
+        if (!loadGuardConfig(root)) {
+          return { path, status: 'invalid', message: 'Guard rules are invalid or unsupported.' };
+        }
+      } catch {
+        return { path, status: 'invalid', message: 'Guard rules are invalid or unsupported.' };
+      }
     }
     if (path === GUARD_PROJECT_FILE && !loadProjectModel(root)) {
       return { path, status: 'invalid', message: 'Project model is invalid or unsupported.' };
@@ -71,8 +76,17 @@ export function diagnoseGuard(root: string): GuardDoctorReport {
     }
     if (
       path === GUARD_CONTRACTS_FILE &&
-      guardConfig &&
-      validateGuardContracts(root, guardConfig.contracts).length > 0
+      (() => {
+        try {
+          const guardConfig = loadGuardConfig(root);
+          return (
+            guardConfig !== undefined &&
+            validateGuardContracts(root, guardConfig.contracts).length > 0
+          );
+        } catch {
+          return true;
+        }
+      })()
     ) {
       return { path, status: 'invalid', message: 'Guard contract scopes or references are stale.' };
     }

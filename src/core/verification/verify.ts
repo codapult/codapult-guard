@@ -33,6 +33,7 @@ export interface GuardVerificationResult {
   workspaceChecks: Record<string, ProjectCheckResults>;
   adapters: Partial<Record<GuardAdapter, CommandResult>>;
   runtime: ProjectRuntimeDiagnostics;
+  configError?: string;
   architecture?: GuardReport;
   impact?: GuardImpactAnalysis;
   contractIssues: GuardContractIssue[];
@@ -55,7 +56,6 @@ export function runGuardVerification(
     projectChecks?: boolean;
   } = {},
 ): GuardVerificationResult {
-  const config = loadGuardConfig(root);
   const requirement = {
     status: 'delegated-to-review' as const,
     provided: Boolean(options.requirement?.trim()),
@@ -64,6 +64,22 @@ export function runGuardVerification(
       : 'Requirement satisfaction is evaluated by guard review using the task and diff.',
   };
   const runtime = inspectProjectRuntime(root);
+  let config;
+  try {
+    config = loadGuardConfig(root);
+  } catch (error) {
+    return {
+      status: 'fail',
+      outcome: 'fail',
+      checks: {},
+      workspaceChecks: {},
+      adapters: {},
+      runtime,
+      configError: error instanceof Error ? error.message : String(error),
+      contractIssues: [],
+      requirement,
+    };
+  }
   if (!config)
     return {
       status: 'not-configured',

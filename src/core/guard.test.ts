@@ -433,7 +433,7 @@ describe('guard contracts', () => {
     writeFileSync(join(root, GUARD_DIR, 'rules.json'), '{"version":1,"rules":[null]}');
     writeFileSync(join(root, GUARD_DIR, 'baseline.json'), JSON.stringify(['ok', 42, null]));
 
-    expect(loadGuardConfig(root)).toBeUndefined();
+    expect(() => loadGuardConfig(root)).toThrow('Guard configuration is invalid');
     expect(loadBaseline(root)).toEqual(new Set(['ok']));
   });
 

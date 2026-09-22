@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 
 export interface CommandResult {
   command: string;
@@ -34,13 +34,35 @@ function captureOutput(value: string): { value: string; truncated: boolean } {
     : { value: redacted, truncated: false };
 }
 
+function parseCommand(command: string): { executable: string; args: string[] } | undefined {
+  const parts = command.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0 || parts.some((part) => /[;&|<>`$()]/.test(part))) return undefined;
+  const [executable, ...args] = parts;
+  const windowsExecutable =
+    process.platform === 'win32' && /^(?:npm|npx|pnpm|yarn|bun)$/.test(executable)
+      ? `${executable}.cmd`
+      : executable;
+  return { executable: windowsExecutable, args };
+}
+
 export function runProjectCommand(
   command: string,
   cwd: string,
   options: { timeout?: number; env?: NodeJS.ProcessEnv } = {},
 ): CommandResult {
+  const parsed = parseCommand(command);
+  if (!parsed) {
+    return {
+      command,
+      status: 'failed',
+      passed: false,
+      exitCode: 2,
+      stdout: '',
+      stderr: 'Unsafe or empty project command rejected.',
+    };
+  }
   try {
-    const stdout = execSync(command, {
+    const stdout = execFileSync(parsed.executable, parsed.args, {
       cwd,
       env: { ...process.env, ...options.env },
       stdio: 'pipe',

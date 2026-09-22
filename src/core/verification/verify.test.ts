@@ -27,6 +27,18 @@ describe('runGuardVerification', () => {
     });
   });
 
+  it('fails closed with a structured error when policy is corrupted', () => {
+    const root = mkdtempSync(join(tmpdir(), 'guard-verify-invalid-config-'));
+    roots.push(root);
+    mkdirSync(join(root, GUARD_DIR), { recursive: true });
+    writeFileSync(join(root, GUARD_DIR, 'rules.json'), '{"version":1,"rules":[null]}');
+
+    const result = runGuardVerification(root);
+
+    expect(result).toMatchObject({ status: 'fail', outcome: 'fail' });
+    expect(result.configError).toContain('Guard configuration is invalid');
+  });
+
   it('does not fail a configured project when checks are not configured', () => {
     const root = mkdtempSync(join(tmpdir(), 'guard-verify-configured-'));
     roots.push(root);

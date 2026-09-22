@@ -217,6 +217,13 @@ export class GuardAlreadyInitializedError extends Error {
   }
 }
 
+export class GuardConfigError extends Error {
+  constructor(path: string) {
+    super(`Guard configuration is invalid or unsupported: ${path}`);
+    this.name = 'GuardConfigError';
+  }
+}
+
 function isGuardConfig(value: unknown): value is GuardConfig {
   return guardConfigSchema.safeParse(value).success;
 }
@@ -294,12 +301,14 @@ export function getGuardProposalFreshness(
 }
 
 export function loadGuardConfig(root: string): GuardConfig | undefined {
-  const value = readJson(resolve(root, GUARD_RULES_FILE));
-  if (!isGuardConfig(value)) return undefined;
+  const rulesPath = resolve(root, GUARD_RULES_FILE);
+  if (!existsSync(rulesPath)) return undefined;
+  const value = readJson(rulesPath);
+  if (!isGuardConfig(value)) throw new GuardConfigError(GUARD_RULES_FILE);
   const contractsPath = resolve(root, GUARD_CONTRACTS_FILE);
   if (existsSync(contractsPath)) {
     const contractFile = readJson(contractsPath);
-    if (!isGuardContractsFile(contractFile)) return undefined;
+    if (!isGuardContractsFile(contractFile)) throw new GuardConfigError(GUARD_CONTRACTS_FILE);
     return { ...value, contracts: contractFile.contracts };
   }
   return {
