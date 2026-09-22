@@ -289,7 +289,8 @@ describe('guard contracts', () => {
       expect.objectContaining({
         ruleId: 'contract:actions-no-db-file',
         file: 'src/action.ts',
-        importPath: 'src/db.ts',
+        importPath: '@/db',
+        resolvedPath: 'src/db.ts',
       }),
     );
   });
@@ -385,6 +386,13 @@ describe('guard contracts', () => {
 
     expect(revision).toBe('working-tree');
     expect(existsSync(join(root, GUARD_HISTORY_DIR, `${revision}.json`))).toBe(true);
+  });
+
+  it('does not load artifacts outside the project root', () => {
+    const root = createProject({});
+
+    expect(loadGuardArtifact(root, '../outside.json')).toBeUndefined();
+    expect(loadGuardArtifact(root, '/etc/passwd')).toBeUndefined();
   });
 
   it('rejects malformed config and preserves only valid baseline fingerprints', () => {

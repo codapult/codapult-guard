@@ -27,6 +27,7 @@ export interface ModuleRecord {
   exports: string[];
   calls: string[];
   resolvedImports: string[];
+  resolvedImportMap?: Record<string, string>;
   dynamicImports: string[];
   declarations: {
     classes: number;
@@ -400,6 +401,7 @@ function parseModule(
   const dynamicImports: string[] = [];
   const declarations = { classes: 0, functions: 0, interfaces: 0, types: 0, variables: 0 };
   const resolvedImports = new Set<string>();
+  const resolvedImportMap: Record<string, string> = {};
   for (const declaration of sourceFile.getImportDeclarations()) {
     const importPath = declaration.getModuleSpecifierValue();
     imports.push(importPath);
@@ -414,7 +416,10 @@ function parseModule(
     const resolvedPath =
       (resolved && sourceFilePath(root, resolved, projectFiles)) ??
       resolveAliasedImport(root, importPath, aliases, projectFiles);
-    if (resolvedPath) resolvedImports.add(resolvedPath);
+    if (resolvedPath) {
+      resolvedImports.add(resolvedPath);
+      resolvedImportMap[importPath] = resolvedPath;
+    }
   }
   for (const declaration of sourceFile.getExportDeclarations()) {
     const moduleSpecifier = declaration.getModuleSpecifierValue();
@@ -424,7 +429,10 @@ function parseModule(
     const resolvedPath =
       (resolved && sourceFilePath(root, resolved, projectFiles)) ??
       resolveAliasedImport(root, moduleSpecifier, aliases, projectFiles);
-    if (resolvedPath) resolvedImports.add(resolvedPath);
+    if (resolvedPath) {
+      resolvedImports.add(resolvedPath);
+      resolvedImportMap[moduleSpecifier] = resolvedPath;
+    }
   }
   declarations.classes = sourceFile.getClasses().length;
   declarations.functions = sourceFile.getFunctions().length;
@@ -446,7 +454,10 @@ function parseModule(
     const resolvedPath =
       resolveInternalImport(path, importPath, projectFiles) ??
       resolveAliasedImport(root, importPath, aliases, projectFiles);
-    if (resolvedPath) resolvedImports.add(resolvedPath);
+    if (resolvedPath) {
+      resolvedImports.add(resolvedPath);
+      resolvedImportMap[importPath] = resolvedPath;
+    }
   }
   const directives = sourceFile
     .getStatements()
@@ -466,6 +477,7 @@ function parseModule(
     exports: [...new Set(exports)].sort(),
     calls: [...new Set(calls)].sort(),
     resolvedImports: [...resolvedImports].sort(),
+    resolvedImportMap,
     dynamicImports: [...new Set(dynamicImports)].sort(),
     declarations,
     directives,

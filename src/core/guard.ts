@@ -127,6 +127,7 @@ export interface GuardFinding {
   file: string;
   line: number;
   importPath: string;
+  resolvedPath?: string;
   message: string;
   fingerprint: string;
 }
@@ -320,10 +321,6 @@ export function loadGuardAgentConfig(root: string): GuardAgentConfig {
 
 export function writeGuardAgentConfig(root: string, agentConfig = defaultGuardAgentConfig): void {
   writeGuardArtifact(root, GUARD_AGENT_FILE, agentConfig);
-}
-
-export function loadGuardArtifact(root: string, relativePath: string): unknown {
-  return readJson(resolve(root, relativePath));
 }
 
 export function loadBaseline(root: string): Set<string> {
@@ -704,6 +701,11 @@ function isProjectPath(root: string, value: string): boolean {
   }
 }
 
+export function loadGuardArtifact(root: string, relativePath: string): unknown {
+  if (!isProjectPath(root, relativePath)) return undefined;
+  return readJson(resolve(root, relativePath));
+}
+
 export function validateGuardContracts(
   root: string,
   contracts: GuardContract[] = [],
@@ -832,15 +834,14 @@ function importLine(sourceFile: SourceFile, importPath: string): number {
   return dynamicImport?.getStartLineNumber() ?? 1;
 }
 
-function moduleImportPaths(module: ProjectModel['modules'][number]): string[] {
-  return [
-    ...new Set([
-      ...module.imports,
-      ...module.exports,
-      ...module.dynamicImports,
-      ...module.resolvedImports,
-    ]),
-  ];
+interface ModuleImportReference {
+  source: string;
+  resolved?: string;
+}
+
+function moduleImportReferences(module: ProjectModel['modules'][number]): ModuleImportReference[] {
+  const sources = [...new Set([...module.imports, ...module.exports, ...module.dynamicImports])];
+  return sources.map((source) => ({ source, resolved: module.resolvedImportMap?.[source] }));
 }
 
 function scanFile(
@@ -861,21 +862,28 @@ function scanFile(
     }
   }
   const findings: GuardFinding[] = [];
-  const importPaths = moduleImportPaths(module);
-  for (const importPath of importPaths) {
-    const line = sourceFile ? importLine(sourceFile, importPath) : 1;
+  for (const reference of moduleImportReferences(module)) {
+    const line = sourceFile ? importLine(sourceFile, reference.source) : 1;
     for (const rule of rules) {
       if (rule.status === 'proposed' || !ruleAppliesToFile(rule, file)) continue;
       if (rule.kind === 'client-forbidden-import' && !isClient) continue;
-      if (!rule.patterns.some((pattern) => patternMatches(importPath, pattern))) continue;
+      if (
+        !rule.patterns.some(
+          (pattern) =>
+            patternMatches(reference.source, pattern) ||
+            (reference.resolved !== undefined && patternMatches(reference.resolved, pattern)),
+        )
+      )
+        continue;
       findings.push({
         ruleId: rule.id,
         severity: rule.severity,
         file,
         line,
-        importPath,
+        importPath: reference.source,
+        ...(reference.resolved ? { resolvedPath: reference.resolved } : {}),
         message: rule.description,
-        fingerprint: `${rule.id}|${file}|${importPath}`,
+        fingerprint: `${rule.id}|${file}|${reference.source}|${reference.resolved ?? ''}`,
       });
     }
   }
@@ -896,25 +904,35 @@ function scanContracts(
       (item) => (!changed || changed.has(item.path)) && contractAppliesToFile(contract, item.path),
     )) {
       if (contract.kind === 'import-boundary') {
-        const importPaths = moduleImportPaths(module);
-        for (const importPath of importPaths) {
-          if (contract.mustNotImport?.some((pattern) => patternMatches(importPath, pattern))) {
+        for (const reference of moduleImportReferences(module)) {
+          if (
+            contract.mustNotImport?.some(
+              (pattern) =>
+                patternMatches(reference.source, pattern) ||
+                (reference.resolved !== undefined && patternMatches(reference.resolved, pattern)),
+            )
+          ) {
             findings.push({
               ruleId: `contract:${contract.id}`,
               severity,
               file: module.path,
               line: 1,
-              importPath,
+              importPath: reference.source,
+              ...(reference.resolved ? { resolvedPath: reference.resolved } : {}),
               message: contract.statement,
-              fingerprint: `contract-import|${contract.id}|${module.path}|${importPath}`,
+              fingerprint: `contract-import|${contract.id}|${module.path}|${reference.source}|${reference.resolved ?? ''}`,
             });
           }
         }
         if (
           contract.mustImport !== undefined &&
           contract.mustImport.length > 0 &&
-          !moduleImportPaths(module).some((importPath) =>
-            contract.mustImport?.some((pattern) => patternMatches(importPath, pattern)),
+          !moduleImportReferences(module).some((reference) =>
+            contract.mustImport?.some(
+              (pattern) =>
+                patternMatches(reference.source, pattern) ||
+                (reference.resolved !== undefined && patternMatches(reference.resolved, pattern)),
+            ),
           )
         ) {
           findings.push({
