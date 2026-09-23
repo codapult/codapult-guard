@@ -319,6 +319,11 @@ real project shapes.
 Use `analyze --refresh` after a structural change. `doctor --fix-cache` removes only the disposable
 discovery cache; it does not change rules, contracts, baseline, or source files.
 
+Guard state is safe for concurrent CLI/MCP readers and writers: derived facts are published as an
+atomic generation, policy updates use revisions, and short write contention is waited out. A
+process that dies while holding the state lock is detected by its local PID and the lock is
+recovered; use `--no-wait` when an integration needs immediate contention feedback.
+
 Run `pnpm exec codapult-guard <command> --help` for command-specific options.
 
 ## Security and data handling

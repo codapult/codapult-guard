@@ -1,10 +1,13 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   GUARD_DIR,
   GUARD_HISTORY_DIR,
+  GUARD_STATE_DIR,
+  GUARD_STATE_CURRENT_FILE,
   GUARD_PROJECT_FILE,
   GUARD_AGENT_FILE,
   GUARD_BASELINE_META_FILE,
@@ -25,6 +28,7 @@ import {
   writeBaseline,
   writeGuardConfig,
   writeProjectModel,
+  writeProjectState,
   validateGuardContracts,
   initializeGuard,
   GuardAlreadyInitializedError,
@@ -242,10 +246,27 @@ describe('guard contracts', () => {
   it('fails explicitly when another process owns a Guard artifact lock', () => {
     const root = createProject({});
     mkdirSync(join(root, GUARD_DIR), { recursive: true });
-    const path = join(root, GUARD_DIR, 'rules.json');
-    writeFileSync(`${path}.lock`, 'other-process\n');
+    const path = join(root, GUARD_DIR, '.state.lock');
+    mkdirSync(join(root, GUARD_DIR), { recursive: true });
+    writeFileSync(
+      path,
+      JSON.stringify({ pid: process.pid, hostname: 'test', token: 'other-process' }),
+    );
 
-    expect(() => writeGuardConfig(root, { version: 1, rules: [] })).toThrow(GuardStateBusyError);
+    expect(() => writeGuardConfig(root, { version: 1, rules: [] }, { noWait: true })).toThrow(
+      GuardStateBusyError,
+    );
+  });
+
+  it('recovers a lock left by a dead process using its PID', () => {
+    const root = createProject({});
+    mkdirSync(join(root, GUARD_DIR), { recursive: true });
+    writeFileSync(
+      join(root, GUARD_DIR, '.state.lock'),
+      JSON.stringify({ pid: 987_654_321, hostname: hostname(), token: 'orphaned' }),
+    );
+
+    expect(() => writeGuardConfig(root, { version: 1, rules: [] }, { noWait: true })).not.toThrow();
   });
 
   it('loads project contracts without treating them as executable findings', () => {
@@ -545,7 +566,7 @@ describe('guard contracts', () => {
       },
     ]);
 
-    expect(loadGuardConfig(root)).toEqual({ ...guardConfig, contracts: [] });
+    expect(loadGuardConfig(root)).toMatchObject({ ...guardConfig, contracts: [] });
     expect(JSON.parse(readFileSync(join(root, GUARD_CONTRACTS_FILE), 'utf8'))).toEqual({
       version: 1,
       contracts: [],
@@ -557,6 +578,33 @@ describe('guard contracts', () => {
         { id: 'contract', statement: 'statement', scope: ['missing'], references: ['other'] },
       ]),
     ).toHaveLength(2);
+  });
+
+  it('publishes derived state as one readable generation', () => {
+    const root = createProject({ 'src/existing.ts': 'export const value = 1;' });
+    const model = discoverProject(root);
+
+    writeProjectState(root, model);
+
+    const current = JSON.parse(readFileSync(join(root, GUARD_STATE_CURRENT_FILE), 'utf8')) as {
+      generation: string;
+    };
+    expect(
+      readFileSync(
+        join(root, GUARD_STATE_DIR, 'generations', current.generation, 'project.json'),
+        'utf8',
+      ),
+    ).toContain('existing.ts');
+    expect(loadGuardArtifact(root, GUARD_PROJECT_FILE)).toMatchObject({ version: 1 });
+  });
+
+  it('rejects a policy write based on a stale revision', () => {
+    const root = createProject({});
+    writeGuardConfig(root, { version: 1, rules: [] });
+
+    expect(() =>
+      writeGuardConfig(root, { version: 1, rules: [] }, { expectedRevision: 0 }),
+    ).toThrow('Guard state changed');
   });
 
   it('rejects contract paths that escape the project root', () => {

@@ -22,11 +22,11 @@ import {
   writeGuardProposals,
   initializeGuard,
   GuardAlreadyInitializedError,
+  GuardStateBusyError,
+  GuardStateStaleError,
   recordGuardProposalDecision,
   writeGuardConfig,
-  writeGuardMemory,
-  writeProjectModel,
-  writeProjectSnapshot,
+  writeProjectState,
   scanGuard,
   validateGuardContracts,
   classifyGuardOutcome,
@@ -92,6 +92,21 @@ function loadConfigSafely(root: string): {
   }
 }
 
+function stateErrorResult(error: unknown): ReturnType<typeof jsonToolResult> | undefined {
+  const isBusy = error instanceof GuardStateBusyError;
+  const isStale = error instanceof GuardStateStaleError;
+  if (!isBusy && !isStale) return undefined;
+  return jsonToolResult(
+    guardErrorPayload(isBusy ? 'GUARD_STATE_BUSY' : 'GUARD_STATE_STALE', String(error), {
+      configured: true,
+      outcome: 'error',
+      recoverable: true,
+      hint: 'Re-read Guard state and retry the operation.',
+    }),
+    true,
+  );
+}
+
 export function registerGuardTools(server: McpServer): void {
   server.registerTool(
     'codapult_guard_analyze',
@@ -105,15 +120,26 @@ export function registerGuardTools(server: McpServer): void {
           .boolean()
           .default(false)
           .describe('Required before writing refreshed Guard state.'),
+        wait_ms: z.number().int().min(0).max(120_000).default(30_000),
+        no_wait: z.boolean().default(false),
       },
     },
-    ({ root: requestedRoot, confirm }) => {
+    ({ root: requestedRoot, confirm, wait_ms, no_wait }) => {
       const root = getGuardRoot(requestedRoot);
       if (!confirm) return jsonToolResult({ status: 'needs-confirmation', action: 'analyze' });
       const discovery = discoverProjectWithMetrics(root, { persistCache: true });
-      writeProjectModel(root, discovery.model);
-      writeGuardMemory(root, discovery.model);
-      const revision = writeProjectSnapshot(root, discovery.model);
+      let revision: string;
+      try {
+        revision = writeProjectState(root, discovery.model, {
+          waitMs: wait_ms,
+          noWait: no_wait,
+        });
+      } catch (error) {
+        return (
+          stateErrorResult(error) ??
+          jsonToolResult({ status: 'fail', message: String(error) }, true)
+        );
+      }
       return jsonToolResult({
         status: 'ok',
         action: 'analyze',
@@ -331,15 +357,19 @@ export function registerGuardTools(server: McpServer): void {
           .boolean()
           .default(false)
           .describe('Replace existing Guard state; requires confirm.'),
+        wait_ms: z.number().int().min(0).max(120_000).default(30_000),
+        no_wait: z.boolean().default(false),
       },
     },
-    ({ root: requestedRoot, confirm, force }) => {
+    ({ root: requestedRoot, confirm, force, wait_ms, no_wait }) => {
       const root = getGuardRoot(requestedRoot);
       if (!confirm) return jsonToolResult({ status: 'needs-confirmation', root, force });
       try {
-        const result = initializeGuard(root, { force });
+        const result = initializeGuard(root, { force, waitMs: wait_ms, noWait: no_wait });
         return jsonToolResult({ status: 'ok', root, report: result.report });
       } catch (error) {
+        const stateError = stateErrorResult(error);
+        if (stateError) return stateError;
         const status =
           error instanceof GuardAlreadyInitializedError ? 'already-initialized' : 'fail';
         return jsonToolResult(

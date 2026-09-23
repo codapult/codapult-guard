@@ -37,6 +37,8 @@ export const guardContractSchema = z.object({
 
 export const guardConfigSchema = z.object({
   version: z.literal(1),
+  revision: z.number().int().nonnegative().optional(),
+  contentFingerprint: z.string().optional(),
   rules: z.array(guardRuleSchema),
   contracts: z.array(guardContractSchema).optional(),
 });

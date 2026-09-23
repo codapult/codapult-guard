@@ -136,6 +136,13 @@ export class DiscoveryLimitError extends Error {
   }
 }
 
+export class DiscoveryStaleError extends Error {
+  constructor() {
+    super('Project changed while Guard was discovering it.');
+    this.name = 'DiscoveryStaleError';
+  }
+}
+
 const DEFAULT_MAX_FILES = 100_000;
 const DEFAULT_MAX_FILE_BYTES = 25 * 1024 * 1024;
 
@@ -531,6 +538,22 @@ function runGit(root: string, args: string[]): string | undefined {
     const stdout = (error as { stdout?: Buffer }).stdout;
     return stdout?.toString().trim() || undefined;
   }
+}
+
+function discoverySignature(
+  root: string,
+  packageJson: Record<string, unknown>,
+  allFiles: string[],
+): string {
+  return JSON.stringify([
+    JSON.stringify(packageJson),
+    allFiles.map((path) => {
+      const stat = statSync(resolve(root, path));
+      return [path, stat.size, stat.mtimeMs, contentHash(root, path)];
+    }),
+    runGit(root, ['rev-parse', 'HEAD']),
+    runGit(root, ['status', '--porcelain']),
+  ]);
 }
 
 function gitModel(root: string): ProjectModel['git'] {
@@ -1102,7 +1125,11 @@ function createAstProject(root: string): Project {
   }
 }
 
-export function discoverProject(root: string, options: DiscoveryOptions = {}): ProjectModel {
+function discoverProjectOnce(
+  root: string,
+  options: DiscoveryOptions = {},
+  attempt = 0,
+): ProjectModel {
   const packageJson = readJsonObject(resolve(root, 'package.json'));
   const dependencies = asStringRecord(packageJson.dependencies);
   const devDependencies = asStringRecord(packageJson.devDependencies);
@@ -1131,17 +1158,7 @@ export function discoverProject(root: string, options: DiscoveryOptions = {}): P
       );
     }
   }
-  const signature = JSON.stringify([
-    JSON.stringify(packageJson),
-    allFiles.map((path) => {
-      const stat = statSync(resolve(root, path));
-      // Size/mtime alone can miss an in-place edit that preserves both values.
-      // The model is a correctness boundary, so include content in the cache key.
-      return [path, stat.size, stat.mtimeMs, contentHash(root, path)];
-    }),
-    runGit(root, ['rev-parse', 'HEAD']),
-    runGit(root, ['status', '--porcelain']),
-  ]);
+  const signature = discoverySignature(root, packageJson, allFiles);
   const cacheKey = resolve(root);
   discoveryCacheHits.set(cacheKey, false);
   const cached = discoveryCache.get(cacheKey);
@@ -1271,6 +1288,15 @@ export function discoverProject(root: string, options: DiscoveryOptions = {}): P
     },
     insights: buildInsights(root, files, modules, sourceFiles, dependencies, astProject),
   };
+  const finalFiles = listFiles(root, root, maxFiles);
+  const finalSignature =
+    finalFiles.length <= maxFiles
+      ? discoverySignature(root, readJsonObject(resolve(root, 'package.json')), finalFiles)
+      : undefined;
+  if (finalSignature !== signature) {
+    if (attempt < 2) return discoverProjectOnce(root, options, attempt + 1);
+    throw new DiscoveryStaleError();
+  }
   discoveryCache.set(cacheKey, { signature, model });
   discoveryReuse.set(cacheKey, reusedModules);
   if (options.persistCache ?? existsSync(resolve(root, `.${config.appName}/guard`))) {
@@ -1289,6 +1315,10 @@ export function discoverProject(root: string, options: DiscoveryOptions = {}): P
     }
   }
   return model;
+}
+
+export function discoverProject(root: string, options: DiscoveryOptions = {}): ProjectModel {
+  return discoverProjectOnce(root, options);
 }
 
 export function discoverProjectWithMetrics(

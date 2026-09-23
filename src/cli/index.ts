@@ -22,7 +22,7 @@ import {
   guardVerifyCommand,
 } from './commands/guard.js';
 import { config } from '../core/config.js';
-import { GuardConfigError, GuardStateBusyError } from '../core/guard.js';
+import { GuardConfigError, GuardStateBusyError, GuardStateStaleError } from '../core/guard.js';
 import { guardErrorPayload } from '../core/errors.js';
 
 const program = new Command()
@@ -37,8 +37,8 @@ const program = new Command()
 // Guard is the standalone product, so its commands live at the package root:
 // `codapult-guard init`, not `codapult-guard guard init`.
 const guard = program;
-guard.command('init').option('--force').action(guardInitCommand);
-guard.command('analyze').option('--refresh').action(guardAnalyzeCommand);
+guard.command('init').option('--force').option('--no-wait').action(guardInitCommand);
+guard.command('analyze').option('--refresh').option('--no-wait').action(guardAnalyzeCommand);
 guard.command('propose').option('--json').action(guardProposeCommand);
 guard.command('install-agent [target]').option('--json').action(guardInstallAgentCommand);
 guard.command('doctor').option('--json').option('--fix-cache').action(guardDoctorCommand);
@@ -108,18 +108,28 @@ program
 try {
   program.parse();
 } catch (error) {
-  if (error instanceof GuardConfigError || error instanceof GuardStateBusyError) {
+  if (
+    error instanceof GuardConfigError ||
+    error instanceof GuardStateBusyError ||
+    error instanceof GuardStateStaleError
+  ) {
     const isBusy = error instanceof GuardStateBusyError;
+    const isStale = error instanceof GuardStateStaleError;
     console.error(
       JSON.stringify(
-        guardErrorPayload(isBusy ? 'GUARD_STATE_BUSY' : 'GUARD_CONFIG_INVALID', error.message, {
-          configured: !isBusy,
-          outcome: 'error',
-          recoverable: true,
-          hint: isBusy
-            ? 'Retry after the other Guard process finishes.'
-            : 'Repair the invalid Guard artifact, then run codapult-guard doctor.',
-        }),
+        guardErrorPayload(
+          isBusy ? 'GUARD_STATE_BUSY' : isStale ? 'GUARD_STATE_STALE' : 'GUARD_CONFIG_INVALID',
+          error.message,
+          {
+            configured: !isBusy && !isStale,
+            outcome: 'error',
+            recoverable: true,
+            hint:
+              isBusy || isStale
+                ? 'Re-read Guard state and retry the operation.'
+                : 'Repair the invalid Guard artifact, then run codapult-guard doctor.',
+          },
+        ),
         null,
         2,
       ),

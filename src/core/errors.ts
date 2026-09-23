@@ -1,5 +1,9 @@
 export type GuardErrorCode =
-  'GUARD_NOT_CONFIGURED' | 'GUARD_CONFIG_INVALID' | 'GUARD_STATE_BUSY' | 'GUARD_INVALID_INPUT';
+  | 'GUARD_NOT_CONFIGURED'
+  | 'GUARD_CONFIG_INVALID'
+  | 'GUARD_STATE_BUSY'
+  | 'GUARD_STATE_STALE'
+  | 'GUARD_INVALID_INPUT';
 
 export interface GuardErrorPayload {
   status: 'error';

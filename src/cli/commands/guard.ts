@@ -31,9 +31,7 @@ import {
   scanGuard,
   classifyGuardOutcome,
   validateGuardContracts,
-  writeProjectModel,
-  writeGuardMemory,
-  writeProjectSnapshot,
+  writeProjectState,
   type GuardToolMode,
   type GuardFinding,
   type GuardConfig,
@@ -112,11 +110,14 @@ function readRequirement(root: string, file?: string): string | undefined {
   }
 }
 
-export function guardInitCommand(options: { force?: boolean } = {}): void {
+export function guardInitCommand(options: { force?: boolean; wait?: boolean } = {}): void {
   const root = getRoot();
   let initialized: ReturnType<typeof initializeGuard>;
   try {
-    initialized = initializeGuard(root, { force: options.force });
+    initialized = initializeGuard(
+      root,
+      options.wait === false ? { force: options.force, noWait: true } : { force: options.force },
+    );
   } catch (error) {
     if (error instanceof GuardAlreadyInitializedError) {
       fail(`${error.message} Use \`codapult-guard init --force\` to replace it.`);
@@ -146,14 +147,16 @@ export function guardInitCommand(options: { force?: boolean } = {}): void {
   );
 }
 
-export function guardAnalyzeCommand(_options: { refresh?: boolean } = {}): void {
+export function guardAnalyzeCommand(options: { refresh?: boolean; wait?: boolean } = {}): void {
   const root = getRoot();
   const { model: projectModel, metrics } = discoverProjectWithMetrics(root, {
     persistCache: true,
   });
-  writeProjectModel(root, projectModel);
-  writeGuardMemory(root, projectModel);
-  const revision = writeProjectSnapshot(root, projectModel);
+  const revision = writeProjectState(
+    root,
+    projectModel,
+    options.wait === false ? { noWait: true } : undefined,
+  );
   heading('Codapult Guard Analyze');
   success(
     `Updated ${GUARD_PROJECT_FILE}, ${GUARD_ARCHITECTURE_FILE}, and ${GUARD_CONVENTIONS_FILE}`,

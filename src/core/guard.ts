@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import { hostname } from 'node:os';
 import {
   existsSync,
   mkdirSync,
@@ -83,6 +84,8 @@ export interface GuardRule {
 
 export interface GuardConfig {
   version: 1;
+  revision?: number;
+  contentFingerprint?: string;
   rules: GuardRule[];
   contracts?: GuardContract[];
 }
@@ -194,6 +197,10 @@ export const GUARD_CONVENTIONS_FILE = `${GUARD_DIR}/conventions.json`;
 export const GUARD_AGENT_FILE = `${GUARD_DIR}/agent.json`;
 export const GUARD_CONTRACTS_FILE = `${GUARD_DIR}/contracts.json`;
 export const GUARD_PROPOSALS_FILE = `${GUARD_DIR}/proposals.json`;
+export const GUARD_STATE_DIR = `${GUARD_DIR}/state`;
+export const GUARD_STATE_GENERATIONS_DIR = `${GUARD_STATE_DIR}/generations`;
+export const GUARD_STATE_CURRENT_FILE = `${GUARD_STATE_DIR}/current.json`;
+const GUARD_STATE_LOCK_FILE = `${GUARD_DIR}/.state.lock`;
 
 export const defaultGuardConfig: GuardConfig = {
   version: 1,
@@ -234,6 +241,115 @@ export class GuardStateBusyError extends Error {
   }
 }
 
+export class GuardStateStaleError extends Error {
+  constructor() {
+    super('Guard state changed while this operation was running.');
+    this.name = 'GuardStateStaleError';
+  }
+}
+
+interface GuardStateLock {
+  pid: number;
+  hostname: string;
+  command: string;
+  token: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+let activeStateLock: { root: string; depth: number } | undefined;
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as { code?: string }).code === 'EPERM';
+  }
+}
+
+function sleepSync(milliseconds: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+function readStateLock(path: string): GuardStateLock | undefined {
+  try {
+    const value = JSON.parse(readFileSync(path, 'utf8')) as GuardStateLock;
+    return typeof value.pid === 'number' && typeof value.token === 'string' ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function withGuardStateLock<T>(
+  root: string,
+  callback: () => T,
+  options: { waitMs?: number; noWait?: boolean } = {},
+): T {
+  const normalizedRoot = resolve(root);
+  if (activeStateLock?.root === normalizedRoot) {
+    activeStateLock.depth += 1;
+    try {
+      return callback();
+    } finally {
+      activeStateLock.depth -= 1;
+    }
+  }
+  const lockPath = resolve(normalizedRoot, GUARD_STATE_LOCK_FILE);
+  mkdirSync(dirname(lockPath), { recursive: true });
+  const startedAt = Date.now();
+  const waitMs = options.noWait ? 0 : (options.waitMs ?? 30_000);
+  let lock: GuardStateLock | undefined;
+  let delay = 25;
+  while (!lock) {
+    const now = new Date();
+    const candidate: GuardStateLock = {
+      pid: process.pid,
+      hostname: hostname(),
+      command: process.argv.join(' '),
+      token: randomUUID(),
+      createdAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 300_000).toISOString(),
+    };
+    try {
+      writeFileSync(lockPath, `${JSON.stringify(candidate)}\n`, { encoding: 'utf8', flag: 'wx' });
+      lock = candidate;
+      break;
+    } catch (error) {
+      if ((error as { code?: string }).code !== 'EEXIST') throw error;
+      const owner = readStateLock(lockPath);
+      const ownerDead = owner?.hostname === hostname() && !processIsAlive(owner.pid);
+      let malformedStale = false;
+      if (owner === undefined) {
+        try {
+          malformedStale = Date.now() - statSync(lockPath).mtimeMs > 60_000;
+        } catch {
+          // The lock disappeared between the failed create and stat.
+        }
+      }
+      if (ownerDead || malformedStale) {
+        try {
+          unlinkSync(lockPath);
+          continue;
+        } catch {
+          // The owner or another waiter changed the lock; retry normally.
+        }
+      }
+      if (Date.now() - startedAt >= waitMs) throw new GuardStateBusyError(lockPath);
+      sleepSync(Math.min(delay, Math.max(1, waitMs - (Date.now() - startedAt))));
+      delay = Math.min(delay * 2, 500);
+    }
+  }
+  activeStateLock = { root: normalizedRoot, depth: 1 };
+  try {
+    return callback();
+  } finally {
+    activeStateLock = undefined;
+    const current = readStateLock(lockPath);
+    if (current?.token === lock.token) unlinkSync(lockPath);
+  }
+}
+
 function isGuardConfig(value: unknown): value is GuardConfig {
   return guardConfigSchema.safeParse(value).success;
 }
@@ -247,6 +363,12 @@ function readJson(filePath: string): unknown {
 }
 
 function atomicWriteFile(path: string, content: string): void {
+  if (activeStateLock && resolve(path).startsWith(`${activeStateLock.root}${sep}`)) {
+    const temporaryPath = `${path}.tmp-${process.pid}-${randomUUID()}`;
+    writeFileSync(temporaryPath, content, 'utf8');
+    renameSync(temporaryPath, path);
+    return;
+  }
   const lockPath = `${path}.lock`;
   let lockAcquired = false;
   try {
@@ -323,6 +445,12 @@ export function isGuardProposalFile(value: unknown): value is GuardProposalFile 
 
 export function fingerprintProjectModel(model: ProjectModel): string {
   return createHash('sha256').update(JSON.stringify(model)).digest('hex');
+}
+
+export function fingerprintGuardConfig(guardConfig: GuardConfig): string {
+  return createHash('sha256')
+    .update(JSON.stringify({ rules: guardConfig.rules, contracts: guardConfig.contracts ?? [] }))
+    .digest('hex');
 }
 
 export function getGuardProposalFreshness(
@@ -414,13 +542,34 @@ export function updateBaseline(
   return next;
 }
 
-export function writeGuardConfig(root: string, guardConfig: GuardConfig): void {
-  mkdirSync(resolve(root, GUARD_DIR), { recursive: true });
-  const { contracts = [], ...rulesConfig } = guardConfig;
-  atomicWriteFile(resolve(root, GUARD_RULES_FILE), `${JSON.stringify(rulesConfig, null, 2)}\n`);
-  atomicWriteFile(
-    resolve(root, GUARD_CONTRACTS_FILE),
-    `${JSON.stringify({ version: 1, contracts }, null, 2)}\n`,
+export function writeGuardConfig(
+  root: string,
+  guardConfig: GuardConfig,
+  options: { expectedRevision?: number; waitMs?: number; noWait?: boolean } = {},
+): void {
+  withGuardStateLock(
+    root,
+    () => {
+      mkdirSync(resolve(root, GUARD_DIR), { recursive: true });
+      const current = loadGuardConfig(root);
+      const currentRevision = current?.revision ?? 0;
+      const expectedRevision = options.expectedRevision ?? guardConfig.revision;
+      if (expectedRevision !== undefined && expectedRevision !== currentRevision) {
+        throw new GuardStateStaleError();
+      }
+      const nextRevision = currentRevision + 1;
+      const contentFingerprint = fingerprintGuardConfig(guardConfig);
+      const { contracts = [], ...rulesConfig } = guardConfig;
+      atomicWriteFile(
+        resolve(root, GUARD_RULES_FILE),
+        `${JSON.stringify({ ...rulesConfig, revision: nextRevision, contentFingerprint }, null, 2)}\n`,
+      );
+      atomicWriteFile(
+        resolve(root, GUARD_CONTRACTS_FILE),
+        `${JSON.stringify({ version: 1, contracts }, null, 2)}\n`,
+      );
+    },
+    options,
   );
 }
 
@@ -716,6 +865,27 @@ export function writeBaseline(root: string, findings: GuardFinding[], model?: Pr
 }
 
 export function loadProjectModel(root: string): ProjectModel | undefined {
+  const current = readJson(resolve(root, GUARD_STATE_CURRENT_FILE));
+  if (
+    current !== undefined &&
+    typeof current === 'object' &&
+    typeof (current as { generation?: unknown }).generation === 'string'
+  ) {
+    const generated = readJson(
+      resolve(
+        root,
+        GUARD_STATE_GENERATIONS_DIR,
+        (current as { generation: string }).generation,
+        'project.json',
+      ),
+    );
+    if (
+      generated !== undefined &&
+      typeof generated === 'object' &&
+      (generated as { version?: unknown }).version === 1
+    )
+      return generated as ProjectModel;
+  }
   const value = readJson(resolve(root, GUARD_PROJECT_FILE));
   if (
     value === null ||
@@ -730,6 +900,60 @@ export function loadProjectModel(root: string): ProjectModel | undefined {
 export function writeProjectModel(root: string, model: ProjectModel): void {
   mkdirSync(resolve(root, GUARD_DIR), { recursive: true });
   atomicWriteFile(resolve(root, GUARD_PROJECT_FILE), `${JSON.stringify(model, null, 2)}\n`);
+}
+
+/**
+ * Persist all derived project facts as one generation. Legacy root-level files remain as
+ * compatibility mirrors, while readers that understand generations always see a coherent set.
+ */
+export function writeProjectState(
+  root: string,
+  model: ProjectModel,
+  options: { waitMs?: number; noWait?: boolean } = {},
+): string {
+  return withGuardStateLock(
+    root,
+    () => {
+      const generationsRoot = resolve(root, GUARD_STATE_GENERATIONS_DIR);
+      mkdirSync(generationsRoot, { recursive: true });
+      const generation = `${Date.now()}-${randomUUID()}`;
+      const temporaryRoot = resolve(generationsRoot, `.tmp-${process.pid}-${randomUUID()}`);
+      mkdirSync(temporaryRoot, { recursive: true });
+      const derived = {
+        project: model,
+        architecture: buildArchitectureMemory(model),
+        conventions: buildConventionsMemory(model),
+      };
+      for (const [name, value] of Object.entries(derived)) {
+        writeFileSync(
+          resolve(temporaryRoot, `${name}.json`),
+          `${JSON.stringify(value, null, 2)}\n`,
+        );
+      }
+      writeFileSync(
+        resolve(temporaryRoot, 'manifest.json'),
+        `${JSON.stringify({ version: 1, generation, projectFingerprint: fingerprintProjectModel(model) }, null, 2)}\n`,
+      );
+      renameSync(temporaryRoot, resolve(generationsRoot, generation));
+      atomicWriteFile(
+        resolve(root, GUARD_STATE_CURRENT_FILE),
+        `${JSON.stringify({ version: 1, generation, projectFingerprint: fingerprintProjectModel(model) }, null, 2)}\n`,
+      );
+      atomicWriteFile(resolve(root, GUARD_PROJECT_FILE), `${JSON.stringify(model, null, 2)}\n`);
+      atomicWriteFile(
+        resolve(root, GUARD_ARCHITECTURE_FILE),
+        `${JSON.stringify(derived.architecture, null, 2)}\n`,
+      );
+      atomicWriteFile(
+        resolve(root, GUARD_CONVENTIONS_FILE),
+        `${JSON.stringify(derived.conventions, null, 2)}\n`,
+      );
+      // Snapshot persistence is defined below the generation writer to keep the public API grouped.
+      // eslint-disable-next-line @typescript-eslint/no-use-before-define
+      return writeProjectSnapshot(root, model);
+    },
+    options,
+  );
 }
 
 function projectRevision(root: string): string {
@@ -782,6 +1006,32 @@ function isProjectPath(root: string, value: string): boolean {
 
 export function loadGuardArtifact(root: string, relativePath: string): unknown {
   if (!isProjectPath(root, relativePath)) return undefined;
+  const generatedName =
+    relativePath === GUARD_PROJECT_FILE
+      ? 'project.json'
+      : relativePath === GUARD_ARCHITECTURE_FILE
+        ? 'architecture.json'
+        : relativePath === GUARD_CONVENTIONS_FILE
+          ? 'conventions.json'
+          : undefined;
+  if (generatedName) {
+    const current = readJson(resolve(root, GUARD_STATE_CURRENT_FILE));
+    if (
+      current !== undefined &&
+      typeof current === 'object' &&
+      typeof (current as { generation?: unknown }).generation === 'string'
+    ) {
+      const generated = readJson(
+        resolve(
+          root,
+          GUARD_STATE_GENERATIONS_DIR,
+          (current as { generation: string }).generation,
+          generatedName,
+        ),
+      );
+      if (generated !== undefined) return generated;
+    }
+  }
   return readJson(resolve(root, relativePath));
 }
 
@@ -1527,25 +1777,29 @@ export function buildGuardReviewPacket(
 
 export function initializeGuard(
   root: string,
-  options: { force?: boolean } = {},
+  options: { force?: boolean; waitMs?: number; noWait?: boolean } = {},
 ): { config: GuardConfig; report: GuardReport } {
-  if (existsSync(resolve(root, GUARD_BASELINE_FILE)) && !options.force) {
-    throw new GuardAlreadyInitializedError();
-  }
-  const projectModel = discoverProject(root);
-  const guardConfig = loadGuardConfig(root) ?? buildGeneratedGuardConfig(projectModel);
-  ensureGeneratedStateIgnored(root, projectModel);
-  writeGuardConfig(root, guardConfig);
-  if (options.force || !existsSync(resolve(root, GUARD_AGENT_FILE))) {
-    writeGuardAgentConfig(root);
-  }
-  writeGuardMemory(root, projectModel);
-  writeProjectModel(root, projectModel);
-  writeProjectSnapshot(root, projectModel);
-  writeGuardProposals(root, buildGuardProposals(projectModel, guardConfig));
-  const initialReport = scanGuard(root, guardConfig, { includeArchitectureInsights: true });
-  writeBaseline(root, initialReport.findings, projectModel);
-  return { config: guardConfig, report: { ...initialReport, findings: [] } };
+  return withGuardStateLock(
+    root,
+    () => {
+      if (existsSync(resolve(root, GUARD_BASELINE_FILE)) && !options.force) {
+        throw new GuardAlreadyInitializedError();
+      }
+      const projectModel = discoverProject(root);
+      const guardConfig = loadGuardConfig(root) ?? buildGeneratedGuardConfig(projectModel);
+      ensureGeneratedStateIgnored(root, projectModel);
+      writeGuardConfig(root, guardConfig);
+      if (options.force || !existsSync(resolve(root, GUARD_AGENT_FILE))) {
+        writeGuardAgentConfig(root);
+      }
+      writeProjectState(root, projectModel);
+      writeGuardProposals(root, buildGuardProposals(projectModel, guardConfig));
+      const initialReport = scanGuard(root, guardConfig, { includeArchitectureInsights: true });
+      writeBaseline(root, initialReport.findings, projectModel);
+      return { config: guardConfig, report: { ...initialReport, findings: [] } };
+    },
+    options,
+  );
 }
 
 export { clearDiscoveryCache, discoverProject, discoverProjectWithMetrics, findGuardRoot };
