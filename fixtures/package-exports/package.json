@@ -1,0 +1,7 @@
+{
+  "name": "guard-package-exports-fixture",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ]
+}

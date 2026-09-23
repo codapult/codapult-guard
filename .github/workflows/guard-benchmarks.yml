@@ -1,0 +1,26 @@
+name: Guard benchmarks
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 3 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run large workspace benchmark
+        run: pnpm test:guard:benchmark
+        env:
+          GUARD_BENCH_FILES: 1000
+          GUARD_BENCH_RUNS: 3

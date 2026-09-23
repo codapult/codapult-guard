@@ -1,0 +1,8 @@
+{
+  "name": "@fixture/core",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./db": "./src/db.ts"
+  }
+}
