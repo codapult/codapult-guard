@@ -22,6 +22,8 @@ import {
   guardVerifyCommand,
 } from './commands/guard.js';
 import { config } from '../core/config.js';
+import { GuardConfigError, GuardStateBusyError } from '../core/guard.js';
+import { guardErrorPayload } from '../core/errors.js';
 
 const program = new Command()
   .name(config.commandName)
@@ -103,4 +105,27 @@ program
     await import('../mcp/server.js');
   });
 
-program.parse();
+try {
+  program.parse();
+} catch (error) {
+  if (error instanceof GuardConfigError || error instanceof GuardStateBusyError) {
+    const isBusy = error instanceof GuardStateBusyError;
+    console.error(
+      JSON.stringify(
+        guardErrorPayload(isBusy ? 'GUARD_STATE_BUSY' : 'GUARD_CONFIG_INVALID', error.message, {
+          configured: !isBusy,
+          outcome: 'error',
+          recoverable: true,
+          hint: isBusy
+            ? 'Retry after the other Guard process finishes.'
+            : 'Repair the invalid Guard artifact, then run codapult-guard doctor.',
+        }),
+        null,
+        2,
+      ),
+    );
+    process.exitCode = 1;
+  } else {
+    throw error;
+  }
+}

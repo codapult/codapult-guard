@@ -30,7 +30,9 @@ import {
   scanGuard,
   validateGuardContracts,
   classifyGuardOutcome,
+  type GuardConfig,
 } from '../../core/guard.js';
+import { guardErrorPayload } from '../../core/errors.js';
 import { analyzeProjectImpact } from '../../core/analysis/impact.js';
 import { z } from 'zod';
 import { runGuardVerification } from '../../core/verification/verify.js';
@@ -63,6 +65,31 @@ function notConfiguredToolResult(): ReturnType<typeof jsonToolResult> {
     },
     true,
   );
+}
+
+function loadConfigSafely(root: string): {
+  config?: GuardConfig;
+  error?: ReturnType<typeof jsonToolResult>;
+} {
+  try {
+    return { config: loadGuardConfig(root) };
+  } catch (error) {
+    return {
+      error: jsonToolResult(
+        guardErrorPayload(
+          'GUARD_CONFIG_INVALID',
+          error instanceof Error ? error.message : String(error),
+          {
+            configured: false,
+            outcome: 'error',
+            recoverable: true,
+            hint: 'Repair the invalid Guard artifact, then run codapult-guard doctor.',
+          },
+        ),
+        true,
+      ),
+    };
+  }
 }
 
 export function registerGuardTools(server: McpServer): void {
@@ -106,7 +133,9 @@ export function registerGuardTools(server: McpServer): void {
     },
     ({ root: requestedRoot }) => {
       const root = getGuardRoot(requestedRoot);
-      const config = loadGuardConfig(root);
+      const loaded = loadConfigSafely(root);
+      if (loaded.error) return loaded.error;
+      const config = loaded.config;
       if (!config) {
         return jsonToolResult({
           status: 'needs-setup',
@@ -195,7 +224,9 @@ export function registerGuardTools(server: McpServer): void {
     },
     ({ root: requestedRoot, refresh }) => {
       const root = getGuardRoot(requestedRoot);
-      const config = loadGuardConfig(root);
+      const loaded = loadConfigSafely(root);
+      if (loaded.error) return loaded.error;
+      const config = loaded.config;
       const agentConfig = loadGuardAgentConfig(root);
       const discovery = refresh
         ? discoverProjectWithMetrics(root, { persistCache: true })
@@ -253,7 +284,9 @@ export function registerGuardTools(server: McpServer): void {
       if (persist && !confirm)
         return jsonToolResult({ status: 'needs-confirmation', persist: true });
       const project = discoverProject(root);
-      const config = loadGuardConfig(root) ?? buildGeneratedGuardConfig(project);
+      const loaded = loadConfigSafely(root);
+      if (loaded.error) return loaded.error;
+      const config = loaded.config ?? buildGeneratedGuardConfig(project);
       const proposals = buildGuardProposals(project, config);
       const previous = loadGuardProposals(root);
       if (persist) {
@@ -349,7 +382,9 @@ export function registerGuardTools(server: McpServer): void {
       if (missing.length > 0) return jsonToolResult({ status: 'invalid', missing }, true);
       if (!confirm) return jsonToolResult({ status: 'needs-confirmation', decision, ids });
       if (decision === 'approved') {
-        const config = loadGuardConfig(root) ?? { version: 1 as const, rules: [], contracts: [] };
+        const loaded = loadConfigSafely(root);
+        if (loaded.error) return loaded.error;
+        const config = loaded.config ?? { version: 1 as const, rules: [], contracts: [] };
         const nextRules = [...config.rules];
         const nextContracts = [...(config.contracts ?? [])];
         for (const item of selected) {
@@ -449,7 +484,9 @@ export function registerGuardTools(server: McpServer): void {
     },
     ({ root: requestedRoot }) => {
       const root = getGuardRoot(requestedRoot);
-      const config = loadGuardConfig(root);
+      const loaded = loadConfigSafely(root);
+      if (loaded.error) return loaded.error;
+      const config = loaded.config;
       if (!config) {
         return notConfiguredToolResult();
       }
@@ -497,7 +534,9 @@ export function registerGuardTools(server: McpServer): void {
     },
     ({ root: requestedRoot, changed_only, max_diff_chars, requirement, base }) => {
       const root = getGuardRoot(requestedRoot);
-      const config = loadGuardConfig(root);
+      const loaded = loadConfigSafely(root);
+      if (loaded.error) return loaded.error;
+      const config = loaded.config;
       if (!config) {
         return notConfiguredToolResult();
       }
@@ -526,7 +565,9 @@ export function registerGuardTools(server: McpServer): void {
     },
     ({ root: requestedRoot, changed_only }) => {
       const root = getGuardRoot(requestedRoot);
-      const config = loadGuardConfig(root);
+      const loaded = loadConfigSafely(root);
+      if (loaded.error) return loaded.error;
+      const config = loaded.config;
       if (!config) {
         return notConfiguredToolResult();
       }
@@ -566,7 +607,9 @@ export function registerGuardTools(server: McpServer): void {
     ({ root: requestedRoot, files }) => {
       const root = getGuardRoot(requestedRoot);
       const model = discoverProject(root);
-      const impact = analyzeProjectImpact(model, files, loadGuardConfig(root)?.contracts ?? []);
+      const loaded = loadConfigSafely(root);
+      if (loaded.error) return loaded.error;
+      const impact = analyzeProjectImpact(model, files, loaded.config?.contracts ?? []);
       return jsonToolResult({
         status: 'ok',
         ...impact,
@@ -586,7 +629,9 @@ export function registerGuardTools(server: McpServer): void {
     },
     ({ root: requestedRoot, id }) => {
       const root = getGuardRoot(requestedRoot);
-      const config = loadGuardConfig(root);
+      const loaded = loadConfigSafely(root);
+      if (loaded.error) return loaded.error;
+      const config = loaded.config;
       const item = [...(config?.rules ?? []), ...(config?.contracts ?? [])].find(
         (candidate) => candidate.id === id,
       );

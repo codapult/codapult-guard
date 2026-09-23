@@ -36,7 +36,9 @@ import {
   writeProjectSnapshot,
   type GuardToolMode,
   type GuardFinding,
+  type GuardConfig,
 } from '../../core/guard.js';
+import { guardErrorPayload } from '../../core/errors.js';
 import {
   runGuardVerification,
   type GuardVerificationCheck,
@@ -65,6 +67,27 @@ function renderFindings(findings: ReturnType<typeof scanGuard>['findings']): voi
 
 function getRoot(): string {
   return findGuardRoot();
+}
+
+function loadConfigSafely(
+  root: string,
+  options: { json?: boolean; machine?: boolean } = {},
+): { config?: GuardConfig; invalid: boolean } {
+  try {
+    return { config: loadGuardConfig(root), invalid: false };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Guard configuration is invalid.';
+    const payload = guardErrorPayload('GUARD_CONFIG_INVALID', message, {
+      configured: false,
+      outcome: 'error',
+      recoverable: true,
+      hint: 'Repair or remove the invalid Guard artifact, then run `codapult-guard doctor`.',
+    });
+    if (options.json || options.machine) console.log(JSON.stringify(payload, null, 2));
+    else fail(`${payload.message} Run \`codapult-guard doctor\` for details.`);
+    process.exitCode = 1;
+    return { invalid: true };
+  }
 }
 
 function readRequirement(root: string, file?: string): string | undefined {
@@ -147,7 +170,9 @@ export function guardAnalyzeCommand(_options: { refresh?: boolean } = {}): void 
 export function guardProposeCommand(options: { json?: boolean } = {}): void {
   const root = getRoot();
   const model = discoverProject(root);
-  const config = loadGuardConfig(root) ?? buildGeneratedGuardConfig(model);
+  const loaded = loadConfigSafely(root, options);
+  if (loaded.invalid) return;
+  const config = loaded.config ?? buildGeneratedGuardConfig(model);
   const proposals = buildGuardProposals(model, config);
   const previous = loadGuardProposals(root);
   writeGuardProposals(root, {
@@ -235,11 +260,9 @@ export function guardImpactCommand(files: string[], options: { json?: boolean } 
     process.exitCode = 1;
     return;
   }
-  const result = analyzeProjectImpact(
-    discoverProject(root),
-    files,
-    loadGuardConfig(root)?.contracts ?? [],
-  );
+  const loaded = loadConfigSafely(root, options);
+  if (loaded.invalid) return;
+  const result = analyzeProjectImpact(discoverProject(root), files, loaded.config?.contracts ?? []);
   if (options.json) {
     console.log(JSON.stringify({ status: 'ok', ...result }, null, 2));
     return;
@@ -348,7 +371,9 @@ export function guardCheckCommand(
   options: { changed?: boolean; json?: boolean; sarif?: boolean } = {},
 ): void {
   const root = getRoot();
-  const config = loadGuardConfig(root);
+  const loaded = loadConfigSafely(root, { ...options, machine: options.json || options.sarif });
+  if (loaded.invalid) return;
+  const config = loaded.config;
   if (!config) {
     if (options.json) {
       console.log(
@@ -426,7 +451,9 @@ export function guardCheckCommand(
 
 export function guardAuditCommand(options: { json?: boolean } = {}): void {
   const root = getRoot();
-  const config = loadGuardConfig(root);
+  const loaded = loadConfigSafely(root, options);
+  if (loaded.invalid) return;
+  const config = loaded.config;
   if (!config) {
     if (options.json) {
       console.log(
@@ -501,15 +528,13 @@ export function guardBaselineCommand(
     process.exitCode = 0;
     return;
   }
+  const loaded = options.all ? loadConfigSafely(root, options) : { invalid: false as const };
+  if (loaded.invalid) return;
   const selected = options.all
     ? [
-        ...scanGuard(
-          root,
-          loadGuardConfig(root) ?? buildGeneratedGuardConfig(discoverProject(root)),
-          {
-            includeArchitectureInsights: true,
-          },
-        ).findings.map((finding) => finding.fingerprint),
+        ...scanGuard(root, loaded.config ?? buildGeneratedGuardConfig(discoverProject(root)), {
+          includeArchitectureInsights: true,
+        }).findings.map((finding) => finding.fingerprint),
       ]
     : (ids ?? '')
         .split(',')
@@ -537,7 +562,9 @@ export function guardBaselineCommand(
 
 export function guardRulesApproveCommand(ids?: string, options: { all?: boolean } = {}): void {
   const root = getRoot();
-  const config = loadGuardConfig(root);
+  const loaded = loadConfigSafely(root);
+  if (loaded.invalid) return;
+  const config = loaded.config;
   if (!config) {
     fail('Guard is not initialized. Run `codapult-guard init` first.');
     process.exitCode = 1;
@@ -573,7 +600,9 @@ export function guardRulesApproveCommand(ids?: string, options: { all?: boolean 
 
 export function guardPolicyExplainCommand(id: string, options: { json?: boolean } = {}): void {
   const root = getRoot();
-  const config = loadGuardConfig(root);
+  const loaded = loadConfigSafely(root, options);
+  if (loaded.invalid) return;
+  const config = loaded.config;
   const proposals = loadGuardProposals(root);
   if (!config) {
     fail('Guard is not initialized. Run `codapult-guard init` first.');
@@ -612,7 +641,9 @@ export function guardPolicyExplainCommand(id: string, options: { json?: boolean 
 
 export function guardContractsApproveCommand(ids?: string, options: { all?: boolean } = {}): void {
   const root = getRoot();
-  const config = loadGuardConfig(root);
+  const loaded = loadConfigSafely(root);
+  if (loaded.invalid) return;
+  const config = loaded.config;
   if (!config) {
     fail('Guard is not initialized. Run `codapult-guard init` first.');
     process.exitCode = 1;
@@ -652,7 +683,9 @@ export function guardContractsApproveCommand(ids?: string, options: { all?: bool
 
 export function guardContractsRejectCommand(ids?: string, options: { all?: boolean } = {}): void {
   const root = getRoot();
-  const config = loadGuardConfig(root);
+  const loaded = loadConfigSafely(root);
+  if (loaded.invalid) return;
+  const config = loaded.config;
   if (!config) {
     fail('Guard is not initialized. Run `codapult-guard init` first.');
     process.exitCode = 1;
@@ -693,7 +726,9 @@ export function guardReviewCommand(
   const root = getRoot();
   const requirement = readRequirement(root, options.requirement);
   if (options.requirement && !requirement) return;
-  const config = loadGuardConfig(root);
+  const loaded = loadConfigSafely(root);
+  if (loaded.invalid) return;
+  const config = loaded.config;
   if (!config) {
     fail(`Guard is not initialized. Run \`codapult-guard init\` first.`);
     process.exitCode = 1;

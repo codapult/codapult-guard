@@ -1,5 +1,6 @@
 /** Public, framework-agnostic Guard API. */
 export * from './core/guard.js';
+export * from './core/errors.js';
 export * from './core/discovery/discovery.js';
 export { runGuardVerification } from './core/verification/verify.js';
 export type {

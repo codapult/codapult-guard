@@ -231,6 +231,9 @@ Guard fails closed when `rules.json` or `contracts.json` is malformed: `verify` 
 failure and CLI checks do not treat corrupted policy as an uninitialized project. Repair the file
 or review the diagnosis before using `init --force`.
 
+CLI and MCP expose the same structured error payload for `GUARD_NOT_CONFIGURED`,
+`GUARD_CONFIG_INVALID`, and retryable `GUARD_STATE_BUSY` concurrent-write conflicts.
+
 Guard state writes use atomic rename plus a short-lived per-artifact lock. A concurrent writer gets
 an explicit busy error; stale locks older than one minute are recovered automatically.
 
