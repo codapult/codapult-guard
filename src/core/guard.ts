@@ -415,6 +415,40 @@ export function recordGuardProposalDecision(
   });
 }
 
+export function getPendingGuardProposals(
+  proposals: GuardProposalFile | undefined,
+): { id: string; type: 'rule' | 'contract' }[] {
+  if (!proposals) return [];
+  const decisions = new Map<string, GuardProposalDecision>();
+  for (const decision of proposals.decisions ?? []) {
+    const current = decisions.get(`${decision.type}:${decision.id}`);
+    if (!current || decision.decidedAt >= current.decidedAt) {
+      decisions.set(`${decision.type}:${decision.id}`, decision);
+    }
+  }
+  const matchesCurrentProposal = (decision: GuardProposalDecision | undefined): boolean =>
+    decision !== undefined &&
+    (proposals.proposalId === undefined || decision.proposalId === proposals.proposalId) &&
+    (proposals.contentFingerprint === undefined ||
+      decision.proposalFingerprint === proposals.contentFingerprint) &&
+    (proposals.revision === undefined || decision.revision === proposals.revision);
+  return [
+    ...proposals.rules
+      .filter(
+        (rule) =>
+          rule.status === 'proposed' && !matchesCurrentProposal(decisions.get(`rule:${rule.id}`)),
+      )
+      .map((rule) => ({ id: rule.id, type: 'rule' as const })),
+    ...proposals.contracts
+      .filter(
+        (contract) =>
+          contract.status === 'proposed' &&
+          !matchesCurrentProposal(decisions.get(`contract:${contract.id}`)),
+      )
+      .map((contract) => ({ id: contract.id, type: 'contract' as const })),
+  ];
+}
+
 export function buildGuardProposals(
   model: ProjectModel,
   guardConfig: GuardConfig,

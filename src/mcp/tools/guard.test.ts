@@ -41,6 +41,7 @@ vi.mock('../../core/guard.js', () => ({
   recordGuardProposalDecision: vi.fn(),
   writeGuardConfig: vi.fn(),
   loadGuardProposals: vi.fn(),
+  getPendingGuardProposals: vi.fn(() => []),
   getGuardProposalFreshness: vi.fn(() => 'unknown'),
   scanGuard: vi.fn(() => ({ findings: [], suppressed: 0, scannedFiles: 0 })),
   validateGuardContracts: vi.fn(() => []),
@@ -58,8 +59,13 @@ vi.mock('../../core/verification/verify.js', () => ({
   })),
 }));
 
-const { discoverProjectWithMetrics, loadProjectModel, buildGuardReviewPacket } =
-  await import('../../core/guard.js');
+const {
+  discoverProjectWithMetrics,
+  loadProjectModel,
+  buildGuardReviewPacket,
+  loadGuardProposals,
+  getGuardProposalFreshness,
+} = await import('../../core/guard.js');
 const { runGuardVerification } = await import('../../core/verification/verify.js');
 const { registerGuardTools } = await import('./guard.js');
 
@@ -110,6 +116,50 @@ describe('registerGuardTools', () => {
     expect(discoverProjectWithMetrics).toHaveBeenCalledWith('/project', { persistCache: true });
     expect(loadProjectModel).not.toHaveBeenCalled();
     expect(JSON.parse(result.content[0].text)).toMatchObject({ tools: 'auto' });
+  });
+
+  it('does not ask for policy review after the current proposal was decided', () => {
+    vi.mocked(loadGuardProposals).mockReturnValue({
+      version: 1,
+      generatedAt: 'now',
+      proposalId: 'proposal-id',
+      contentFingerprint: 'content-hash',
+      revision: 1,
+      rules: [
+        {
+          id: 'decided-rule',
+          description: 'Rule',
+          severity: 'error',
+          kind: 'forbidden-import',
+          patterns: ['db'],
+          status: 'proposed',
+        },
+      ],
+      contracts: [],
+      questions: [],
+      decisions: [
+        {
+          id: 'decided-rule',
+          type: 'rule',
+          decision: 'approved',
+          decidedAt: '2026-09-23T00:00:00.000Z',
+          proposalId: 'proposal-id',
+          proposalFingerprint: 'content-hash',
+          revision: 1,
+        },
+      ],
+    });
+    vi.mocked(getGuardProposalFreshness).mockReturnValue('current');
+    const server = createMockServer();
+    registerGuardTools(server as never);
+    const handler = server.tools.find(
+      (tool) => tool.name === 'codapult_guard_next_action',
+    )!.handler;
+
+    expect(JSON.parse(handler({}).content[0].text)).toMatchObject({
+      status: 'ready-for-verification',
+      action: 'verify',
+    });
   });
 
   it('allows an agent to request the persisted snapshot explicitly', () => {

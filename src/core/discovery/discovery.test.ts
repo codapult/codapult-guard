@@ -32,6 +32,17 @@ describe('discoverProject', () => {
     expect(() => discoverProject(root, { maxFileBytes: 1 })).toThrow(/maxFileBytes/);
   });
 
+  it('stops recursive discovery as soon as the file limit is exceeded', () => {
+    const root = mkdtempSync(join(tmpdir(), 'guard-discovery-early-limit-'));
+    roots.push(root);
+    mkdirSync(join(root, 'nested'), { recursive: true });
+    for (const name of ['a.ts', 'b.ts', 'c.ts']) {
+      writeFileSync(join(root, 'nested', name), 'export const value = 1;\n');
+    }
+
+    expect(() => discoverProject(root, { maxFiles: 1 })).toThrow('discovery limit was reached');
+  });
+
   it('invalidates the cache when content changes without size or mtime changes', () => {
     const root = mkdtempSync(join(tmpdir(), 'guard-cache-integrity-'));
     roots.push(root);

@@ -35,6 +35,7 @@ import {
   writeGuardProposals,
   fingerprintProjectModel,
   getGuardProposalFreshness,
+  getPendingGuardProposals,
   buildGuardReviewPacket,
   classifyGuardOutcome,
 } from './guard.js';
@@ -377,6 +378,55 @@ describe('guard contracts', () => {
         proposalFingerprint: 'content-hash',
         revision: 2,
       },
+    ]);
+  });
+
+  it('does not keep decided proposals pending, but does reopen changed proposals', () => {
+    const proposals = {
+      version: 1 as const,
+      generatedAt: 'now',
+      proposalId: 'proposal-id',
+      contentFingerprint: 'content-hash',
+      revision: 2,
+      rules: [
+        {
+          id: 'accepted-rule',
+          description: 'Rule',
+          severity: 'error' as const,
+          kind: 'forbidden-import' as const,
+          patterns: ['db'],
+          status: 'proposed' as const,
+        },
+        {
+          id: 'new-rule',
+          description: 'New rule',
+          severity: 'error' as const,
+          kind: 'forbidden-import' as const,
+          patterns: ['secret'],
+          status: 'proposed' as const,
+        },
+      ],
+      contracts: [],
+      questions: [],
+      decisions: [
+        {
+          id: 'accepted-rule',
+          type: 'rule' as const,
+          decision: 'approved' as const,
+          decidedAt: '2026-09-23T00:00:00.000Z',
+          proposalId: 'proposal-id',
+          proposalFingerprint: 'content-hash',
+          revision: 2,
+        },
+      ],
+    };
+
+    expect(getPendingGuardProposals(proposals)).toEqual([{ id: 'new-rule', type: 'rule' }]);
+    expect(
+      getPendingGuardProposals({ ...proposals, contentFingerprint: 'changed-content' }),
+    ).toEqual([
+      { id: 'accepted-rule', type: 'rule' },
+      { id: 'new-rule', type: 'rule' },
     ]);
   });
 

@@ -15,6 +15,7 @@ import {
   loadGuardConfig,
   loadGuardAgentConfig,
   loadGuardProposals,
+  getPendingGuardProposals,
   getGuardProposalFreshness,
   loadProjectModel,
   writeGuardProposals,
@@ -67,9 +68,7 @@ export function registerGuardTools(server: McpServer): void {
       }
       const project = discoverProject(root);
       const proposals = loadGuardProposals(root);
-      const proposedCount = [...(proposals?.rules ?? []), ...(proposals?.contracts ?? [])].filter(
-        (item) => item.status === 'proposed',
-      ).length;
+      const proposedCount = getPendingGuardProposals(proposals).length;
       if (proposals && getGuardProposalFreshness(project, proposals) === 'stale') {
         return jsonToolResult({
           status: 'needs-decision',

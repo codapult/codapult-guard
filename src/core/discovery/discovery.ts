@@ -276,13 +276,21 @@ function workspacePackages(
     .sort((left, right) => left.path.localeCompare(right.path));
 }
 
-function listFiles(root: string, directory = root): string[] {
+function listFiles(root: string, directory = root, maxFiles = DEFAULT_MAX_FILES): string[] {
   const result: string[] = [];
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     if (entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name)) continue;
     const path = resolve(directory, entry.name);
-    if (entry.isDirectory()) result.push(...listFiles(root, path));
-    else if (entry.isFile() && !ignoredFile(path)) result.push(relative(root, path));
+    if (entry.isDirectory()) result.push(...listFiles(root, path, maxFiles - result.length));
+    else if (entry.isFile() && !ignoredFile(path)) {
+      result.push(relative(root, path));
+      if (result.length > maxFiles) {
+        throw new DiscoveryLimitError(
+          `Project contains more than ${maxFiles} files; discovery limit was reached. ` +
+            'Use an ignore file or raise maxFiles deliberately.',
+        );
+      }
+    }
   }
   return result.sort();
 }
@@ -1067,7 +1075,6 @@ export function discoverProject(root: string, options: DiscoveryOptions = {}): P
   const dependencies = asStringRecord(packageJson.dependencies);
   const devDependencies = asStringRecord(packageJson.devDependencies);
   const scripts = asStringRecord(packageJson.scripts);
-  const allFiles = listFiles(root);
   const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES;
   const maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
   if (!Number.isInteger(maxFiles) || maxFiles < 1) {
@@ -1076,6 +1083,7 @@ export function discoverProject(root: string, options: DiscoveryOptions = {}): P
   if (!Number.isInteger(maxFileBytes) || maxFileBytes < 1) {
     throw new DiscoveryLimitError('Discovery maxFileBytes must be a positive integer.');
   }
+  const allFiles = listFiles(root, root, maxFiles);
   if (allFiles.length > maxFiles) {
     throw new DiscoveryLimitError(
       `Project contains ${allFiles.length} files; discovery limit is ${maxFiles}. ` +
