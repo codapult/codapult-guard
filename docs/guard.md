@@ -231,6 +231,9 @@ Guard fails closed when `rules.json` or `contracts.json` is malformed: `verify` 
 failure and CLI checks do not treat corrupted policy as an uninitialized project. Repair the file
 or review the diagnosis before using `init --force`.
 
+Guard state writes use atomic rename plus a short-lived per-artifact lock. A concurrent writer gets
+an explicit busy error; stale locks older than one minute are recovered automatically.
+
 Compare persisted project states:
 
 ```bash
@@ -247,9 +250,9 @@ command supports it for automation.
 | ------------------------------------------ | ---------------------------------------------------------------------------------------------- |
 | `codapult-guard init`                      | Create Guard state and establish the initial baseline. Refuses an existing baseline.           |
 | `codapult-guard init --force`              | Replace existing Guard state intentionally.                                                    |
-| `codapult-guard analyze`                   | Refresh persisted discovery, architecture, conventions, and snapshot. Does not alter baseline. |
+| `codapult-guard analyze [--refresh]`       | Refresh persisted discovery, architecture, conventions, and snapshot. Does not alter baseline. |
 | `codapult-guard propose`                   | Generate evidence-based rules/contracts for review. Does not activate them.                    |
-| `codapult-guard doctor`                    | Diagnose missing, invalid, or unsupported Guard artifacts.                                     |
+| `codapult-guard doctor [--fix-cache]`      | Diagnose state; optionally remove the disposable discovery cache.                              |
 | `codapult-guard history`                   | List persisted project snapshots.                                                              |
 | `codapult-guard history-diff <from> <to>`  | Compare files, modules, dependencies, capabilities, graph edges, and cycles.                   |
 | `codapult-guard impact <files...>`         | Explain direct/transitive dependencies, dependents, capabilities, and relevant contracts.      |
@@ -354,7 +357,9 @@ monorepos where a relative path rule would be too fragile:
 
 `verify` also returns an impact analysis: changed modules, direct dependencies, transitive
 dependents, affected capabilities, and relevant contracts. This is evidence for review, not an
-automatic claim that every dependent needs modification.
+automatic claim that every dependent needs modification. `check --changed` includes changed files
+and their transitive dependents so a changed implementation cannot bypass an unchanged entrypoint
+contract.
 
 Scopes, entrypoints, exclusions, and references are repository-relative paths. Guard rejects
 absolute paths, `..` traversal, and symlinks that resolve outside the project root. `verify` and
@@ -418,6 +423,7 @@ are:
 | MCP tool                         | Purpose                                                                                                        | Writes by default?                                            |
 | -------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
 | `codapult_guard_context`         | Read current project facts, policy, architecture, and completion config.                                       | No                                                            |
+| `codapult_guard_analyze`         | Refresh persisted facts and snapshots without changing policy or baseline.                                     | Requires `confirm: true`.                                     |
 | `codapult_guard_propose`         | Generate evidence-based proposals.                                                                             | No; persistence requires `persist: true` and `confirm: true`. |
 | `codapult_guard_init`            | Initialize Guard.                                                                                              | Requires `confirm: true`; force also requires confirmation.   |
 | `codapult_guard_proposal_decide` | Approve/reject current proposals.                                                                              | Requires `confirm: true`.                                     |

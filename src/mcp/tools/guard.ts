@@ -7,6 +7,7 @@ import {
   buildGuardReviewPacket,
   discoverProject,
   discoverProjectWithMetrics,
+  fingerprintProjectModel,
   findGuardRoot,
   GUARD_ARCHITECTURE_FILE,
   GUARD_CONVENTIONS_FILE,
@@ -23,6 +24,9 @@ import {
   GuardAlreadyInitializedError,
   recordGuardProposalDecision,
   writeGuardConfig,
+  writeGuardMemory,
+  writeProjectModel,
+  writeProjectSnapshot,
   scanGuard,
   validateGuardContracts,
   classifyGuardOutcome,
@@ -47,7 +51,51 @@ function jsonToolResult(
   };
 }
 
+function notConfiguredToolResult(): ReturnType<typeof jsonToolResult> {
+  return jsonToolResult(
+    {
+      status: 'error',
+      outcome: 'not-configured',
+      configured: false,
+      errorCode: 'GUARD_NOT_CONFIGURED',
+      message: 'Guard is not initialized.',
+      recoverable: true,
+    },
+    true,
+  );
+}
+
 export function registerGuardTools(server: McpServer): void {
+  server.registerTool(
+    'codapult_guard_analyze',
+    {
+      title: 'Refresh Guard Model',
+      description:
+        'Refresh persisted project facts and snapshots without changing rules, contracts, or baseline.',
+      inputSchema: {
+        root: rootSchema,
+        confirm: z
+          .boolean()
+          .default(false)
+          .describe('Required before writing refreshed Guard state.'),
+      },
+    },
+    ({ root: requestedRoot, confirm }) => {
+      const root = getGuardRoot(requestedRoot);
+      if (!confirm) return jsonToolResult({ status: 'needs-confirmation', action: 'analyze' });
+      const discovery = discoverProjectWithMetrics(root, { persistCache: true });
+      writeProjectModel(root, discovery.model);
+      writeGuardMemory(root, discovery.model);
+      const revision = writeProjectSnapshot(root, discovery.model);
+      return jsonToolResult({
+        status: 'ok',
+        action: 'analyze',
+        revision,
+        discovery: discovery.metrics,
+      });
+    },
+  );
+
   server.registerTool(
     'codapult_guard_next_action',
     {
@@ -67,6 +115,19 @@ export function registerGuardTools(server: McpServer): void {
         });
       }
       const project = discoverProject(root);
+      const persisted = loadProjectModel(root);
+      if (
+        persisted &&
+        'project' in persisted &&
+        fingerprintProjectModel(persisted) !== fingerprintProjectModel(project)
+      ) {
+        return jsonToolResult({
+          status: 'needs-refresh',
+          action: 'analyze',
+          reason: 'Persisted Guard project facts are stale after repository changes.',
+          canRetry: false,
+        });
+      }
       const proposals = loadGuardProposals(root);
       const proposedCount = getPendingGuardProposals(proposals).length;
       if (proposals && getGuardProposalFreshness(project, proposals) === 'stale') {
@@ -390,15 +451,7 @@ export function registerGuardTools(server: McpServer): void {
       const root = getGuardRoot(requestedRoot);
       const config = loadGuardConfig(root);
       if (!config) {
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify({ configured: false, outcome: 'not-configured' }, null, 2),
-            },
-          ],
-          isError: true,
-        };
+        return notConfiguredToolResult();
       }
       const report = scanGuard(root, config, { includeArchitectureInsights: true });
       const contractIssues = validateGuardContracts(root, config.contracts ?? []);
@@ -446,15 +499,7 @@ export function registerGuardTools(server: McpServer): void {
       const root = getGuardRoot(requestedRoot);
       const config = loadGuardConfig(root);
       if (!config) {
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify({ configured: false, outcome: 'not-configured' }, null, 2),
-            },
-          ],
-          isError: true,
-        };
+        return notConfiguredToolResult();
       }
       const packet = buildGuardReviewPacket(
         root,
@@ -483,15 +528,7 @@ export function registerGuardTools(server: McpServer): void {
       const root = getGuardRoot(requestedRoot);
       const config = loadGuardConfig(root);
       if (!config) {
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify({ configured: false, outcome: 'not-configured' }, null, 2),
-            },
-          ],
-          isError: true,
-        };
+        return notConfiguredToolResult();
       }
       const report = scanGuard(root, config, {
         changedOnly: changed_only,

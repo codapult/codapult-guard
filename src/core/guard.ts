@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -7,12 +7,15 @@ import {
   readFileSync,
   realpathSync,
   renameSync,
+  statSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import { Project, SyntaxKind, type SourceFile } from 'ts-morph';
-import type { ProjectModel } from './discovery/discovery.js';
+import { buildModuleTargetGraph, type ProjectModel } from './discovery/discovery.js';
 import {
+  clearDiscoveryCache,
   discoverProject,
   discoverProjectWithMetrics,
   findGuardRoot,
@@ -224,6 +227,13 @@ export class GuardConfigError extends Error {
   }
 }
 
+export class GuardStateBusyError extends Error {
+  constructor(path: string) {
+    super(`Guard state is being updated by another process: ${path}`);
+    this.name = 'GuardStateBusyError';
+  }
+}
+
 function isGuardConfig(value: unknown): value is GuardConfig {
   return guardConfigSchema.safeParse(value).success;
 }
@@ -237,9 +247,32 @@ function readJson(filePath: string): unknown {
 }
 
 function atomicWriteFile(path: string, content: string): void {
-  const temporaryPath = `${path}.tmp-${process.pid}`;
-  writeFileSync(temporaryPath, content, 'utf8');
-  renameSync(temporaryPath, path);
+  const lockPath = `${path}.lock`;
+  let lockAcquired = false;
+  try {
+    try {
+      writeFileSync(lockPath, `${process.pid}\n`, { encoding: 'utf8', flag: 'wx' });
+      lockAcquired = true;
+    } catch (error) {
+      if ((error as { code?: string }).code === 'EEXIST') {
+        try {
+          if (Date.now() - statSync(lockPath).mtimeMs > 60_000) {
+            unlinkSync(lockPath);
+            writeFileSync(lockPath, `${process.pid}\n`, { encoding: 'utf8', flag: 'wx' });
+            lockAcquired = true;
+          }
+        } catch {
+          // Another writer may have replaced or removed the lock.
+        }
+      }
+      if (!lockAcquired) throw new GuardStateBusyError(path);
+    }
+    const temporaryPath = `${path}.tmp-${process.pid}-${randomUUID()}`;
+    writeFileSync(temporaryPath, content, 'utf8');
+    renameSync(temporaryPath, path);
+  } finally {
+    if (lockAcquired) unlinkSync(lockPath);
+  }
 }
 
 function writeGuardArtifact(root: string, relativePath: string, value: unknown): void {
@@ -1113,6 +1146,31 @@ function changedFiles(root: string): Set<string> | undefined {
   }
 }
 
+function changedImpactScope(
+  model: ProjectModel,
+  changed: Set<string> | undefined,
+): Set<string> | undefined {
+  if (!changed) return undefined;
+  const graph = buildModuleTargetGraph(model.modules);
+  const reverse = new Map<string, string[]>();
+  for (const [from, targets] of graph) {
+    for (const target of targets) reverse.set(target, [...(reverse.get(target) ?? []), from]);
+  }
+  const scope = new Set(changed);
+  const queue = [...changed];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) continue;
+    for (const dependent of reverse.get(current) ?? []) {
+      if (!scope.has(dependent)) {
+        scope.add(dependent);
+        queue.push(dependent);
+      }
+    }
+  }
+  return scope;
+}
+
 function architectureInsightFindings(
   root: string,
   changed: Set<string> | undefined,
@@ -1234,6 +1292,9 @@ export function redactSensitiveText(value: string): {
     /\b(?:sk_(?:live|test)_|pk_(?:live|test)_|AKIA|gh[pousr]_|github_pat_)[A-Za-z0-9_-]+/g,
     '[REDACTED TOKEN]',
   );
+  replace(/\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[REDACTED JWT]');
+  replace(/\bhttps?:\/\/[^\s/@:]+:[^\s/@]+@/gi, '[REDACTED URL CREDENTIALS]@');
+  replace(/\b(?:AIza[0-9A-Za-z_-]{20,}|xox[baprs]-[0-9A-Za-z-]{10,})\b/g, '[REDACTED TOKEN]');
   replace(
     /((?:api[_-]?key|secret|token|password|authorization|database[_-]?url)\s*[:=]\s*["']?)[^\s"'`,}]+/gi,
     '$1[REDACTED]',
@@ -1386,9 +1447,10 @@ export function scanGuard(
   guardConfig: GuardConfig,
   options: ScanGuardOptions = {},
 ): GuardReport {
-  const changed = options.changedOnly ? (options.changedFiles ?? changedFiles(root)) : undefined;
-  const files = listSourceFiles(root).filter((file) => !changed || changed.has(file));
   const model = discoverProject(root);
+  const changed = options.changedOnly ? (options.changedFiles ?? changedFiles(root)) : undefined;
+  const scope = changedImpactScope(model, changed);
+  const files = listSourceFiles(root).filter((file) => !scope || scope.has(file));
   const modules = new Map(model.modules.map((module) => [module.path, module]));
   const astProject = (() => {
     try {
@@ -1401,8 +1463,8 @@ export function scanGuard(
     ...files.flatMap((file) =>
       scanFile(root, file, guardConfig.rules, modules.get(file), astProject),
     ),
-    ...scanContracts(root, guardConfig.contracts ?? [], changed),
-    ...(options.includeArchitectureInsights ? architectureInsightFindings(root, changed) : []),
+    ...scanContracts(root, guardConfig.contracts ?? [], scope),
+    ...(options.includeArchitectureInsights ? architectureInsightFindings(root, scope) : []),
   ];
   const baseline = options.baseline ?? new Set<string>();
   const findings = allFindings.filter((finding) => !baseline.has(finding.fingerprint));
@@ -1486,4 +1548,4 @@ export function initializeGuard(
   return { config: guardConfig, report: { ...initialReport, findings: [] } };
 }
 
-export { discoverProject, discoverProjectWithMetrics, findGuardRoot };
+export { clearDiscoveryCache, discoverProject, discoverProjectWithMetrics, findGuardRoot };

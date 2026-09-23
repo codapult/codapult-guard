@@ -13,6 +13,7 @@ import {
   GUARD_RULES_FILE,
   findGuardRoot,
   discoverProjectWithMetrics,
+  clearDiscoveryCache,
   buildGuardReviewPacket,
   buildGuardProposals,
   buildGeneratedGuardConfig,
@@ -122,7 +123,7 @@ export function guardInitCommand(options: { force?: boolean } = {}): void {
   );
 }
 
-export function guardAnalyzeCommand(): void {
+export function guardAnalyzeCommand(_options: { refresh?: boolean } = {}): void {
   const root = getRoot();
   const { model: projectModel, metrics } = discoverProjectWithMetrics(root, {
     persistCache: true,
@@ -194,10 +195,12 @@ export function guardInstallAgentCommand(
   process.exitCode = 0;
 }
 
-export function guardDoctorCommand(options: { json?: boolean } = {}): void {
+export function guardDoctorCommand(options: { json?: boolean; fixCache?: boolean } = {}): void {
+  if (options.fixCache) clearDiscoveryCache(getRoot());
   const report = diagnoseGuard(getRoot());
+  const result = options.fixCache ? { ...report, cacheFixed: true } : report;
   if (options.json) {
-    console.log(JSON.stringify(report, null, 2));
+    console.log(JSON.stringify(result, null, 2));
   } else {
     heading('Codapult Guard Doctor');
     for (const item of report.items) {
@@ -208,7 +211,7 @@ export function guardDoctorCommand(options: { json?: boolean } = {}): void {
     if (report.recommendation) dim(report.recommendation);
     else success('Guard state is healthy.');
   }
-  process.exitCode = report.status === 'fail' ? 1 : 0;
+  process.exitCode = result.status === 'fail' ? 1 : 0;
 }
 
 export function guardHistoryCommand(): void {
@@ -348,7 +351,16 @@ export function guardCheckCommand(
   const config = loadGuardConfig(root);
   if (!config) {
     if (options.json) {
-      console.log(JSON.stringify({ configured: false, error: 'Guard is not initialized' }));
+      console.log(
+        JSON.stringify({
+          status: 'error',
+          outcome: 'not-configured',
+          configured: false,
+          errorCode: 'GUARD_NOT_CONFIGURED',
+          message: 'Guard is not initialized.',
+          recoverable: true,
+        }),
+      );
       process.exitCode = 1;
       return;
     }
@@ -417,7 +429,16 @@ export function guardAuditCommand(options: { json?: boolean } = {}): void {
   const config = loadGuardConfig(root);
   if (!config) {
     if (options.json) {
-      console.log(JSON.stringify({ configured: false, error: 'Guard is not initialized' }));
+      console.log(
+        JSON.stringify({
+          status: 'error',
+          outcome: 'not-configured',
+          configured: false,
+          errorCode: 'GUARD_NOT_CONFIGURED',
+          message: 'Guard is not initialized.',
+          recoverable: true,
+        }),
+      );
       process.exitCode = 1;
       return;
     }

@@ -18,6 +18,7 @@ vi.mock('../../core/guard.js', () => ({
     metrics: { durationMs: 1, files: 0, modules: 0, cacheAvailable: true },
   })),
   findGuardRoot: vi.fn(() => '/project'),
+  fingerprintProjectModel: vi.fn(() => 'fingerprint'),
   GUARD_ARCHITECTURE_FILE: '.codapult/guard/architecture.json',
   GUARD_CONVENTIONS_FILE: '.codapult/guard/conventions.json',
   loadGuardAgentConfig: vi.fn(() => ({
@@ -40,6 +41,9 @@ vi.mock('../../core/guard.js', () => ({
   GuardAlreadyInitializedError: class extends Error {},
   recordGuardProposalDecision: vi.fn(),
   writeGuardConfig: vi.fn(),
+  writeGuardMemory: vi.fn(),
+  writeProjectModel: vi.fn(),
+  writeProjectSnapshot: vi.fn(() => 'working-tree'),
   loadGuardProposals: vi.fn(),
   getPendingGuardProposals: vi.fn(() => []),
   getGuardProposalFreshness: vi.fn(() => 'unknown'),
@@ -92,6 +96,7 @@ describe('registerGuardTools', () => {
     registerGuardTools(server as never);
 
     expect(server.tools.map((tool) => tool.name)).toEqual([
+      'codapult_guard_analyze',
       'codapult_guard_next_action',
       'codapult_guard_context',
       'codapult_guard_propose',

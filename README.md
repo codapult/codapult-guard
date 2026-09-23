@@ -316,6 +316,9 @@ real project shapes.
 | `rules` / `contracts`      | Approve or reject proposed policy.                                                          |
 | `baseline`                 | Review or intentionally accept existing findings.                                           |
 
+Use `analyze --refresh` after a structural change. `doctor --fix-cache` removes only the disposable
+discovery cache; it does not change rules, contracts, baseline, or source files.
+
 Run `pnpm exec codapult-guard <command> --help` for command-specific options.
 
 ## Security and data handling

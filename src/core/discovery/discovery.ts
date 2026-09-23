@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   renameSync,
   statSync,
   writeFileSync,
@@ -63,6 +64,8 @@ export interface ProjectModel {
       private: boolean;
       scripts: Record<string, string>;
       dependencies: string[];
+      exports?: string[];
+      projectReferences?: string[];
     }[];
   };
   files: ProjectFileRecord[];
@@ -183,6 +186,10 @@ function discoveryCachePath(root: string): string {
   return resolve(root, `.${config.appName}/guard/cache.json`);
 }
 
+export function clearDiscoveryCache(root: string): void {
+  rmSync(discoveryCachePath(root), { force: true });
+}
+
 function contentHash(root: string, path: string): string {
   return createHash('sha256')
     .update(readFileSync(resolve(root, path)))
@@ -271,6 +278,31 @@ function workspacePackages(
           ...asStringRecord(manifest.devDependencies),
           ...asStringRecord(manifest.peerDependencies),
         }).sort(),
+        ...(manifest.exports !== undefined
+          ? {
+              exports: Array.isArray(manifest.exports)
+                ? manifest.exports.filter((item): item is string => typeof item === 'string')
+                : manifest.exports !== null && typeof manifest.exports === 'object'
+                  ? Object.keys(manifest.exports)
+                  : [],
+            }
+          : {}),
+        ...(Array.isArray(readJsonObject(resolve(root, dirname(path), 'tsconfig.json')).references)
+          ? {
+              projectReferences: (
+                readJsonObject(resolve(root, dirname(path), 'tsconfig.json'))
+                  .references as unknown[]
+              )
+                .filter(
+                  (reference): reference is { path: string } =>
+                    reference !== null &&
+                    typeof reference === 'object' &&
+                    typeof (reference as { path?: unknown }).path === 'string',
+                )
+                .map((reference) => reference.path)
+                .sort(),
+            }
+          : {}),
       };
     })
     .sort((left, right) => left.path.localeCompare(right.path));

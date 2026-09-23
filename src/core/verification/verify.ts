@@ -28,6 +28,8 @@ export type GuardVerificationCheck = ProjectCheck;
 export interface GuardVerificationResult {
   status: 'ok' | 'fail' | 'not-configured';
   outcome: 'pass' | 'fail' | 'warning' | 'needs-review' | 'not-configured';
+  errorCode?: 'GUARD_NOT_CONFIGURED' | 'GUARD_CONFIG_INVALID';
+  recoverable?: boolean;
   tools?: GuardToolMode;
   checks: ProjectCheckResults;
   workspaceChecks: Record<string, ProjectCheckResults>;
@@ -71,6 +73,8 @@ export function runGuardVerification(
     return {
       status: 'fail',
       outcome: 'fail',
+      errorCode: 'GUARD_CONFIG_INVALID',
+      recoverable: true,
       checks: {},
       workspaceChecks: {},
       adapters: {},
@@ -84,6 +88,8 @@ export function runGuardVerification(
     return {
       status: 'not-configured',
       outcome: 'not-configured',
+      errorCode: 'GUARD_NOT_CONFIGURED',
+      recoverable: true,
       checks: {},
       workspaceChecks: {},
       adapters: {},

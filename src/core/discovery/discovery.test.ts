@@ -178,14 +178,29 @@ describe('discoverProject', () => {
     );
     writeFileSync(
       join(root, 'packages/core/package.json'),
-      JSON.stringify({ name: '@example/core', private: true, dependencies: { zod: '^1' } }),
+      JSON.stringify({
+        name: '@example/core',
+        private: true,
+        exports: { '.': './dist/index.js', './db': './dist/db.js' },
+        dependencies: { zod: '^1' },
+      }),
+    );
+    writeFileSync(
+      join(root, 'packages/core/tsconfig.json'),
+      JSON.stringify({ references: [{ path: '../shared' }] }),
     );
 
     const model = discoverProject(root);
 
     expect(model.project.workspacePackages).toEqual([
       expect.objectContaining({ path: 'apps/web', name: '@example/web', private: false }),
-      expect.objectContaining({ path: 'packages/core', name: '@example/core', private: true }),
+      expect.objectContaining({
+        path: 'packages/core',
+        name: '@example/core',
+        private: true,
+        exports: ['.', './db'],
+        projectReferences: ['../shared'],
+      }),
     ]);
   });
 

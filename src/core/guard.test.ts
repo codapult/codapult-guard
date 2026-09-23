@@ -28,6 +28,7 @@ import {
   validateGuardContracts,
   initializeGuard,
   GuardAlreadyInitializedError,
+  GuardStateBusyError,
   writeGuardAgentConfig,
   defaultGuardAgentConfig,
   loadGuardProposals,
@@ -109,6 +110,35 @@ describe('scanGuard', () => {
 
     expect(report.findings).toContainEqual(
       expect.objectContaining({ file: 'entry.ts', importPath: './server-only' }),
+    );
+  });
+
+  it('checks unchanged transitive dependents when a dependency changes', () => {
+    const root = createProject({
+      'route.ts': `import { run } from './service'; export const route = () => run();\n`,
+      'service.ts': `export const run = () => true;\n`,
+    });
+
+    const report = scanGuard(
+      root,
+      {
+        version: 1,
+        rules: [],
+        contracts: [
+          {
+            id: 'route-auth',
+            statement: 'Routes must authenticate before calling services.',
+            kind: 'required-call',
+            entrypoints: ['route.ts'],
+            mustCall: ['requireUser'],
+          },
+        ],
+      },
+      { changedOnly: true, changedFiles: new Set(['service.ts']) },
+    );
+
+    expect(report.findings).toContainEqual(
+      expect.objectContaining({ file: 'route.ts', ruleId: 'contract:route-auth' }),
     );
   });
 
@@ -207,6 +237,15 @@ describe('guard contracts', () => {
 
     expect(() => initializeGuard(root)).toThrow(GuardAlreadyInitializedError);
     expect(() => initializeGuard(root, { force: true })).not.toThrow();
+  });
+
+  it('fails explicitly when another process owns a Guard artifact lock', () => {
+    const root = createProject({});
+    mkdirSync(join(root, GUARD_DIR), { recursive: true });
+    const path = join(root, GUARD_DIR, 'rules.json');
+    writeFileSync(`${path}.lock`, 'other-process\n');
+
+    expect(() => writeGuardConfig(root, { version: 1, rules: [] })).toThrow(GuardStateBusyError);
   });
 
   it('loads project contracts without treating them as executable findings', () => {
@@ -625,13 +664,18 @@ describe('generated project memory', () => {
 
   it('redacts credential-shaped values from review text', () => {
     const result = redactSensitiveText(
-      'apiKey=sk_live_123456 secret: super-secret-value\n-----BEGIN PRIVATE KEY-----abc-----END PRIVATE KEY-----',
+      'apiKey=sk_live_123456 secret: super-secret-value\n' +
+        'token=eyJaaaaaaaaaaaaaaaaaaaa.12345678901.12345678901\n' +
+        'url=https://user:password@example.com\n' +
+        '-----BEGIN PRIVATE KEY-----abc-----END PRIVATE KEY-----',
     );
 
     expect(result.redacted).toBe(true);
     expect(result.value).not.toContain('sk_live_123456');
     expect(result.value).not.toContain('super-secret-value');
     expect(result.value).not.toContain('BEGIN PRIVATE KEY');
+    expect(result.value).not.toContain('12345678901.12345678901');
+    expect(result.value).not.toContain('user:password@');
   });
 
   it('reports an invalid Git review base instead of returning a successful empty packet', () => {

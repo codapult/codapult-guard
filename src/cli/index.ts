@@ -36,10 +36,10 @@ const program = new Command()
 // `codapult-guard init`, not `codapult-guard guard init`.
 const guard = program;
 guard.command('init').option('--force').action(guardInitCommand);
-guard.command('analyze').action(guardAnalyzeCommand);
+guard.command('analyze').option('--refresh').action(guardAnalyzeCommand);
 guard.command('propose').option('--json').action(guardProposeCommand);
 guard.command('install-agent [target]').option('--json').action(guardInstallAgentCommand);
-guard.command('doctor').option('--json').action(guardDoctorCommand);
+guard.command('doctor').option('--json').option('--fix-cache').action(guardDoctorCommand);
 guard.command('history').action(guardHistoryCommand);
 guard.command('history-diff <from> <to>').option('--json').action(guardHistoryDiffCommand);
 guard.command('impact <files...>').option('--json').action(guardImpactCommand);
