@@ -10,7 +10,11 @@ import {
   loadGuardArtifact,
   loadGuardConfig,
   loadGuardProposals,
+  GuardStateBusyError,
+  GuardStateStaleError,
 } from '../core/guard.js';
+import { guardErrorPayload } from '../core/errors.js';
+import { DiscoveryStaleError } from '../core/discovery/discovery.js';
 
 function jsonResource(
   uri: string,
@@ -19,6 +23,24 @@ function jsonResource(
   return {
     contents: [{ uri, text: JSON.stringify(value, null, 2), mimeType: 'application/json' }],
   };
+}
+
+function resourceError(uri: string, error: unknown): ReturnType<typeof jsonResource> {
+  const errorCode =
+    error instanceof GuardStateBusyError
+      ? 'GUARD_STATE_BUSY'
+      : error instanceof GuardStateStaleError || error instanceof DiscoveryStaleError
+        ? 'GUARD_STATE_STALE'
+        : 'GUARD_CONFIG_INVALID';
+  return jsonResource(
+    uri,
+    guardErrorPayload(errorCode, error instanceof Error ? error.message : String(error), {
+      configured: false,
+      outcome: 'error',
+      recoverable: true,
+      hint: 'Repair the invalid Guard artifact, then run codapult-guard doctor.',
+    }),
+  );
 }
 
 export function registerGuardResources(server: McpServer): void {
@@ -32,13 +54,17 @@ export function registerGuardResources(server: McpServer): void {
     },
     () => {
       const root = findGuardRoot();
-      const config = loadGuardConfig(root);
-      return jsonResource('codapult://guard/rules', {
-        configured: config !== undefined,
-        rules: config?.rules ?? [],
-        contracts: config?.contracts ?? [],
-        project: discoverProject(root),
-      });
+      try {
+        const config = loadGuardConfig(root);
+        return jsonResource('codapult://guard/rules', {
+          configured: config !== undefined,
+          rules: config?.rules ?? [],
+          contracts: config?.contracts ?? [],
+          project: discoverProject(root),
+        });
+      } catch (error) {
+        return resourceError('codapult://guard/rules', error);
+      }
     },
   );
 
@@ -52,21 +78,25 @@ export function registerGuardResources(server: McpServer): void {
     },
     () => {
       const root = findGuardRoot();
-      const project = discoverProject(root);
-      const config = loadGuardConfig(root);
-      return jsonResource('codapult://guard/context', {
-        version: 1,
-        root,
-        configured: config !== undefined,
-        project,
-        architecture:
-          loadGuardArtifact(root, GUARD_ARCHITECTURE_FILE) ?? buildArchitectureMemory(project),
-        conventions:
-          loadGuardArtifact(root, GUARD_CONVENTIONS_FILE) ?? buildConventionsMemory(project),
-        rules: config?.rules ?? [],
-        contracts: config?.contracts ?? [],
-        agent: loadGuardAgentConfig(root),
-      });
+      try {
+        const project = discoverProject(root);
+        const config = loadGuardConfig(root);
+        return jsonResource('codapult://guard/context', {
+          version: 1,
+          root,
+          configured: config !== undefined,
+          project,
+          architecture:
+            loadGuardArtifact(root, GUARD_ARCHITECTURE_FILE) ?? buildArchitectureMemory(project),
+          conventions:
+            loadGuardArtifact(root, GUARD_CONVENTIONS_FILE) ?? buildConventionsMemory(project),
+          rules: config?.rules ?? [],
+          contracts: config?.contracts ?? [],
+          agent: loadGuardAgentConfig(root),
+        });
+      } catch (error) {
+        return resourceError('codapult://guard/context', error);
+      }
     },
   );
 
@@ -80,15 +110,19 @@ export function registerGuardResources(server: McpServer): void {
     },
     () => {
       const root = findGuardRoot();
-      const project = discoverProject(root);
-      return jsonResource('codapult://guard/architecture', {
-        version: 1,
-        root,
-        architecture:
-          loadGuardArtifact(root, GUARD_ARCHITECTURE_FILE) ?? buildArchitectureMemory(project),
-        conventions:
-          loadGuardArtifact(root, GUARD_CONVENTIONS_FILE) ?? buildConventionsMemory(project),
-      });
+      try {
+        const project = discoverProject(root);
+        return jsonResource('codapult://guard/architecture', {
+          version: 1,
+          root,
+          architecture:
+            loadGuardArtifact(root, GUARD_ARCHITECTURE_FILE) ?? buildArchitectureMemory(project),
+          conventions:
+            loadGuardArtifact(root, GUARD_CONVENTIONS_FILE) ?? buildConventionsMemory(project),
+        });
+      } catch (error) {
+        return resourceError('codapult://guard/architecture', error);
+      }
     },
   );
 
@@ -102,10 +136,14 @@ export function registerGuardResources(server: McpServer): void {
     },
     () => {
       const root = findGuardRoot();
-      return jsonResource(
-        'codapult://guard/proposals',
-        loadGuardProposals(root) ?? { version: 1, rules: [], contracts: [], questions: [] },
-      );
+      try {
+        return jsonResource(
+          'codapult://guard/proposals',
+          loadGuardProposals(root) ?? { version: 1, rules: [], contracts: [], questions: [] },
+        );
+      } catch (error) {
+        return resourceError('codapult://guard/proposals', error);
+      }
     },
   );
 }

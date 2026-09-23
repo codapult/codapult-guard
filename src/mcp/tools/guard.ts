@@ -107,6 +107,58 @@ function stateErrorResult(error: unknown): ReturnType<typeof jsonToolResult> | u
   );
 }
 
+function loadAgentSafely(
+  root: string,
+):
+  | { config: ReturnType<typeof loadGuardAgentConfig> }
+  | { error: ReturnType<typeof jsonToolResult> } {
+  try {
+    return { config: loadGuardAgentConfig(root) };
+  } catch (error) {
+    return {
+      error: jsonToolResult(
+        guardErrorPayload(
+          'GUARD_CONFIG_INVALID',
+          error instanceof Error ? error.message : String(error),
+          {
+            configured: false,
+            outcome: 'error',
+            recoverable: true,
+            hint: 'Repair agent.json, then run codapult-guard doctor.',
+          },
+        ),
+        true,
+      ),
+    };
+  }
+}
+
+function loadProposalsSafely(
+  root: string,
+):
+  | { proposals: ReturnType<typeof loadGuardProposals> }
+  | { error: ReturnType<typeof jsonToolResult> } {
+  try {
+    return { proposals: loadGuardProposals(root) };
+  } catch (error) {
+    return {
+      error: jsonToolResult(
+        guardErrorPayload(
+          'GUARD_CONFIG_INVALID',
+          error instanceof Error ? error.message : String(error),
+          {
+            configured: false,
+            outcome: 'error',
+            recoverable: true,
+            hint: 'Repair proposals.json, then run codapult-guard doctor.',
+          },
+        ),
+        true,
+      ),
+    };
+  }
+}
+
 export function registerGuardTools(server: McpServer): void {
   server.registerTool(
     'codapult_guard_analyze',
@@ -183,7 +235,9 @@ export function registerGuardTools(server: McpServer): void {
           canRetry: false,
         });
       }
-      const proposals = loadGuardProposals(root);
+      const loadedProposals = loadProposalsSafely(root);
+      if ('error' in loadedProposals) return loadedProposals.error;
+      const proposals = loadedProposals.proposals;
       const proposedCount = getPendingGuardProposals(proposals).length;
       if (proposals && getGuardProposalFreshness(project, proposals) === 'stale') {
         return jsonToolResult({
@@ -253,7 +307,9 @@ export function registerGuardTools(server: McpServer): void {
       const loaded = loadConfigSafely(root);
       if (loaded.error) return loaded.error;
       const config = loaded.config;
-      const agentConfig = loadGuardAgentConfig(root);
+      const agent = loadAgentSafely(root);
+      if ('error' in agent) return agent.error;
+      const agentConfig = agent.config;
       const discovery = refresh
         ? discoverProjectWithMetrics(root, { persistCache: true })
         : { model: loadProjectModel(root) ?? discoverProject(root), metrics: undefined };
@@ -314,7 +370,9 @@ export function registerGuardTools(server: McpServer): void {
       if (loaded.error) return loaded.error;
       const config = loaded.config ?? buildGeneratedGuardConfig(project);
       const proposals = buildGuardProposals(project, config);
-      const previous = loadGuardProposals(root);
+      const loadedPrevious = loadProposalsSafely(root);
+      if ('error' in loadedPrevious) return loadedPrevious.error;
+      const previous = loadedPrevious.proposals;
       if (persist) {
         writeGuardProposals(root, {
           ...proposals,
@@ -395,7 +453,9 @@ export function registerGuardTools(server: McpServer): void {
     },
     ({ root: requestedRoot, ids, decision, confirm }) => {
       const root = getGuardRoot(requestedRoot);
-      const proposals = loadGuardProposals(root);
+      const loadedProposals = loadProposalsSafely(root);
+      if ('error' in loadedProposals) return loadedProposals.error;
+      const proposals = loadedProposals.proposals;
       if (!proposals)
         return jsonToolResult({ status: 'not-configured', message: 'No proposals found.' }, true);
       const project = discoverProject(root);
@@ -481,6 +541,8 @@ export function registerGuardTools(server: McpServer): void {
       iteration,
     }) => {
       const root = getGuardRoot(requestedRoot);
+      const agent = loadAgentSafely(root);
+      if ('error' in agent) return agent.error;
       const result = runGuardVerification(root, {
         checks,
         changedOnly: changed_only,
@@ -489,7 +551,7 @@ export function registerGuardTools(server: McpServer): void {
         strict,
         projectChecks: project_checks,
       });
-      const completionGate = loadGuardAgentConfig(root).completionGate;
+      const completionGate = agent.config.completionGate;
       return jsonToolResult(
         {
           ...result,

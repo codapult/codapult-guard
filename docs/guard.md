@@ -233,6 +233,8 @@ or review the diagnosis before using `init --force`.
 
 CLI and MCP expose the same structured error payload for `GUARD_NOT_CONFIGURED`,
 `GUARD_CONFIG_INVALID`, and retryable `GUARD_STATE_BUSY` concurrent-write conflicts.
+Malformed `agent.json`, `proposals.json`, and `baseline.json` are also rejected instead of being
+silently replaced with defaults or an empty state.
 
 Guard state writes use a root-level transaction lock with atomic rename. The lock records PID,
 hostname, command, token, and lease metadata. Writers wait with bounded backoff by default; use

@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { hostname } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -11,6 +10,8 @@ import {
   GUARD_PROJECT_FILE,
   GUARD_AGENT_FILE,
   GUARD_BASELINE_META_FILE,
+  GUARD_BASELINE_FILE,
+  GUARD_PROPOSALS_FILE,
   GUARD_CONTRACTS_FILE,
   buildGeneratedGuardConfig,
   buildArchitectureMemory,
@@ -230,6 +231,19 @@ describe('guard contracts', () => {
 
     expect(loadGuardAgentConfig(root).completionGate.maxIterations).toBe(5);
     expect(existsSync(join(root, GUARD_AGENT_FILE))).toBe(true);
+  });
+
+  it('fails closed when agent, proposal, or baseline artifacts are malformed', () => {
+    const root = createProject({});
+    mkdirSync(join(root, GUARD_DIR), { recursive: true });
+    writeFileSync(join(root, GUARD_AGENT_FILE), '{}');
+    expect(() => loadGuardAgentConfig(root)).toThrow('Guard configuration is invalid');
+
+    writeFileSync(join(root, GUARD_PROPOSALS_FILE), '{}');
+    expect(() => loadGuardProposals(root)).toThrow('Guard configuration is invalid');
+
+    writeFileSync(join(root, GUARD_BASELINE_FILE), '{}');
+    expect(() => loadBaseline(root)).toThrow('Guard configuration is invalid');
   });
 
   it('protects an existing baseline from accidental reinitialization', () => {
@@ -535,6 +549,17 @@ describe('guard contracts', () => {
 
     expect(loadGuardArtifact(root, '../outside.json')).toBeUndefined();
     expect(loadGuardArtifact(root, '/etc/passwd')).toBeUndefined();
+  });
+
+  it('does not follow a generation path outside Guard state', () => {
+    const root = createProject({});
+    mkdirSync(join(root, GUARD_STATE_DIR), { recursive: true });
+    writeFileSync(
+      join(root, GUARD_STATE_CURRENT_FILE),
+      JSON.stringify({ version: 1, generation: '../../outside' }),
+    );
+
+    expect(loadGuardArtifact(root, GUARD_PROJECT_FILE)).toBeUndefined();
   });
 
   it('rejects malformed config and preserves only valid baseline fingerprints', () => {

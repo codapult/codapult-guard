@@ -275,10 +275,16 @@ function sleepSync(milliseconds: number): void {
 function readStateLock(path: string): GuardStateLock | undefined {
   try {
     const value = JSON.parse(readFileSync(path, 'utf8')) as GuardStateLock;
-    return typeof value.pid === 'number' && typeof value.token === 'string' ? value : undefined;
+    return Number.isInteger(value.pid) && value.pid > 0 && typeof value.token === 'string'
+      ? value
+      : undefined;
   } catch {
     return undefined;
   }
+}
+
+function safeGeneration(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9._-]+$/.test(value);
 }
 
 export function withGuardStateLock<T>(
@@ -398,8 +404,10 @@ function atomicWriteFile(path: string, content: string): void {
 }
 
 function writeGuardArtifact(root: string, relativePath: string, value: unknown): void {
-  mkdirSync(resolve(root, GUARD_DIR), { recursive: true });
-  atomicWriteFile(resolve(root, relativePath), `${JSON.stringify(value, null, 2)}\n`);
+  withGuardStateLock(root, () => {
+    mkdirSync(resolve(root, GUARD_DIR), { recursive: true });
+    atomicWriteFile(resolve(root, relativePath), `${JSON.stringify(value, null, 2)}\n`);
+  });
 }
 
 function hasProjectTool(model: ProjectModel, name: string): boolean {
@@ -461,7 +469,7 @@ export function getGuardProposalFreshness(
   return proposals.projectFingerprint === fingerprintProjectModel(model) ? 'current' : 'stale';
 }
 
-export function loadGuardConfig(root: string): GuardConfig | undefined {
+function loadGuardConfigUnlocked(root: string): GuardConfig | undefined {
   const rulesPath = resolve(root, GUARD_RULES_FILE);
   if (!existsSync(rulesPath)) return undefined;
   const value = readJson(rulesPath);
@@ -478,9 +486,19 @@ export function loadGuardConfig(root: string): GuardConfig | undefined {
   };
 }
 
+export function loadGuardConfig(root: string): GuardConfig | undefined {
+  if (!existsSync(resolve(root, GUARD_DIR))) return loadGuardConfigUnlocked(root);
+  return withGuardStateLock(root, () => loadGuardConfigUnlocked(root));
+}
+
 export function loadGuardProposals(root: string): GuardProposalFile | undefined {
-  const value = readJson(resolve(root, GUARD_PROPOSALS_FILE));
-  return isGuardProposalFile(value) ? value : undefined;
+  const path = resolve(root, GUARD_PROPOSALS_FILE);
+  if (!existsSync(path)) return undefined;
+  const value = readJson(path);
+  if (value === undefined || !isGuardProposalFile(value)) {
+    throw new GuardConfigError(GUARD_PROPOSALS_FILE);
+  }
+  return value;
 }
 
 export function isGuardAgentConfig(value: unknown): value is GuardAgentConfig {
@@ -488,8 +506,11 @@ export function isGuardAgentConfig(value: unknown): value is GuardAgentConfig {
 }
 
 export function loadGuardAgentConfig(root: string): GuardAgentConfig {
-  const value = readJson(resolve(root, GUARD_AGENT_FILE));
-  return isGuardAgentConfig(value) ? value : defaultGuardAgentConfig;
+  const path = resolve(root, GUARD_AGENT_FILE);
+  if (!existsSync(path)) return defaultGuardAgentConfig;
+  const value = readJson(path);
+  if (!isGuardAgentConfig(value)) throw new GuardConfigError(GUARD_AGENT_FILE);
+  return value;
 }
 
 export function writeGuardAgentConfig(root: string, agentConfig = defaultGuardAgentConfig): void {
@@ -497,8 +518,10 @@ export function writeGuardAgentConfig(root: string, agentConfig = defaultGuardAg
 }
 
 export function loadBaseline(root: string): Set<string> {
-  const value = readJson(resolve(root, GUARD_BASELINE_FILE));
-  if (!Array.isArray(value)) return new Set();
+  const path = resolve(root, GUARD_BASELINE_FILE);
+  if (!existsSync(path)) return new Set();
+  const value = readJson(path);
+  if (!Array.isArray(value)) throw new GuardConfigError(GUARD_BASELINE_FILE);
   return new Set(value.filter((item): item is string => typeof item === 'string'));
 }
 
@@ -506,40 +529,45 @@ export function updateBaseline(
   root: string,
   options: { add?: string[]; remove?: string[]; reason?: string } = {},
 ): Set<string> {
-  const next = loadBaseline(root);
-  for (const fingerprint of options.add ?? []) next.add(fingerprint);
-  for (const fingerprint of options.remove ?? []) next.delete(fingerprint);
-  const fingerprints = [...next].sort();
-  const metadataPath = resolve(root, GUARD_BASELINE_META_FILE);
-  const previous = readJson(metadataPath);
-  const history =
-    previous !== null &&
-    typeof previous === 'object' &&
-    Array.isArray((previous as { decisions?: unknown }).decisions)
-      ? (previous as { decisions: unknown[] }).decisions
-      : [];
-  const decision = {
-    at: new Date().toISOString(),
-    action: (options.add?.length ?? 0) > 0 ? 'accept' : 'remove',
-    fingerprints: [...(options.add ?? []), ...(options.remove ?? [])],
-    ...(options.reason?.trim() ? { reason: options.reason.trim() } : {}),
-  };
-  atomicWriteFile(resolve(root, GUARD_BASELINE_FILE), `${JSON.stringify(fingerprints, null, 2)}\n`);
-  atomicWriteFile(
-    metadataPath,
-    `${JSON.stringify(
-      {
-        ...(previous !== null && typeof previous === 'object' ? previous : {}),
-        version: 1,
-        generatedAt: new Date().toISOString(),
-        findings: fingerprints.length,
-        decisions: [...history, decision],
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  return next;
+  return withGuardStateLock(root, () => {
+    const next = loadBaseline(root);
+    for (const fingerprint of options.add ?? []) next.add(fingerprint);
+    for (const fingerprint of options.remove ?? []) next.delete(fingerprint);
+    const fingerprints = [...next].sort();
+    const metadataPath = resolve(root, GUARD_BASELINE_META_FILE);
+    const previous = readJson(metadataPath);
+    const history =
+      previous !== null &&
+      typeof previous === 'object' &&
+      Array.isArray((previous as { decisions?: unknown }).decisions)
+        ? (previous as { decisions: unknown[] }).decisions
+        : [];
+    const decision = {
+      at: new Date().toISOString(),
+      action: (options.add?.length ?? 0) > 0 ? 'accept' : 'remove',
+      fingerprints: [...(options.add ?? []), ...(options.remove ?? [])],
+      ...(options.reason?.trim() ? { reason: options.reason.trim() } : {}),
+    };
+    atomicWriteFile(
+      resolve(root, GUARD_BASELINE_FILE),
+      `${JSON.stringify(fingerprints, null, 2)}\n`,
+    );
+    atomicWriteFile(
+      metadataPath,
+      `${JSON.stringify(
+        {
+          ...(previous !== null && typeof previous === 'object' ? previous : {}),
+          version: 1,
+          generatedAt: new Date().toISOString(),
+          findings: fingerprints.length,
+          decisions: [...history, decision],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    return next;
+  });
 }
 
 export function writeGuardConfig(
@@ -581,19 +609,23 @@ export function recordGuardProposalDecision(
   root: string,
   decisions: Pick<GuardProposalDecision, 'id' | 'type' | 'decision'>[],
 ): void {
-  const proposals = loadGuardProposals(root);
-  if (!proposals || decisions.length === 0) return;
-  const decidedAt = new Date().toISOString();
-  const nextDecisions = decisions.map((decision) => ({
-    ...decision,
-    decidedAt,
-    ...(proposals.proposalId ? { proposalId: proposals.proposalId } : {}),
-    ...(proposals.contentFingerprint ? { proposalFingerprint: proposals.contentFingerprint } : {}),
-    ...(typeof proposals.revision === 'number' ? { revision: proposals.revision } : {}),
-  }));
-  writeGuardProposals(root, {
-    ...proposals,
-    decisions: [...(proposals.decisions ?? []), ...nextDecisions],
+  withGuardStateLock(root, () => {
+    const proposals = loadGuardProposals(root);
+    if (!proposals || decisions.length === 0) return;
+    const decidedAt = new Date().toISOString();
+    const nextDecisions = decisions.map((decision) => ({
+      ...decision,
+      decidedAt,
+      ...(proposals.proposalId ? { proposalId: proposals.proposalId } : {}),
+      ...(proposals.contentFingerprint
+        ? { proposalFingerprint: proposals.contentFingerprint }
+        : {}),
+      ...(typeof proposals.revision === 'number' ? { revision: proposals.revision } : {}),
+    }));
+    writeGuardProposals(root, {
+      ...proposals,
+      decisions: [...(proposals.decisions ?? []), ...nextDecisions],
+    });
   });
 }
 
@@ -839,29 +871,36 @@ export function buildGeneratedGuardConfig(model: ProjectModel): GuardConfig {
 }
 
 export function writeGuardMemory(root: string, model: ProjectModel): void {
-  writeGuardArtifact(root, GUARD_ARCHITECTURE_FILE, buildArchitectureMemory(model));
-  writeGuardArtifact(root, GUARD_CONVENTIONS_FILE, buildConventionsMemory(model));
+  withGuardStateLock(root, () => {
+    writeGuardArtifact(root, GUARD_ARCHITECTURE_FILE, buildArchitectureMemory(model));
+    writeGuardArtifact(root, GUARD_CONVENTIONS_FILE, buildConventionsMemory(model));
+  });
 }
 
 export function writeBaseline(root: string, findings: GuardFinding[], model?: ProjectModel): void {
-  mkdirSync(resolve(root, GUARD_DIR), { recursive: true });
-  const fingerprints = [...new Set(findings.map((finding) => finding.fingerprint))].sort();
-  atomicWriteFile(resolve(root, GUARD_BASELINE_FILE), `${JSON.stringify(fingerprints, null, 2)}\n`);
-  atomicWriteFile(
-    resolve(root, GUARD_BASELINE_META_FILE),
-    `${JSON.stringify(
-      {
-        version: 1,
-        generatedAt: new Date().toISOString(),
-        findings: fingerprints.length,
-        ...(model ? { projectFingerprint: fingerprintProjectModel(model) } : {}),
-        guardSchemaVersion: 1,
-        purpose: 'Initial Guard state; findings are suppressed unless they change fingerprint.',
-      },
-      null,
-      2,
-    )}\n`,
-  );
+  withGuardStateLock(root, () => {
+    mkdirSync(resolve(root, GUARD_DIR), { recursive: true });
+    const fingerprints = [...new Set(findings.map((finding) => finding.fingerprint))].sort();
+    atomicWriteFile(
+      resolve(root, GUARD_BASELINE_FILE),
+      `${JSON.stringify(fingerprints, null, 2)}\n`,
+    );
+    atomicWriteFile(
+      resolve(root, GUARD_BASELINE_META_FILE),
+      `${JSON.stringify(
+        {
+          version: 1,
+          generatedAt: new Date().toISOString(),
+          findings: fingerprints.length,
+          ...(model ? { projectFingerprint: fingerprintProjectModel(model) } : {}),
+          guardSchemaVersion: 1,
+          purpose: 'Initial Guard state; findings are suppressed unless they change fingerprint.',
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  });
 }
 
 export function loadProjectModel(root: string): ProjectModel | undefined {
@@ -869,7 +908,7 @@ export function loadProjectModel(root: string): ProjectModel | undefined {
   if (
     current !== undefined &&
     typeof current === 'object' &&
-    typeof (current as { generation?: unknown }).generation === 'string'
+    safeGeneration((current as { generation?: unknown }).generation)
   ) {
     const generated = readJson(
       resolve(
@@ -898,8 +937,10 @@ export function loadProjectModel(root: string): ProjectModel | undefined {
 }
 
 export function writeProjectModel(root: string, model: ProjectModel): void {
-  mkdirSync(resolve(root, GUARD_DIR), { recursive: true });
-  atomicWriteFile(resolve(root, GUARD_PROJECT_FILE), `${JSON.stringify(model, null, 2)}\n`);
+  withGuardStateLock(root, () => {
+    mkdirSync(resolve(root, GUARD_DIR), { recursive: true });
+    atomicWriteFile(resolve(root, GUARD_PROJECT_FILE), `${JSON.stringify(model, null, 2)}\n`);
+  });
 }
 
 /**
@@ -968,20 +1009,22 @@ function projectRevision(root: string): string {
 }
 
 export function writeProjectSnapshot(root: string, model: ProjectModel): string {
-  const baseRevision = projectRevision(root);
-  const revision =
-    model.git.dirty && baseRevision !== 'working-tree'
-      ? `${baseRevision}-working-tree-${createHash('sha256')
-          .update(JSON.stringify(model))
-          .digest('hex')
-          .slice(0, 12)}`
-      : baseRevision;
-  mkdirSync(resolve(root, GUARD_HISTORY_DIR), { recursive: true });
-  atomicWriteFile(
-    resolve(root, GUARD_HISTORY_DIR, `${revision}.json`),
-    `${JSON.stringify(model, null, 2)}\n`,
-  );
-  return revision;
+  return withGuardStateLock(root, () => {
+    const baseRevision = projectRevision(root);
+    const revision =
+      model.git.dirty && baseRevision !== 'working-tree'
+        ? `${baseRevision}-working-tree-${createHash('sha256')
+            .update(JSON.stringify(model))
+            .digest('hex')
+            .slice(0, 12)}`
+        : baseRevision;
+    mkdirSync(resolve(root, GUARD_HISTORY_DIR), { recursive: true });
+    atomicWriteFile(
+      resolve(root, GUARD_HISTORY_DIR, `${revision}.json`),
+      `${JSON.stringify(model, null, 2)}\n`,
+    );
+    return revision;
+  });
 }
 
 function isProjectPath(root: string, value: string): boolean {
@@ -1019,7 +1062,7 @@ export function loadGuardArtifact(root: string, relativePath: string): unknown {
     if (
       current !== undefined &&
       typeof current === 'object' &&
-      typeof (current as { generation?: unknown }).generation === 'string'
+      safeGeneration((current as { generation?: unknown }).generation)
     ) {
       const generated = readJson(
         resolve(
