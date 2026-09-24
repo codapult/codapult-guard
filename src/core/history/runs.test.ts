@@ -25,13 +25,14 @@ function createRoot(): string {
 }
 
 function manifest(runId: string, outcome: GuardRunManifest['outcome']): GuardRunManifest {
+  const sequence = runId.replace('guard-', '');
   return {
     version: 1,
     runId,
     command: 'verify',
-    startedAt: `2026-01-01T00:00:0${runId}Z`,
-    completedAt: `2026-01-01T00:00:1${runId}Z`,
-    durationMs: Number(runId) * 10,
+    startedAt: `2026-01-01T00:00:0${sequence}Z`,
+    completedAt: `2026-01-01T00:00:1${sequence}Z`,
+    durationMs: Number(runId.replace('guard-', '')) * 10,
     outcome,
     gate: 'none',
     stages: {},
@@ -41,9 +42,9 @@ function manifest(runId: string, outcome: GuardRunManifest['outcome']): GuardRun
 describe('Guard run observability', () => {
   it('lists recent manifests and summarizes outcomes', () => {
     const root = createRoot();
-    writeGuardRun(root, manifest('1', 'pass'));
-    writeGuardRun(root, manifest('2', 'fail'));
-    writeGuardRun(root, manifest('3', 'warning'));
+    writeGuardRun(root, manifest('guard-1', 'pass'));
+    writeGuardRun(root, manifest('guard-2', 'fail'));
+    writeGuardRun(root, manifest('guard-3', 'warning'));
 
     expect(listGuardRuns(root, 2)).toHaveLength(2);
     expect(summarizeGuardRuns(root)).toMatchObject({
@@ -57,13 +58,26 @@ describe('Guard run observability', () => {
 
   it('ignores malformed local manifests', () => {
     const root = createRoot();
-    writeGuardRun(root, manifest('1', 'pass'));
+    writeGuardRun(root, manifest('guard-1', 'pass'));
     const path = join(root, GUARD_RUNS_DIR, 'broken.json');
     mkdirSync(join(root, GUARD_RUNS_DIR), { recursive: true });
     writeFileSync(path, '{not-json', 'utf8');
     expect(existsSync(path)).toBe(true);
 
     expect(listGuardRuns(root)).toHaveLength(1);
+  });
+
+  it('ignores JSON that is not a valid Guard run manifest', () => {
+    const root = createRoot();
+    const directory = join(root, GUARD_RUNS_DIR);
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(
+      join(directory, 'spoofed.json'),
+      JSON.stringify({ version: 1, outcome: 'pass', gate: 'none' }),
+      'utf8',
+    );
+
+    expect(listGuardRuns(root)).toEqual([]);
   });
 
   it('creates a completed manifest with stage timings', () => {

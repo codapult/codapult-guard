@@ -41,6 +41,32 @@ export interface GuardRunSummary {
   last?: GuardRunManifest | undefined;
 }
 
+function isGuardRunManifest(value: unknown): value is GuardRunManifest {
+  if (value === null || typeof value !== 'object') return false;
+  const manifest = value as Partial<GuardRunManifest>;
+  return (
+    manifest.version === 1 &&
+    typeof manifest.runId === 'string' &&
+    /^guard-[A-Za-z0-9-]+$/.test(manifest.runId) &&
+    typeof manifest.command === 'string' &&
+    typeof manifest.startedAt === 'string' &&
+    Number.isFinite(Date.parse(manifest.startedAt)) &&
+    typeof manifest.completedAt === 'string' &&
+    Number.isFinite(Date.parse(manifest.completedAt)) &&
+    typeof manifest.durationMs === 'number' &&
+    Number.isFinite(manifest.durationMs) &&
+    manifest.durationMs >= 0 &&
+    (manifest.outcome === 'pass' ||
+      manifest.outcome === 'fail' ||
+      manifest.outcome === 'warning' ||
+      manifest.outcome === 'needs-review' ||
+      manifest.outcome === 'not-configured') &&
+    typeof manifest.gate === 'string' &&
+    manifest.stages !== null &&
+    typeof manifest.stages === 'object'
+  );
+}
+
 export function startGuardRun(): GuardRunContext {
   return {
     runId: `guard-${randomUUID()}`,
@@ -76,20 +102,22 @@ export function writeGuardRun(root: string, manifest: GuardRunManifest): void {
 /** Reads locally persisted run manifests without reaching a remote service. */
 export function listGuardRuns(root: string, limit = 20): GuardRunManifest[] {
   if (!Number.isInteger(limit) || limit < 1) return [];
+  const boundedLimit = Math.min(limit, 1_000);
   const directory = resolve(root, GUARD_RUNS_DIR);
   try {
     return readdirSync(directory)
       .filter((file) => file.endsWith('.json'))
       .map((file) => {
         try {
-          return JSON.parse(readFileSync(resolve(directory, file), 'utf8')) as GuardRunManifest;
+          const value: unknown = JSON.parse(readFileSync(resolve(directory, file), 'utf8'));
+          return isGuardRunManifest(value) ? value : undefined;
         } catch {
           return undefined;
         }
       })
       .filter((manifest): manifest is GuardRunManifest => manifest !== undefined)
       .sort((left, right) => right.completedAt.localeCompare(left.completedAt))
-      .slice(0, limit);
+      .slice(0, boundedLimit);
   } catch {
     return [];
   }
