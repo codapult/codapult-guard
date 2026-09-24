@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.0](https://github.com/codapult/codapult-guard/compare/v0.3.0...v0.4.0) (2026-09-24)
+
+### Features
+
+* add Guard run provenance and baseline reasons ([849ac8e](https://github.com/codapult/codapult-guard/commit/849ac8efcb1ae28ee9b3c9409ac77102d370db4e))
+* add protected policy approval mode ([2e602c5](https://github.com/codapult/codapult-guard/commit/2e602c5dea83ba4d2d766a2d45d9524b2fb01164))
+* add scoped architecture budgets ([68a6755](https://github.com/codapult/codapult-guard/commit/68a675524e784562a73ad42912f45fd3c1c71ed4))
+* make guard state concurrency safe ([a331dc1](https://github.com/codapult/codapult-guard/commit/a331dc1fa6583ef8c93d4c47a1c2f161b042688f))
+
+### Bug Fixes
+
+* harden guard state and artifact reads ([ea21096](https://github.com/codapult/codapult-guard/commit/ea210969f7e7f64ab253a6133a1d54d945f2b8df))
+* harden guard state and MCP boundaries ([3359145](https://github.com/codapult/codapult-guard/commit/3359145fdcb0b24752bbb63b9f7a65afef022f77))
+* harden policy scope and approval validation ([b535e56](https://github.com/codapult/codapult-guard/commit/b535e569cca3500196ba24e5eb406ddd7e222658))
+* record Guard run commit and gate status ([8f9ed23](https://github.com/codapult/codapult-guard/commit/8f9ed23e4c1e3974942b27156845f265d4bd965a))
+* recover interrupted policy transactions ([d480a42](https://github.com/codapult/codapult-guard/commit/d480a4252efa60d8b51e650023cdba1c03ba805b))
+* serialize policy activation and audit decisions ([38e3d82](https://github.com/codapult/codapult-guard/commit/38e3d826db2799ed841d9279b6e8f4e283f3602f))
+* validate all policy scopes before scanning ([a0c194a](https://github.com/codapult/codapult-guard/commit/a0c194ac20aaf5c87a8a9c8e449b34af587026c2))
+
 ## [0.3.0](https://github.com/codapult/codapult-guard/compare/v0.2.0...v0.3.0) (2026-09-23)
 
 ### Features
