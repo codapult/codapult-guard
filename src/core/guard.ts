@@ -32,6 +32,7 @@ import {
 } from './policy/schemas.js';
 import type {
   GuardAdapterName,
+  GuardApprovalMode,
   GuardContractKind,
   GuardBudgetMetric,
   GuardRuleKind,
@@ -42,6 +43,7 @@ import type {
 
 export type {
   GuardAdapterName,
+  GuardApprovalMode,
   GuardContractKind,
   GuardBudgetMetric,
   GuardRuleKind,
@@ -155,6 +157,13 @@ export interface GuardConfig {
   rules: GuardRule[];
   contracts?: GuardContract[] | undefined;
   budgets?: GuardBudget[] | undefined;
+  approval?: GuardApprovalPolicy | undefined;
+}
+
+export interface GuardApprovalPolicy {
+  mode: GuardApprovalMode;
+  allowMcpApproval: boolean;
+  requireDistinctActor: boolean;
 }
 
 export interface GuardProposalFile {
@@ -178,6 +187,9 @@ export interface GuardProposalDecision {
   proposalId?: string | undefined;
   proposalFingerprint?: string | undefined;
   revision?: number | undefined;
+  source?: 'cli' | 'mcp' | 'external' | undefined;
+  actor?: string | undefined;
+  commit?: string | undefined;
 }
 
 export type GuardProposalFreshness = 'current' | 'stale' | 'unknown';
@@ -270,6 +282,11 @@ export const defaultGuardConfig: GuardConfig = {
   version: 1,
   rules: [],
   contracts: [],
+  approval: {
+    mode: 'local',
+    allowMcpApproval: true,
+    requireDistinctActor: false,
+  },
 };
 
 export const defaultGuardAgentConfig: GuardAgentConfig = {
@@ -563,6 +580,7 @@ export function fingerprintGuardConfig(guardConfig: GuardConfig): string {
         rules: guardConfig.rules,
         contracts: guardConfig.contracts ?? [],
         budgets: guardConfig.budgets ?? [],
+        approval: guardConfig.approval ?? defaultGuardConfig.approval,
       }),
     )
     .digest('hex');
@@ -585,12 +603,18 @@ function loadGuardConfigUnlocked(root: string): GuardConfig | undefined {
   if (existsSync(contractsPath)) {
     const contractFile = readJson(contractsPath);
     if (!isGuardContractsFile(contractFile)) throw new GuardConfigError(GUARD_CONTRACTS_FILE);
-    return { ...value, contracts: contractFile.contracts, budgets: value.budgets ?? [] };
+    return {
+      ...value,
+      contracts: contractFile.contracts,
+      budgets: value.budgets ?? [],
+      approval: value.approval ?? defaultGuardConfig.approval,
+    };
   }
   return {
     ...value,
     contracts: value.contracts ?? [],
     budgets: value.budgets ?? [],
+    approval: value.approval ?? defaultGuardConfig.approval,
   };
 }
 
@@ -719,14 +743,27 @@ export function writeGuardProposals(root: string, proposals: GuardProposalFile):
 export function recordGuardProposalDecision(
   root: string,
   decisions: Pick<GuardProposalDecision, 'id' | 'type' | 'decision'>[],
+  options: Pick<GuardProposalDecision, 'source'> = { source: 'external' },
 ): void {
   withGuardStateLock(root, () => {
     const proposals = loadGuardProposals(root);
     if (!proposals || decisions.length === 0) return;
     const decidedAt = new Date().toISOString();
+    const commit = (() => {
+      try {
+        return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, stdio: 'pipe' })
+          .toString()
+          .trim();
+      } catch {
+        return undefined;
+      }
+    })();
     const nextDecisions = decisions.map((decision) => ({
       ...decision,
       decidedAt,
+      source: options.source,
+      ...(process.env.GUARD_APPROVER?.trim() ? { actor: process.env.GUARD_APPROVER.trim() } : {}),
+      ...(commit ? { commit } : {}),
       ...(proposals.proposalId ? { proposalId: proposals.proposalId } : {}),
       ...(proposals.contentFingerprint
         ? { proposalFingerprint: proposals.contentFingerprint }

@@ -67,6 +67,7 @@ const {
   buildGuardReviewPacket,
   loadGuardProposals,
   getGuardProposalFreshness,
+  loadGuardConfig,
 } = await import('../../core/guard.js');
 const { runGuardVerification } = await import('../../core/verification/verify.js');
 const { registerGuardTools } = await import('./guard.js');
@@ -218,5 +219,42 @@ describe('registerGuardTools', () => {
     const result = handler({ confirm: false, force: false });
 
     expect(JSON.parse(result.content[0].text)).toMatchObject({ status: 'needs-confirmation' });
+  });
+
+  it('does not allow MCP to approve policy in protected mode', () => {
+    vi.mocked(loadGuardConfig).mockReturnValue({
+      version: 1,
+      rules: [],
+      approval: { mode: 'protected', allowMcpApproval: false, requireDistinctActor: true },
+    });
+    vi.mocked(loadGuardProposals).mockReturnValue({
+      version: 1,
+      generatedAt: 'now',
+      proposalId: 'proposal-id',
+      projectFingerprint: 'fingerprint',
+      contentFingerprint: 'content',
+      rules: [
+        {
+          id: 'rule',
+          description: 'Rule',
+          severity: 'error',
+          kind: 'forbidden-import',
+          patterns: ['db'],
+          status: 'proposed',
+        },
+      ],
+      contracts: [],
+      questions: [],
+    });
+    vi.mocked(getGuardProposalFreshness).mockReturnValue('current');
+
+    const server = createMockServer();
+    registerGuardTools(server as never);
+    const handler = server.tools.find(
+      (tool) => tool.name === 'codapult_guard_proposal_decide',
+    )!.handler;
+    const result = handler({ ids: ['rule'], decision: 'approved', confirm: true });
+
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ status: 'approval-required' });
   });
 });

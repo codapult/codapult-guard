@@ -54,6 +54,13 @@ export const guardConfigSchema = z.object({
   rules: z.array(guardRuleSchema),
   contracts: z.array(guardContractSchema).optional(),
   budgets: z.array(guardBudgetSchema).optional(),
+  approval: z
+    .object({
+      mode: z.enum(['local', 'protected']),
+      allowMcpApproval: z.boolean(),
+      requireDistinctActor: z.boolean(),
+    })
+    .optional(),
 });
 
 export const guardContractsFileSchema = z.object({
@@ -69,6 +76,9 @@ export const guardProposalDecisionSchema = z.object({
   proposalId: z.string().optional(),
   proposalFingerprint: z.string().optional(),
   revision: z.number().optional(),
+  source: z.enum(['cli', 'mcp', 'external']).optional(),
+  actor: z.string().optional(),
+  commit: z.string().optional(),
 });
 
 export const guardProposalSchema = z.object({

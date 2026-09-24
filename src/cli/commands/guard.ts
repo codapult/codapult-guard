@@ -638,6 +638,7 @@ export function guardRulesApproveCommand(ids?: string, options: GuardApprovalOpt
   recordGuardProposalDecision(
     root,
     selected.map((rule) => ({ id: rule.id, type: 'rule', decision: 'approved' as const })),
+    { source: 'cli' },
   );
   for (const rule of selected) success(`Activated ${rule.id}`);
   process.exitCode = 0;
@@ -724,6 +725,7 @@ export function guardContractsApproveCommand(
       type: 'contract',
       decision: 'approved' as const,
     })),
+    { source: 'cli' },
   );
   for (const contract of selected) success(`Activated ${contract.id}`);
   process.exitCode = 0;
@@ -766,6 +768,7 @@ export function guardContractsRejectCommand(
       type: 'contract',
       decision: 'rejected' as const,
     })),
+    { source: 'cli' },
   );
   for (const contract of selected) success(`Rejected ${contract.id}`);
   process.exitCode = 0;

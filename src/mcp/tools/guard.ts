@@ -504,11 +504,23 @@ export function registerGuardTools(server: McpServer): void {
       );
       const missing = ids.filter((id) => !selected.some((item) => item.id === id));
       if (missing.length > 0) return jsonToolResult({ status: 'invalid', missing }, true);
+      const loadedConfig = loadConfigSafely(root);
+      if (loadedConfig.error) return loadedConfig.error;
+      const approval = loadedConfig.config?.approval;
+      if (decision === 'approved' && approval?.mode === 'protected' && !approval.allowMcpApproval) {
+        return jsonToolResult(
+          {
+            status: 'approval-required',
+            message: 'Protected Guard policy requires approval outside the MCP agent surface.',
+            source: 'mcp',
+            ids,
+          },
+          true,
+        );
+      }
       if (!confirm) return jsonToolResult({ status: 'needs-confirmation', decision, ids });
       if (decision === 'approved') {
-        const loaded = loadConfigSafely(root);
-        if (loaded.error) return loaded.error;
-        const config = loaded.config ?? { version: 1 as const, rules: [], contracts: [] };
+        const config = loadedConfig.config ?? { version: 1 as const, rules: [], contracts: [] };
         const nextRules = [...config.rules];
         const nextContracts = [...(config.contracts ?? [])];
         for (const item of selected) {
@@ -533,6 +545,7 @@ export function registerGuardTools(server: McpServer): void {
           type: 'statement' in item ? ('contract' as const) : ('rule' as const),
           decision,
         })),
+        { source: 'mcp' },
       );
       return jsonToolResult({ status: 'ok', root, decision, ids });
     },
