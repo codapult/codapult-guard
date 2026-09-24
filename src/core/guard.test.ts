@@ -31,6 +31,8 @@ import {
   writeProjectModel,
   writeProjectState,
   validateGuardContracts,
+  validateGuardBudgets,
+  validateGuardProposalApproval,
   initializeGuard,
   GuardAlreadyInitializedError,
   GuardStateBusyError,
@@ -122,6 +124,54 @@ describe('scanGuard', () => {
       expect.objectContaining({ ruleId: 'budget:service-lines', file: 'src/service.ts' }),
     );
     expect(report.findings.some((finding) => finding.file === 'generated/schema.ts')).toBe(false);
+  });
+
+  it('allows an explicit budget to include generated or schema files', () => {
+    const root = createProject({
+      'generated/schema.ts': 'export const field = 1;\n'.repeat(20),
+    });
+
+    const report = scanGuard(root, {
+      version: 1,
+      rules: [],
+      budgets: [
+        {
+          id: 'schema-lines',
+          description: 'The generated schema must stay bounded.',
+          metric: 'lines',
+          scope: ['generated'],
+          limit: 2,
+          severity: 'warning',
+          reason: 'Keep generated schema review and regeneration costs bounded.',
+        },
+      ],
+    });
+
+    expect(report.findings).toContainEqual(
+      expect.objectContaining({ ruleId: 'budget:schema-lines', file: 'generated/schema.ts' }),
+    );
+  });
+
+  it('rejects unsafe or nonexistent budget scopes before verification', () => {
+    const root = createProject({ 'src/service.ts': 'export const service = true;\n' });
+
+    expect(
+      validateGuardBudgets(root, [
+        {
+          id: 'unsafe',
+          description: 'Unsafe scope',
+          metric: 'lines',
+          scope: ['../outside', '/tmp', 'missing/*'],
+          limit: 10,
+          severity: 'error',
+          reason: 'This should be rejected.',
+        },
+      ]),
+    ).toEqual([
+      expect.objectContaining({ field: 'scope', value: '../outside' }),
+      expect.objectContaining({ field: 'scope', value: '/tmp' }),
+      expect.objectContaining({ field: 'scope', value: 'missing/*' }),
+    ]);
   });
 
   it('reports forbidden side-effect imports', () => {
@@ -231,6 +281,35 @@ describe('scanGuard', () => {
     expect(() => updateBaseline(root, { remove: ['fingerprint'] })).toThrow(
       GuardBaselineReasonError,
     );
+  });
+
+  it('requires a declared distinct approver for protected proposals', () => {
+    const previous = process.env.GUARD_APPROVER;
+    process.env.GUARD_APPROVER = '';
+    expect(
+      validateGuardProposalApproval(
+        { mode: 'protected', allowMcpApproval: true, requireDistinctActor: true },
+        undefined,
+      ),
+    ).toContain('GUARD_APPROVER');
+
+    process.env.GUARD_APPROVER = 'agent';
+    expect(
+      validateGuardProposalApproval(
+        { mode: 'protected', allowMcpApproval: true, requireDistinctActor: true },
+        {
+          version: 1,
+          generatedAt: 'now',
+          generatedBy: 'agent',
+          rules: [],
+          contracts: [],
+          questions: [],
+        },
+      ),
+    ).toContain('different');
+
+    if (previous === undefined) delete process.env.GUARD_APPROVER;
+    else process.env.GUARD_APPROVER = previous;
   });
 
   it('adds generated-state ignores only when the project uses the formatter', () => {

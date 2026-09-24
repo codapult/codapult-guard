@@ -257,7 +257,9 @@ service, route handler, or dependency-heavy module:
 
 Place budgets in the `budgets` array in `.codapult/guard/rules.json`. Supported metrics are
 `lines`, `bytes`, and `imports`. Generated files, schemas, migrations, and other paths are not
-checked unless they are explicitly included in `scope`. Changing a budget is a policy decision:
+checked unless they are explicitly included in `scope`; a wildcard such as `*` can intentionally
+cover the project root. Invalid, absolute, parent-directory, or nonexistent scopes fail the Guard
+gate. Changing a budget is a policy decision:
 review the diff and update its written `reason` rather than silently increasing the limit.
 
 ## AI agents and MCP
@@ -320,8 +322,10 @@ protected mode in `rules.json`:
 ```
 
 MCP can then read and propose policy, while approval happens through the CLI or a protected CI/PR
-process. Guard records proposal and commit provenance, but external branch protection or signed
-identity remains responsible for proving who approved the change.
+process. With `requireDistinctActor`, CLI and permitted MCP approvals require `GUARD_APPROVER`,
+and Guard rejects the same declared actor when a proposal was generated with `GUARD_PROPOSER`.
+These variables provide declared provenance only; external branch protection or signed identity
+remains responsible for proving who approved the change.
 
 ## CI
 

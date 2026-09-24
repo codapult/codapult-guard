@@ -25,10 +25,12 @@ import {
   GuardStateBusyError,
   GuardStateStaleError,
   recordGuardProposalDecision,
+  validateGuardProposalApproval,
   writeGuardConfig,
   writeProjectState,
   scanGuard,
   validateGuardContracts,
+  validateGuardBudgets,
   classifyGuardOutcome,
   type GuardConfig,
 } from '../../core/guard.js';
@@ -294,7 +296,10 @@ export function registerGuardTools(server: McpServer): void {
         baseline: loadedBaseline.baseline,
         includeArchitectureInsights: true,
       });
-      const contractIssues = validateGuardContracts(root, config.contracts ?? []);
+      const contractIssues = [
+        ...validateGuardContracts(root, config.contracts ?? []),
+        ...validateGuardBudgets(root, config.budgets ?? []),
+      ];
       if (report.findings.some((finding) => finding.severity === 'error')) {
         return jsonToolResult({
           status: 'needs-repair',
@@ -518,6 +523,15 @@ export function registerGuardTools(server: McpServer): void {
           true,
         );
       }
+      if (decision === 'approved') {
+        const approvalError = validateGuardProposalApproval(approval, proposals);
+        if (approvalError) {
+          return jsonToolResult(
+            { status: 'approval-required', message: approvalError, source: 'mcp', ids },
+            true,
+          );
+        }
+      }
       if (!confirm) return jsonToolResult({ status: 'needs-confirmation', decision, ids });
       if (decision === 'approved') {
         const config = loadedConfig.config ?? { version: 1 as const, rules: [], contracts: [] };
@@ -630,7 +644,10 @@ export function registerGuardTools(server: McpServer): void {
         return notConfiguredToolResult();
       }
       const report = scanGuard(root, config, { includeArchitectureInsights: true });
-      const contractIssues = validateGuardContracts(root, config.contracts ?? []);
+      const contractIssues = [
+        ...validateGuardContracts(root, config.contracts ?? []),
+        ...validateGuardBudgets(root, config.budgets ?? []),
+      ];
       const errors = report.findings.filter((finding) => finding.severity === 'error').length;
       const warnings = report.findings.filter((finding) => finding.severity === 'warning').length;
       const status =

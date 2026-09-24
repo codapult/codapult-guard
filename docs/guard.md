@@ -331,7 +331,9 @@ Budgets are optional policy for a specific risk boundary, not a global file-size
 
 Use budgets only where size or dependency count is evidence of a concrete project risk. Do not
 apply them indiscriminately to generated code, schemas, migrations, localization files, or UI
-composition. Guard does not automatically invent budgets during `init`.
+composition. Explicitly scoped generated files and schemas are supported, but invalid, absolute,
+parent-directory, or nonexistent scopes fail the Guard gate. Guard does not automatically invent
+budgets during `init`.
 
 ## Rules, contracts, and proposals
 
@@ -454,8 +456,11 @@ For agent-driven or protected workflows, configure the policy in `rules.json`:
 In protected mode, MCP can inspect and propose policy but cannot approve it. Approval must go
 through the CLI or an external protected review process such as branch protection. Decision
 records include the proposal fingerprint, current commit when available, source (`cli`, `mcp`, or
-`external`), and optional `GUARD_APPROVER` metadata. That metadata is provenance, not identity
-verification; cryptographic identity and reviewer permissions belong to the host CI/review system.
+`external`), and optional `GUARD_APPROVER` metadata. When `requireDistinctActor` is enabled, CLI
+and permitted MCP approvals require `GUARD_APPROVER`; if the proposal declares `generatedBy` via
+`GUARD_PROPOSER`, Guard rejects the same declared actor approving it. These environment variables
+are declared provenance, not cryptographic identity verification; reviewer permissions belong to
+the host CI/review system.
 
 This separation is intentional: Guard checks that an approval matches the current evidence, while
 GitHub or another protected system determines who is authorized to approve it.

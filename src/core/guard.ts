@@ -169,6 +169,7 @@ export interface GuardApprovalPolicy {
 export interface GuardProposalFile {
   version: 1;
   generatedAt: string;
+  generatedBy?: string | undefined;
   proposalId?: string | undefined;
   projectFingerprint?: string | undefined;
   revision?: number | undefined;
@@ -777,6 +778,21 @@ export function recordGuardProposalDecision(
   });
 }
 
+export function validateGuardProposalApproval(
+  policy: GuardApprovalPolicy | undefined,
+  proposals: GuardProposalFile | undefined,
+): string | undefined {
+  if (policy?.mode !== 'protected' || !policy.requireDistinctActor) return undefined;
+  const actor = process.env.GUARD_APPROVER?.trim();
+  if (!actor) {
+    return 'Protected Guard policy requires GUARD_APPROVER for a distinct approval actor.';
+  }
+  if (proposals?.generatedBy && proposals.generatedBy === actor) {
+    return 'The proposal author and approval actor must be different.';
+  }
+  return undefined;
+}
+
 export function getPendingGuardProposals(
   proposals: GuardProposalFile | undefined,
 ): GuardPendingProposal[] {
@@ -868,6 +884,9 @@ export function buildGuardProposals(
   const proposal = {
     version: 1 as const,
     generatedAt: new Date().toISOString(),
+    ...(process.env.GUARD_PROPOSER?.trim()
+      ? { generatedBy: process.env.GUARD_PROPOSER.trim() }
+      : {}),
     rules: guardConfig.rules.filter((rule) => rule.status === 'proposed'),
     contracts: [
       ...(guardConfig.contracts ?? []).filter((contract) => contract.status === 'proposed'),
@@ -1308,6 +1327,35 @@ export function validateGuardContracts(
   return issues;
 }
 
+export function validateGuardBudgets(
+  root: string,
+  budgets: GuardBudget[] = [],
+): GuardContractIssue[] {
+  const issues: GuardContractIssue[] = [];
+  for (const budget of budgets) {
+    if (!budget.reason.trim()) {
+      issues.push({
+        contractId: `budget:${budget.id}`,
+        field: 'definition',
+        value: budget.id,
+        message: 'Budgets require a written reason.',
+      });
+    }
+    for (const rawScope of budget.scope) {
+      const scope = rawScope.replace(/\*+$/, '') || '.';
+      if (!isProjectPath(root, scope) || !existsSync(resolve(root, scope))) {
+        issues.push({
+          contractId: `budget:${budget.id}`,
+          field: 'scope',
+          value: rawScope,
+          message: `Budget scope does not exist inside the project: ${rawScope}`,
+        });
+      }
+    }
+  }
+  return issues;
+}
+
 function isSourceFile(file: string): boolean {
   return /\.(?:ts|tsx|js|jsx)$/.test(file) && !/\.(?:test|spec)\.(?:ts|tsx|js|jsx)$/.test(file);
 }
@@ -1708,10 +1756,7 @@ function scanBudgets(
     .flatMap((budget) =>
       model.files
         .filter(
-          (file) =>
-            file.kind === 'source' &&
-            budgetMatchesFile(budget, file.path) &&
-            (!changed || changed.has(file.path)),
+          (file) => budgetMatchesFile(budget, file.path) && (!changed || changed.has(file.path)),
         )
         .flatMap((file) => {
           const value = budgetValue(root, budget.metric, file, modules.get(file.path));

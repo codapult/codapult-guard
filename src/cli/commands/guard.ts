@@ -27,10 +27,12 @@ import {
   writeGuardConfig,
   writeGuardProposals,
   recordGuardProposalDecision,
+  validateGuardProposalApproval,
   getGuardProposalFreshness,
   scanGuard,
   classifyGuardOutcome,
   validateGuardContracts,
+  validateGuardBudgets,
   writeProjectState,
   type GuardToolMode,
   type GuardFinding,
@@ -443,7 +445,10 @@ export function guardCheckCommand(options: GuardCheckOptions = {}): void {
     baseline: loadBaseline(root),
     includeArchitectureInsights: true,
   });
-  const contractIssues = validateGuardContracts(root, config.contracts ?? []);
+  const contractIssues = [
+    ...validateGuardContracts(root, config.contracts ?? []),
+    ...validateGuardBudgets(root, config.budgets ?? []),
+  ];
   const errors = report.findings.filter((finding) => finding.severity === 'error').length;
   const warnings = report.findings.filter((finding) => finding.severity === 'warning').length;
   const contractFindings: GuardFinding[] = contractIssues.map((issue) => ({
@@ -519,7 +524,10 @@ export function guardAuditCommand(options: GuardOutputOptions = {}): void {
     return;
   }
   const report = scanGuard(root, config, { includeArchitectureInsights: true });
-  const contractIssues = validateGuardContracts(root, config.contracts ?? []);
+  const contractIssues = [
+    ...validateGuardContracts(root, config.contracts ?? []),
+    ...validateGuardBudgets(root, config.budgets ?? []),
+  ];
   const errors = report.findings.filter((finding) => finding.severity === 'error').length;
   const warnings = report.findings.filter((finding) => finding.severity === 'warning').length;
   if (options.json) {
@@ -629,6 +637,12 @@ export function guardRulesApproveCommand(ids?: string, options: GuardApprovalOpt
     return;
   }
   const selectedIds = new Set(selected.map((rule) => rule.id));
+  const approvalError = validateGuardProposalApproval(config.approval, loadGuardProposals(root));
+  if (approvalError) {
+    fail(approvalError);
+    process.exitCode = 1;
+    return;
+  }
   writeGuardConfig(root, {
     ...config,
     rules: config.rules.map((rule) =>
@@ -712,6 +726,12 @@ export function guardContractsApproveCommand(
     return;
   }
   const selectedIds = new Set(selected.map((contract) => contract.id));
+  const approvalError = validateGuardProposalApproval(config.approval, loadGuardProposals(root));
+  if (approvalError) {
+    fail(approvalError);
+    process.exitCode = 1;
+    return;
+  }
   writeGuardConfig(root, {
     ...config,
     contracts: (config.contracts ?? []).map((contract) =>
@@ -754,6 +774,12 @@ export function guardContractsRejectCommand(
   const selected = proposed.filter((contract) => options.all || requested.has(contract.id));
   if (!options.all && selected.length === 0) {
     fail('Specify proposed contract IDs or use `codapult-guard contracts reject --all`.');
+    process.exitCode = 1;
+    return;
+  }
+  const approvalError = validateGuardProposalApproval(config.approval, loadGuardProposals(root));
+  if (approvalError) {
+    fail(approvalError);
     process.exitCode = 1;
     return;
   }

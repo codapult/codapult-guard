@@ -84,6 +84,7 @@ export const guardProposalDecisionSchema = z.object({
 export const guardProposalSchema = z.object({
   version: z.literal(1),
   generatedAt: z.string(),
+  generatedBy: z.string().trim().min(1).optional(),
   proposalId: z.string().optional(),
   projectFingerprint: z.string().optional(),
   revision: z.number().int().positive().optional(),

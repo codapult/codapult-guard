@@ -40,6 +40,7 @@ vi.mock('../../core/guard.js', () => ({
   initializeGuard: vi.fn(() => ({ report: { findings: [] } })),
   GuardAlreadyInitializedError: class extends Error {},
   recordGuardProposalDecision: vi.fn(),
+  validateGuardProposalApproval: vi.fn(() => undefined),
   writeGuardConfig: vi.fn(),
   writeProjectState: vi.fn(() => 'working-tree'),
   loadGuardProposals: vi.fn(),
@@ -47,6 +48,7 @@ vi.mock('../../core/guard.js', () => ({
   getGuardProposalFreshness: vi.fn(() => 'unknown'),
   scanGuard: vi.fn(() => ({ findings: [], suppressed: 0, scannedFiles: 0 })),
   validateGuardContracts: vi.fn(() => []),
+  validateGuardBudgets: vi.fn(() => []),
   classifyGuardOutcome: vi.fn(() => 'pass'),
 }));
 
