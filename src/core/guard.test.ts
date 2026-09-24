@@ -618,6 +618,45 @@ describe('guard contracts', () => {
     ]);
   });
 
+  it('recovers an interrupted policy transaction before reading state', () => {
+    const root = createProject({});
+    const transactionPath = join(root, '.codapult/guard/state/policy-transaction.json');
+    mkdirSync(dirname(transactionPath), { recursive: true });
+    writeFileSync(
+      transactionPath,
+      `${JSON.stringify({
+        version: 1,
+        createdAt: 'now',
+        config: {
+          version: 1,
+          rules: [
+            {
+              id: 'recovered-rule',
+              description: 'Recovered rule',
+              severity: 'error',
+              kind: 'forbidden-import',
+              patterns: ['legacy'],
+              status: 'active',
+            },
+          ],
+        },
+        proposals: {
+          version: 1,
+          generatedAt: 'now',
+          rules: [],
+          contracts: [],
+          questions: [],
+          decisions: [],
+        },
+      })}\n`,
+      'utf8',
+    );
+
+    expect(loadGuardConfig(root)?.rules[0]?.id).toBe('recovered-rule');
+    expect(loadGuardProposals(root)).toMatchObject({ version: 1, decisions: [] });
+    expect(existsSync(transactionPath)).toBe(false);
+  });
+
   it('does not keep decided proposals pending, but does reopen changed proposals', () => {
     const proposals = {
       version: 1 as const,

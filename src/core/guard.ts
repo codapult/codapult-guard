@@ -193,6 +193,13 @@ export interface GuardProposalDecision {
   commit?: string | undefined;
 }
 
+interface GuardPolicyTransaction {
+  version: 1;
+  createdAt: string;
+  config: GuardConfig;
+  proposals?: GuardProposalFile | undefined;
+}
+
 export type GuardProposalFreshness = 'current' | 'stale' | 'unknown';
 
 export interface GuardAgentConfig {
@@ -277,6 +284,7 @@ export const GUARD_PROPOSALS_FILE = `${GUARD_DIR}/proposals.json`;
 export const GUARD_STATE_DIR = `${GUARD_DIR}/state`;
 export const GUARD_STATE_GENERATIONS_DIR = `${GUARD_STATE_DIR}/generations`;
 export const GUARD_STATE_CURRENT_FILE = `${GUARD_STATE_DIR}/current.json`;
+const GUARD_POLICY_TRANSACTION_FILE = `${GUARD_STATE_DIR}/policy-transaction.json`;
 const GUARD_STATE_LOCK_FILE = `${GUARD_DIR}/.state.lock`;
 
 export const defaultGuardConfig: GuardConfig = {
@@ -597,7 +605,7 @@ export function getGuardProposalFreshness(
   return proposals.projectFingerprint === fingerprintProjectModel(model) ? 'current' : 'stale';
 }
 
-function loadGuardConfigUnlocked(root: string): GuardConfig | undefined {
+function readGuardConfigFilesUnlocked(root: string): GuardConfig | undefined {
   const rulesPath = resolve(root, GUARD_RULES_FILE);
   if (!existsSync(rulesPath)) return undefined;
   const value = readJson(rulesPath);
@@ -621,12 +629,67 @@ function loadGuardConfigUnlocked(root: string): GuardConfig | undefined {
   };
 }
 
+function isGuardPolicyTransaction(value: unknown): value is GuardPolicyTransaction {
+  if (value === null || typeof value !== 'object') return false;
+  const transaction = value as Partial<GuardPolicyTransaction>;
+  return (
+    transaction.version === 1 &&
+    typeof transaction.createdAt === 'string' &&
+    isGuardConfig(transaction.config) &&
+    (transaction.proposals === undefined || isGuardProposalFile(transaction.proposals))
+  );
+}
+
+function writeGuardConfigUnlocked(
+  root: string,
+  guardConfig: GuardConfig,
+  options: GuardConfigWriteOptions = {},
+): void {
+  mkdirSync(resolve(root, GUARD_DIR), { recursive: true });
+  const current = readGuardConfigFilesUnlocked(root);
+  const currentRevision = current?.revision ?? 0;
+  const expectedRevision = options.expectedRevision ?? guardConfig.revision;
+  if (expectedRevision !== undefined && expectedRevision !== currentRevision) {
+    throw new GuardStateStaleError();
+  }
+  const nextRevision = currentRevision + 1;
+  const contentFingerprint = fingerprintGuardConfig(guardConfig);
+  const { contracts = [], ...rulesConfig } = guardConfig;
+  atomicWriteFile(
+    resolve(root, GUARD_RULES_FILE),
+    `${JSON.stringify({ ...rulesConfig, revision: nextRevision, contentFingerprint }, null, 2)}\n`,
+  );
+  atomicWriteFile(
+    resolve(root, GUARD_CONTRACTS_FILE),
+    `${JSON.stringify({ version: 1, contracts }, null, 2)}\n`,
+  );
+}
+
+function recoverGuardPolicyTransaction(root: string): void {
+  const path = resolve(root, GUARD_POLICY_TRANSACTION_FILE);
+  if (!existsSync(path)) return;
+  const value = readJson(path);
+  if (!isGuardPolicyTransaction(value)) {
+    throw new GuardConfigError(GUARD_POLICY_TRANSACTION_FILE);
+  }
+  writeGuardConfigUnlocked(root, value.config);
+  if (value.proposals) {
+    writeGuardArtifactUnlocked(root, GUARD_PROPOSALS_FILE, value.proposals);
+  }
+  unlinkSync(path);
+}
+
+function loadGuardConfigUnlocked(root: string): GuardConfig | undefined {
+  recoverGuardPolicyTransaction(root);
+  return readGuardConfigFilesUnlocked(root);
+}
+
 export function loadGuardConfig(root: string): GuardConfig | undefined {
   if (!existsSync(resolve(root, GUARD_DIR))) return loadGuardConfigUnlocked(root);
   return withGuardStateLock(root, () => loadGuardConfigUnlocked(root));
 }
 
-export function loadGuardProposals(root: string): GuardProposalFile | undefined {
+function loadGuardProposalsUnlocked(root: string): GuardProposalFile | undefined {
   const path = resolve(root, GUARD_PROPOSALS_FILE);
   if (!existsSync(path)) return undefined;
   const value = readJson(path);
@@ -634,6 +697,14 @@ export function loadGuardProposals(root: string): GuardProposalFile | undefined 
     throw new GuardConfigError(GUARD_PROPOSALS_FILE);
   }
   return value;
+}
+
+export function loadGuardProposals(root: string): GuardProposalFile | undefined {
+  if (!existsSync(resolve(root, GUARD_DIR))) return loadGuardProposalsUnlocked(root);
+  return withGuardStateLock(root, () => {
+    recoverGuardPolicyTransaction(root);
+    return loadGuardProposalsUnlocked(root);
+  });
 }
 
 export function isGuardAgentConfig(value: unknown): value is GuardAgentConfig {
@@ -708,31 +779,6 @@ export function updateBaseline(
   });
 }
 
-function writeGuardConfigUnlocked(
-  root: string,
-  guardConfig: GuardConfig,
-  options: GuardConfigWriteOptions = {},
-): void {
-  mkdirSync(resolve(root, GUARD_DIR), { recursive: true });
-  const current = loadGuardConfigUnlocked(root);
-  const currentRevision = current?.revision ?? 0;
-  const expectedRevision = options.expectedRevision ?? guardConfig.revision;
-  if (expectedRevision !== undefined && expectedRevision !== currentRevision) {
-    throw new GuardStateStaleError();
-  }
-  const nextRevision = currentRevision + 1;
-  const contentFingerprint = fingerprintGuardConfig(guardConfig);
-  const { contracts = [], ...rulesConfig } = guardConfig;
-  atomicWriteFile(
-    resolve(root, GUARD_RULES_FILE),
-    `${JSON.stringify({ ...rulesConfig, revision: nextRevision, contentFingerprint }, null, 2)}\n`,
-  );
-  atomicWriteFile(
-    resolve(root, GUARD_CONTRACTS_FILE),
-    `${JSON.stringify({ version: 1, contracts }, null, 2)}\n`,
-  );
-}
-
 export function writeGuardConfig(
   root: string,
   guardConfig: GuardConfig,
@@ -745,12 +791,12 @@ export function writeGuardProposals(root: string, proposals: GuardProposalFile):
   writeGuardArtifact(root, GUARD_PROPOSALS_FILE, proposals);
 }
 
-function appendGuardProposalDecisionsUnlocked(
+function buildGuardProposalWithDecisionsUnlocked(
   root: string,
   decisions: Pick<GuardProposalDecision, 'id' | 'type' | 'decision'>[],
   options: Pick<GuardProposalDecision, 'source'>,
-): void {
-  const proposals = loadGuardProposals(root);
+): GuardProposalFile | undefined {
+  const proposals = loadGuardProposalsUnlocked(root);
   if (!proposals || decisions.length === 0) return;
   const decidedAt = new Date().toISOString();
   const commit = (() => {
@@ -772,10 +818,20 @@ function appendGuardProposalDecisionsUnlocked(
     ...(proposals.contentFingerprint ? { proposalFingerprint: proposals.contentFingerprint } : {}),
     ...(typeof proposals.revision === 'number' ? { revision: proposals.revision } : {}),
   }));
-  writeGuardArtifactUnlocked(root, GUARD_PROPOSALS_FILE, {
+  return {
     ...proposals,
     decisions: [...(proposals.decisions ?? []), ...nextDecisions],
-  });
+  };
+}
+
+function appendGuardProposalDecisionsUnlocked(
+  root: string,
+  decisions: Pick<GuardProposalDecision, 'id' | 'type' | 'decision'>[],
+  options: Pick<GuardProposalDecision, 'source'>,
+): void {
+  const proposals = buildGuardProposalWithDecisionsUnlocked(root, decisions, options);
+  if (!proposals) return;
+  writeGuardArtifactUnlocked(root, GUARD_PROPOSALS_FILE, proposals);
 }
 
 export function recordGuardProposalDecision(
@@ -795,8 +851,16 @@ export function applyGuardProposalDecision(
   options: Pick<GuardProposalDecision, 'source'>,
 ): void {
   withGuardStateLock(root, () => {
+    const proposals = buildGuardProposalWithDecisionsUnlocked(root, decisions, options);
+    writeGuardArtifactUnlocked(root, GUARD_POLICY_TRANSACTION_FILE, {
+      version: 1,
+      createdAt: new Date().toISOString(),
+      config: guardConfig,
+      ...(proposals ? { proposals } : {}),
+    } satisfies GuardPolicyTransaction);
     writeGuardConfigUnlocked(root, guardConfig);
-    appendGuardProposalDecisionsUnlocked(root, decisions, options);
+    if (proposals) writeGuardArtifactUnlocked(root, GUARD_PROPOSALS_FILE, proposals);
+    unlinkSync(resolve(root, GUARD_POLICY_TRANSACTION_FILE));
   });
 }
 

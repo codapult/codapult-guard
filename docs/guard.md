@@ -248,6 +248,11 @@ atomic `state/current.json` pointer. The root-level JSON files remain compatibil
 writes carry a revision and reject stale writers with `GUARD_STATE_STALE` instead of silently
 overwriting a newer policy.
 
+Policy activation also uses a small local transaction journal. If the process stops between writing
+the policy and its proposal decision history, the next Guard read repairs both artifacts from the
+journal before continuing. The journal is local recovery metadata, not a distributed transaction
+system; Git/CI remains the source of truth for collaboration and protected review.
+
 Compare persisted project states:
 
 ```bash
