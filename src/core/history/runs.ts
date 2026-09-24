@@ -1,10 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { resolve } from 'node:path';
 import { config } from '../config.js';
 
 export const GUARD_RUNS_DIR = `.${config.appName}/guard/history/runs`;
+export const GUARD_RUN_RETENTION = 200;
 
 export interface GuardRunStage {
   durationMs: number;
@@ -90,6 +99,28 @@ export function recordGuardRunStage(
   };
 }
 
+function pruneGuardRuns(root: string): void {
+  const directory = resolve(root, GUARD_RUNS_DIR);
+  try {
+    const files = readdirSync(directory)
+      .filter((file) => file.endsWith('.json'))
+      .map((file) => ({
+        file,
+        modifiedAt: statSync(resolve(directory, file)).mtimeMs,
+      }))
+      .sort((left, right) => right.modifiedAt - left.modifiedAt);
+    for (const entry of files.slice(GUARD_RUN_RETENTION)) {
+      try {
+        unlinkSync(resolve(directory, entry.file));
+      } catch {
+        // Retention is best effort; a concurrent reader may own the file.
+      }
+    }
+  } catch {
+    // Diagnostics must never fail because retention cannot be completed.
+  }
+}
+
 export function writeGuardRun(root: string, manifest: GuardRunManifest): void {
   const directory = resolve(root, GUARD_RUNS_DIR);
   mkdirSync(directory, { recursive: true });
@@ -97,6 +128,7 @@ export function writeGuardRun(root: string, manifest: GuardRunManifest): void {
   const temporaryPath = `${path}.tmp-${process.pid}-${manifest.runId}`;
   writeFileSync(temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
   renameSync(temporaryPath, path);
+  pruneGuardRuns(root);
 }
 
 /** Reads locally persisted run manifests without reaching a remote service. */

@@ -8,6 +8,7 @@ import {
   startGuardRun,
   summarizeGuardRuns,
   GUARD_RUNS_DIR,
+  GUARD_RUN_RETENTION,
   writeGuardRun,
   type GuardRunManifest,
 } from './runs.js';
@@ -25,14 +26,16 @@ function createRoot(): string {
 }
 
 function manifest(runId: string, outcome: GuardRunManifest['outcome']): GuardRunManifest {
-  const sequence = runId.replace('guard-', '');
+  const sequence = Number(runId.replace('guard-', ''));
+  const startedAt = new Date(Date.UTC(2026, 0, 1, 0, 0, sequence)).toISOString();
+  const completedAt = new Date(Date.parse(startedAt) + 1_000).toISOString();
   return {
     version: 1,
     runId,
     command: 'verify',
-    startedAt: `2026-01-01T00:00:0${sequence}Z`,
-    completedAt: `2026-01-01T00:00:1${sequence}Z`,
-    durationMs: Number(runId.replace('guard-', '')) * 10,
+    startedAt,
+    completedAt,
+    durationMs: sequence * 10,
     outcome,
     gate: 'none',
     stages: {},
@@ -93,5 +96,14 @@ describe('Guard run observability', () => {
       stages: { discovery: { status: 'ok' } },
     });
     expect(listGuardRuns(root)).toHaveLength(1);
+  });
+
+  it('bounds persisted run history', () => {
+    const root = createRoot();
+    for (let index = 0; index <= GUARD_RUN_RETENTION; index += 1) {
+      writeGuardRun(root, manifest(`guard-${index + 1}`, 'pass'));
+    }
+
+    expect(listGuardRuns(root, GUARD_RUN_RETENTION + 1)).toHaveLength(GUARD_RUN_RETENTION);
   });
 });
