@@ -231,11 +231,34 @@ Guard state is stored in `.codapult/guard/`:
 ├── proposals.json     evidence and approval history
 ├── baseline.json      accepted pre-existing findings
 ├── agent.json         AI-host completion-gate configuration
-└── history/           project snapshots for comparison
+└── history/           project snapshots and local verification run manifests
 ```
 
 Commit policy and baseline files when the team wants shared guardrails. Treat cache artifacts as
 disposable according to the project’s policy, and never commit secrets.
+
+### Optional scoped budgets
+
+Budgets are policy, not a universal style rule. Add them only for a named risk boundary such as a
+service, route handler, or dependency-heavy module:
+
+```json
+{
+  "id": "service-lines",
+  "description": "Services must remain reviewable.",
+  "metric": "lines",
+  "scope": ["src/services"],
+  "limit": 300,
+  "severity": "warning",
+  "reason": "Keep service changes reviewable by one owner.",
+  "status": "active"
+}
+```
+
+Place budgets in the `budgets` array in `.codapult/guard/rules.json`. Supported metrics are
+`lines`, `bytes`, and `imports`. Generated files, schemas, migrations, and other paths are not
+checked unless they are explicitly included in `scope`. Changing a budget is a policy decision:
+review the diff and update its written `reason` rather than silently increasing the limit.
 
 ## AI agents and MCP
 
@@ -283,6 +306,23 @@ task finished
 For Cursor, Claude Code, Codex, Gemini CLI, GitHub Copilot, and generic hosts, see
 [`docs/integrations/`](docs/integrations/).
 
+For workflows where the authoring agent must not approve its own policy proposals, set Guard to
+protected mode in `rules.json`:
+
+```json
+{
+  "approval": {
+    "mode": "protected",
+    "allowMcpApproval": false,
+    "requireDistinctActor": true
+  }
+}
+```
+
+MCP can then read and propose policy, while approval happens through the CLI or a protected CI/PR
+process. Guard records proposal and commit provenance, but external branch protection or signed
+identity remains responsible for proving who approved the change.
+
 ## CI
 
 Copy the consumer workflow into a project that has installed and initialized Guard:
@@ -325,6 +365,11 @@ process that dies while holding the state lock is detected by its local PID and 
 recovered; use `--no-wait` when an integration needs immediate contention feedback.
 
 Run `pnpm exec codapult-guard <command> --help` for command-specific options.
+
+Every `verify` run also writes a local manifest under
+`.codapult/guard/history/runs/<run-id>.json`. It records stage durations, the outcome, and the
+policy gate that decided the result. It contains no source code or external telemetry. These
+manifests make a failed run explainable without turning Guard into a production tracing system.
 
 ## Security and data handling
 

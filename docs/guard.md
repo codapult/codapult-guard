@@ -63,6 +63,7 @@ Policy is the part the project explicitly accepts. It is stored in Guard state a
 - contracts describing project-specific boundaries and required calls;
 - conventions and architecture memory generated from observed evidence;
 - a baseline of findings that existed before Guard was enabled.
+- optional scoped budgets for explicitly selected risk boundaries;
 
 Guard does not assume that every project must have `UI → actions → services → repositories → DB`.
 That shape may be discovered as evidence, proposed for review, and accepted only by a developer.
@@ -144,14 +145,14 @@ Guard stores its project memory under `.codapult/guard/`:
 | `project.json`       | Persisted discovered project model: files, modules, dependencies, routes, capabilities, patterns, Git data, and insights. |
 | `architecture.json`  | Human/agent-readable architecture memory derived from observed project facts.                                             |
 | `conventions.json`   | Observed conventions and recurring project patterns.                                                                      |
-| `rules.json`         | Guard rules. Rules with `status: "active"` are enforced; `proposed` rules are not.                                        |
+| `rules.json`         | Guard rules, optional scoped budgets, and approval policy. Active items are enforced; proposed items are not.             |
 | `contracts.json`     | Project-specific guidance, import boundaries, and required-call contracts.                                                |
 | `proposals.json`     | Evidence, confidence, questions, and approval/rejection history for proposed policy.                                      |
 | `baseline.json`      | Fingerprints of accepted pre-existing findings. Baseline suppression is fingerprint-based.                                |
 | `baseline-meta.json` | Metadata describing the baseline and its project snapshot.                                                                |
 | `agent.json`         | Host-facing completion-gate and external-tool policy. It does not execute an LLM.                                         |
 | `cache.json`         | Optional discovery cache. Unchanged AST modules can be reused by content hash.                                            |
-| `history/`           | Project model snapshots used by `history-diff`.                                                                           |
+| `history/`           | Project model snapshots, history diffs, and local verification run manifests.                                             |
 
 Discovery is bounded by default to 100,000 files and 25 MiB per file. These limits prevent an
 accidental scan of build artifacts or unusually large inputs from exhausting local resources.
@@ -302,7 +303,35 @@ pnpm exec codapult-guard baseline remove <fingerprint> --reason "Fixed in the cu
 
 Use `--all` only as an explicit decision. `baseline accept --all` accepts all findings from the
 current full scan; `baseline remove --all` removes fingerprints represented by the current scan.
-Each update preserves a decision record in `baseline-meta.json`.
+Each update preserves a decision record in `baseline-meta.json`. A written `--reason` is required
+for every manual baseline add or remove; initialization is the only operation that may create the
+initial baseline without a manual reason.
+
+### Scoped budgets
+
+Budgets are optional policy for a specific risk boundary, not a global file-size rule. They support
+`lines`, `bytes`, and `imports` and require a non-empty scope, limit, severity, and reason:
+
+```json
+{
+  "budgets": [
+    {
+      "id": "service-lines",
+      "description": "Services must remain reviewable.",
+      "metric": "lines",
+      "scope": ["src/services"],
+      "limit": 300,
+      "severity": "warning",
+      "reason": "Keep service changes reviewable by one owner.",
+      "status": "active"
+    }
+  ]
+}
+```
+
+Use budgets only where size or dependency count is evidence of a concrete project risk. Do not
+apply them indiscriminately to generated code, schemas, migrations, localization files, or UI
+composition. Guard does not automatically invent budgets during `init`.
 
 ## Rules, contracts, and proposals
 
@@ -405,6 +434,32 @@ Proposals become stale when the project changes. Regenerate them rather than app
 based on old evidence. The CLI and MCP proposal paths protect activation and preserve decision
 history; the AI must not activate policy silently.
 
+### Approval trust modes
+
+The default policy is local mode. `confirm: true` or a CLI approval means that the caller
+explicitly requested the state change; it does not prove that a human made the decision.
+
+For agent-driven or protected workflows, configure the policy in `rules.json`:
+
+```json
+{
+  "approval": {
+    "mode": "protected",
+    "allowMcpApproval": false,
+    "requireDistinctActor": true
+  }
+}
+```
+
+In protected mode, MCP can inspect and propose policy but cannot approve it. Approval must go
+through the CLI or an external protected review process such as branch protection. Decision
+records include the proposal fingerprint, current commit when available, source (`cli`, `mcp`, or
+`external`), and optional `GUARD_APPROVER` metadata. That metadata is provenance, not identity
+verification; cryptographic identity and reviewer permissions belong to the host CI/review system.
+
+This separation is intentional: Guard checks that an approval matches the current evidence, while
+GitHub or another protected system determines who is authorized to approve it.
+
 ## What Guard discovers
 
 Guard is intentionally evidence-driven. It can model a small JavaScript utility, a React app, a
@@ -433,20 +488,20 @@ merely because a package name or filename resembles a domain.
 MCP exposes the same Guard model without requiring the host to parse CLI output. The Guard tools
 are:
 
-| MCP tool                         | Purpose                                                                                                        | Writes by default?                                            |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `codapult_guard_context`         | Read current project facts, policy, architecture, and completion config.                                       | No                                                            |
-| `codapult_guard_analyze`         | Refresh persisted facts and snapshots without changing policy or baseline.                                     | Requires `confirm: true`.                                     |
-| `codapult_guard_propose`         | Generate evidence-based proposals.                                                                             | No; persistence requires `persist: true` and `confirm: true`. |
-| `codapult_guard_init`            | Initialize Guard.                                                                                              | Requires `confirm: true`; force also requires confirmation.   |
-| `codapult_guard_proposal_decide` | Approve/reject current proposals.                                                                              | Requires `confirm: true`.                                     |
-| `codapult_guard_check`           | Check active Guard policy and changed files.                                                                   | No                                                            |
-| `codapult_guard_review`          | Prepare a bounded/redacted semantic review packet.                                                             | No                                                            |
-| `codapult_guard_verify`          | Run the completion gate and return structured results.                                                         | Runs configured project commands; does not edit source.       |
-| `codapult_guard_audit`           | Full current scan and contract validation.                                                                     | No                                                            |
-| `codapult_guard_impact`          | Explain dependencies, transitive dependents, impact paths, capabilities, contracts, and graph edges for files. | No                                                            |
-| `codapult_guard_explain`         | Explain one rule/contract, its evidence, and suggested next steps.                                             | No                                                            |
-| `codapult_guard_next_action`     | Return the next bounded Guard action for an agent without changing project state.                              | No                                                            |
+| MCP tool                         | Purpose                                                                                                        | Writes by default?                                                |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `codapult_guard_context`         | Read current project facts, policy, architecture, and completion config.                                       | No                                                                |
+| `codapult_guard_analyze`         | Refresh persisted facts and snapshots without changing policy or baseline.                                     | Requires `confirm: true`.                                         |
+| `codapult_guard_propose`         | Generate evidence-based proposals.                                                                             | No; persistence requires `persist: true` and `confirm: true`.     |
+| `codapult_guard_init`            | Initialize Guard.                                                                                              | Requires `confirm: true`; force also requires confirmation.       |
+| `codapult_guard_proposal_decide` | Approve/reject current proposals.                                                                              | Requires `confirm: true`; protected mode can forbid MCP approval. |
+| `codapult_guard_check`           | Check active Guard policy and changed files.                                                                   | No                                                                |
+| `codapult_guard_review`          | Prepare a bounded/redacted semantic review packet.                                                             | No                                                                |
+| `codapult_guard_verify`          | Run the completion gate and return structured results.                                                         | Runs configured project commands; does not edit source.           |
+| `codapult_guard_audit`           | Full current scan and contract validation.                                                                     | No                                                                |
+| `codapult_guard_impact`          | Explain dependencies, transitive dependents, impact paths, capabilities, contracts, and graph edges for files. | No                                                                |
+| `codapult_guard_explain`         | Explain one rule/contract, its evidence, and suggested next steps.                                             | No                                                                |
+| `codapult_guard_next_action`     | Return the next bounded Guard action for an agent without changing project state.                              | No                                                                |
 
 Every tool accepts an optional `root`. If omitted, the MCP process working directory is used. The
 host should pass a project root when its MCP process is not started there.
@@ -537,6 +592,11 @@ JSON gate output:
 pnpm exec codapult-guard verify --json
 pnpm exec codapult-guard check --changed --json
 ```
+
+`verify --json` includes a `run` object with a unique run ID, stage durations, outcome, and the
+policy gate that determined the result. The same manifest is saved under
+`.codapult/guard/history/runs/`. Guard keeps this diagnostic record local and does not send traces
+or source code to a remote service.
 
 SARIF output for GitHub Code Scanning or another SARIF consumer:
 
