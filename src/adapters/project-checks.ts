@@ -2,29 +2,44 @@ import { createRequire } from 'node:module';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { runProjectCommand, type CommandResult } from './command.js';
+import type { GuardAdapterName, GuardToolMode, ProjectCheck } from '../core/model/types.js';
 
 const require = createRequire(import.meta.url);
 const { satisfies } = require('semver') as {
   satisfies: (version: string, range: string) => boolean;
 };
 
-export type ProjectCheck = 'lint' | 'typecheck' | 'test' | 'build';
-export type GuardAdapter = 'dependency-graph' | 'security' | 'dependency-hygiene';
-export type ExternalToolMode = 'auto' | 'on' | 'off';
+export type { ProjectCheck } from '../core/model/types.js';
+export type GuardAdapter = GuardAdapterName;
+export type ExternalToolMode = GuardToolMode;
 
 export type ProjectCheckResults = Partial<Record<ProjectCheck, CommandResult>>;
 
+export interface ProjectChecksOptions {
+  timeout?: number | undefined;
+}
+
+export interface WorkspaceProjectChecksOptions extends ProjectChecksOptions {
+  rootResults?: ProjectCheckResults | undefined;
+}
+
+export interface ProjectAdaptersOptions {
+  mode?: Exclude<ExternalToolMode, 'off'> | undefined;
+  timeout?: number | undefined;
+  tooling?: Partial<Record<GuardAdapter, { script: string; enabled: boolean }>> | undefined;
+}
+
 interface PackageMetadata {
-  engines?: { node?: string };
-  packageManager?: string;
-  scripts?: Record<string, string>;
+  engines?: { node?: string | undefined } | undefined;
+  packageManager?: string | undefined;
+  scripts?: Record<string, string> | undefined;
 }
 
 export interface ProjectRuntimeDiagnostics {
   node: string;
   packageManager: string;
-  declaredPackageManager?: string;
-  declaredNode?: string;
+  declaredPackageManager?: string | undefined;
+  declaredNode?: string | undefined;
   compatible: boolean;
   issues: string[];
 }
@@ -115,7 +130,7 @@ function commandFor(
 export function runProjectChecks(
   root: string,
   checks: ProjectCheck[],
-  options: { timeout?: number } = {},
+  options: ProjectChecksOptions = {},
 ): ProjectCheckResults {
   const metadata = readPackageMetadata(root);
   const manager = packageManager(root, metadata.packageManager);
@@ -146,7 +161,7 @@ export function runWorkspaceProjectChecks(
   root: string,
   packages: { path: string; scripts: Record<string, string> }[],
   checks: ProjectCheck[],
-  options: { timeout?: number; rootResults?: ProjectCheckResults } = {},
+  options: WorkspaceProjectChecksOptions = {},
 ): Record<string, ProjectCheckResults> {
   const rootResults = options.rootResults ?? runProjectChecks(root, checks, options);
   const missingAtRoot = new Set(
@@ -173,11 +188,7 @@ const adapterScriptPatterns: Record<GuardAdapter, RegExp> = {
 /** Runs only explicitly configured project scripts; Guard does not recreate these tools. */
 export function runProjectAdapters(
   root: string,
-  options: {
-    mode?: Exclude<ExternalToolMode, 'off'>;
-    timeout?: number;
-    tooling?: Partial<Record<GuardAdapter, { script: string; enabled: boolean }>>;
-  } = {},
+  options: ProjectAdaptersOptions = {},
 ): Partial<Record<GuardAdapter, CommandResult>> {
   const metadata = readPackageMetadata(root);
   const manager = packageManager(root, metadata.packageManager);

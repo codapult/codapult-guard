@@ -7,8 +7,28 @@ export interface CommandResult {
   exitCode: number;
   stdout: string;
   stderr: string;
-  timedOut?: boolean;
-  truncated?: boolean;
+  timedOut?: boolean | undefined;
+  truncated?: boolean | undefined;
+}
+
+export interface RunProjectCommandOptions {
+  timeout?: number | undefined;
+  env?: NodeJS.ProcessEnv | undefined;
+}
+
+export interface CommandResponse {
+  content: { type: 'text'; text: string }[];
+  isError: boolean;
+}
+
+interface CapturedOutput {
+  value: string;
+  truncated: boolean;
+}
+
+interface ParsedCommand {
+  executable: string;
+  args: string[];
 }
 
 const MAX_OUTPUT_CHARS = 20_000;
@@ -27,14 +47,14 @@ function redactOutput(value: string): string {
     );
 }
 
-function captureOutput(value: string): { value: string; truncated: boolean } {
+function captureOutput(value: string): CapturedOutput {
   const redacted = redactOutput(value);
   return redacted.length > MAX_OUTPUT_CHARS
     ? { value: `${redacted.slice(0, MAX_OUTPUT_CHARS)}\n[output truncated]`, truncated: true }
     : { value: redacted, truncated: false };
 }
 
-function parseCommand(command: string): { executable: string; args: string[] } | undefined {
+function parseCommand(command: string): ParsedCommand | undefined {
   const parts = command.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0 || parts.some((part) => /[;&|<>`$()]/.test(part))) return undefined;
   const [executable, ...args] = parts;
@@ -48,7 +68,7 @@ function parseCommand(command: string): { executable: string; args: string[] } |
 export function runProjectCommand(
   command: string,
   cwd: string,
-  options: { timeout?: number; env?: NodeJS.ProcessEnv } = {},
+  options: RunProjectCommandOptions = {},
 ): CommandResult {
   const parsed = parseCommand(command);
   if (!parsed) {
@@ -81,12 +101,12 @@ export function runProjectCommand(
     };
   } catch (error) {
     const execError = error as {
-      status?: number;
-      stdout?: Buffer;
-      stderr?: Buffer;
-      killed?: boolean;
-      signal?: string;
-      code?: string;
+      status?: number | undefined;
+      stdout?: Buffer | undefined;
+      stderr?: Buffer | undefined;
+      killed?: boolean | undefined;
+      signal?: string | undefined;
+      code?: string | undefined;
     };
     const exitCode = execError.status ?? 1;
     const passed = exitCode === 0;
@@ -106,10 +126,7 @@ export function runProjectCommand(
   }
 }
 
-export function commandResponse(result: CommandResult): {
-  content: { type: 'text'; text: string }[];
-  isError: boolean;
-} {
+export function commandResponse(result: CommandResult): CommandResponse {
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
     isError: !result.passed,

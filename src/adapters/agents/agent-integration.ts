@@ -28,7 +28,7 @@ Guard does not edit source files or invoke an LLM. The host agent owns the repai
 the independent final gate.
 ${END_MARKER}`;
 
-const targets: Record<GuardAgentTarget, { path: string; prefix?: string }> = {
+const targets: Record<GuardAgentTarget, { path: string; prefix?: string | undefined }> = {
   generic: { path: 'AGENTS.md' },
   codex: { path: 'AGENTS.md' },
   cursor: {

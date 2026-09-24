@@ -28,7 +28,7 @@ export interface ModuleRecord {
   exports: string[];
   calls: string[];
   resolvedImports: string[];
-  resolvedImportMap?: Record<string, string>;
+  resolvedImportMap?: Record<string, string> | undefined;
   dynamicImports: string[];
   declarations: {
     classes: number;
@@ -52,20 +52,20 @@ export interface CapabilitySignal {
 export interface ProjectModel {
   version: 1;
   project: {
-    name?: string;
-    packageManager?: string;
+    name?: string | undefined;
+    packageManager?: string | undefined;
     frameworks: string[];
     scripts: Record<string, string>;
     dependencies: Record<string, string>;
     devDependencies: Record<string, string>;
     workspacePackages: {
       path: string;
-      name?: string;
+      name?: string | undefined;
       private: boolean;
       scripts: Record<string, string>;
       dependencies: string[];
-      exports?: string[];
-      projectReferences?: string[];
+      exports?: string[] | undefined;
+      projectReferences?: string[] | undefined;
     }[];
   };
   files: ProjectFileRecord[];
@@ -78,7 +78,7 @@ export interface ProjectModel {
   };
   git: {
     repository: boolean;
-    branch?: string;
+    branch?: string | undefined;
     dirty: boolean;
     changedFiles: string[];
     status: string[];
@@ -121,12 +121,17 @@ export interface DiscoveryMetrics {
   reusedModules: number;
 }
 
+export interface DiscoveryResult {
+  model: ProjectModel;
+  metrics: DiscoveryMetrics;
+}
+
 export interface DiscoveryOptions {
-  persistCache?: boolean;
+  persistCache?: boolean | undefined;
   /** Maximum number of files included in one model. */
-  maxFiles?: number;
+  maxFiles?: number | undefined;
   /** Maximum size of one included file in bytes. */
-  maxFileBytes?: number;
+  maxFileBytes?: number | undefined;
 }
 
 export class DiscoveryLimitError extends Error {
@@ -535,7 +540,7 @@ function runGit(root: string, args: string[]): string | undefined {
   try {
     return execFileSync('git', args, { cwd: root, stdio: 'pipe' }).toString().trim();
   } catch (error) {
-    const stdout = (error as { stdout?: Buffer }).stdout;
+    const stdout = (error as { stdout?: Buffer | undefined }).stdout;
     return stdout?.toString().trim() || undefined;
   }
 }
@@ -575,7 +580,7 @@ function gitModel(root: string): ProjectModel['git'] {
     });
   return {
     repository: runGit(root, ['rev-parse', '--is-inside-work-tree']) === 'true',
-    branch: branch || undefined,
+    ...(branch ? { branch } : {}),
     dirty: status.length > 0,
     changedFiles: [...changed].sort(),
     status,
@@ -1256,11 +1261,12 @@ function discoverProjectOnce(
       }
       return { path, methods: [...methods].sort() };
     });
+  const detectedPackageManager = packageManager(root);
   const model: ProjectModel = {
     version: 1,
     project: {
-      name: typeof packageJson.name === 'string' ? packageJson.name : undefined,
-      packageManager: packageManager(root),
+      ...(typeof packageJson.name === 'string' ? { name: packageJson.name } : {}),
+      ...(detectedPackageManager ? { packageManager: detectedPackageManager } : {}),
       frameworks: inferFrameworks(dependencies, devDependencies),
       scripts,
       dependencies,
@@ -1324,7 +1330,7 @@ export function discoverProject(root: string, options: DiscoveryOptions = {}): P
 export function discoverProjectWithMetrics(
   root: string,
   options: DiscoveryOptions = {},
-): { model: ProjectModel; metrics: DiscoveryMetrics } {
+): DiscoveryResult {
   const startedAt = Date.now();
   const model = discoverProject(root, options);
   return {

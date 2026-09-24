@@ -53,6 +53,58 @@ import { dim, fail, heading, info, success, warn } from '../ui.js';
 import { guardFindingsToSarif } from '../../core/output/sarif.js';
 import { analyzeProjectImpact } from '../../core/analysis/impact.js';
 
+interface GuardOutputOptions {
+  json?: boolean | undefined;
+}
+
+interface GuardMachineOutputOptions extends GuardOutputOptions {
+  machine?: boolean | undefined;
+}
+
+interface GuardConfigLoadResult {
+  config?: GuardConfig | undefined;
+  invalid: boolean;
+}
+
+interface GuardInitOptions {
+  force?: boolean | undefined;
+  wait?: boolean | undefined;
+}
+
+interface GuardAnalyzeOptions {
+  refresh?: boolean | undefined;
+  wait?: boolean | undefined;
+}
+
+interface GuardVerifyOptions extends GuardOutputOptions {
+  checks?: string | undefined;
+  changed?: boolean | undefined;
+  requirement?: string | undefined;
+  tools?: GuardToolMode | undefined;
+  strict?: boolean | undefined;
+  projectChecks?: boolean | undefined;
+}
+
+interface GuardCheckOptions extends GuardOutputOptions {
+  changed?: boolean | undefined;
+  sarif?: boolean | undefined;
+}
+
+interface GuardBaselineOptions extends GuardOutputOptions {
+  all?: boolean | undefined;
+  reason?: string | undefined;
+}
+
+interface GuardApprovalOptions {
+  all?: boolean | undefined;
+}
+
+interface GuardReviewOptions {
+  maxDiffChars?: string | undefined;
+  requirement?: string | undefined;
+  base?: string | undefined;
+}
+
 function renderFindings(findings: ReturnType<typeof scanGuard>['findings']): void {
   for (const finding of findings) {
     const printer =
@@ -69,8 +121,8 @@ function getRoot(): string {
 
 function loadConfigSafely(
   root: string,
-  options: { json?: boolean; machine?: boolean } = {},
-): { config?: GuardConfig; invalid: boolean } {
+  options: GuardMachineOutputOptions = {},
+): GuardConfigLoadResult {
   try {
     return { config: loadGuardConfig(root), invalid: false };
   } catch (error) {
@@ -110,7 +162,7 @@ function readRequirement(root: string, file?: string): string | undefined {
   }
 }
 
-export function guardInitCommand(options: { force?: boolean; wait?: boolean } = {}): void {
+export function guardInitCommand(options: GuardInitOptions = {}): void {
   const root = getRoot();
   let initialized: ReturnType<typeof initializeGuard>;
   try {
@@ -147,7 +199,7 @@ export function guardInitCommand(options: { force?: boolean; wait?: boolean } = 
   );
 }
 
-export function guardAnalyzeCommand(options: { refresh?: boolean; wait?: boolean } = {}): void {
+export function guardAnalyzeCommand(options: GuardAnalyzeOptions = {}): void {
   const root = getRoot();
   const { model: projectModel, metrics } = discoverProjectWithMetrics(root, {
     persistCache: true,
@@ -170,7 +222,7 @@ export function guardAnalyzeCommand(options: { refresh?: boolean; wait?: boolean
   dim(`Snapshot: ${GUARD_HISTORY_DIR}/${revision}.json`);
 }
 
-export function guardProposeCommand(options: { json?: boolean } = {}): void {
+export function guardProposeCommand(options: GuardOutputOptions = {}): void {
   const root = getRoot();
   const model = discoverProject(root);
   const loaded = loadConfigSafely(root, options);
@@ -202,7 +254,7 @@ export function guardProposeCommand(options: { json?: boolean } = {}): void {
 
 export function guardInstallAgentCommand(
   target = 'generic',
-  options: { json?: boolean } = {},
+  options: GuardOutputOptions = {},
 ): void {
   const normalized = target.toLowerCase();
   const targets = normalized === 'all' ? guardAgentTargets : [normalized as GuardAgentTarget];
@@ -223,7 +275,9 @@ export function guardInstallAgentCommand(
   process.exitCode = 0;
 }
 
-export function guardDoctorCommand(options: { json?: boolean; fixCache?: boolean } = {}): void {
+export function guardDoctorCommand(
+  options: GuardOutputOptions & { fixCache?: boolean | undefined } = {},
+): void {
   if (options.fixCache) clearDiscoveryCache(getRoot());
   const report = diagnoseGuard(getRoot());
   const result = options.fixCache ? { ...report, cacheFixed: true } : report;
@@ -256,7 +310,7 @@ export function guardHistoryCommand(): void {
   }
 }
 
-export function guardImpactCommand(files: string[], options: { json?: boolean } = {}): void {
+export function guardImpactCommand(files: string[], options: GuardOutputOptions = {}): void {
   const root = getRoot();
   if (files.length === 0) {
     fail('Specify at least one project-relative file.');
@@ -284,7 +338,7 @@ export function guardImpactCommand(files: string[], options: { json?: boolean } 
 export function guardHistoryDiffCommand(
   from: string,
   to: string,
-  options: { json?: boolean } = {},
+  options: GuardOutputOptions = {},
 ): void {
   const diff = diffGuardSnapshots(getRoot(), from, to);
   if (!diff) {
@@ -312,17 +366,7 @@ export function guardHistoryDiffCommand(
   process.exitCode = 0;
 }
 
-export function guardVerifyCommand(
-  options: {
-    checks?: string;
-    changed?: boolean;
-    json?: boolean;
-    requirement?: string;
-    tools?: GuardToolMode;
-    strict?: boolean;
-    projectChecks?: boolean;
-  } = {},
-): void {
+export function guardVerifyCommand(options: GuardVerifyOptions = {}): void {
   const root = getRoot();
   const requirement = readRequirement(root, options.requirement);
   if (options.requirement && !requirement) return;
@@ -370,9 +414,7 @@ export function guardVerifyCommand(
   process.exitCode = result.status === 'ok' ? 0 : 1;
 }
 
-export function guardCheckCommand(
-  options: { changed?: boolean; json?: boolean; sarif?: boolean } = {},
-): void {
+export function guardCheckCommand(options: GuardCheckOptions = {}): void {
   const root = getRoot();
   const loaded = loadConfigSafely(root, { ...options, machine: options.json || options.sarif });
   if (loaded.invalid) return;
@@ -452,7 +494,7 @@ export function guardCheckCommand(
   process.exitCode = errors > 0 || contractIssues.length > 0 ? 1 : 0;
 }
 
-export function guardAuditCommand(options: { json?: boolean } = {}): void {
+export function guardAuditCommand(options: GuardOutputOptions = {}): void {
   const root = getRoot();
   const loaded = loadConfigSafely(root, options);
   if (loaded.invalid) return;
@@ -516,7 +558,7 @@ export function guardAuditCommand(options: { json?: boolean } = {}): void {
 export function guardBaselineCommand(
   action: 'list' | 'accept' | 'remove',
   ids?: string,
-  options: { all?: boolean; reason?: string; json?: boolean } = {},
+  options: GuardBaselineOptions = {},
 ): void {
   const root = getRoot();
   const baseline = loadBaseline(root);
@@ -563,7 +605,7 @@ export function guardBaselineCommand(
   process.exitCode = 0;
 }
 
-export function guardRulesApproveCommand(ids?: string, options: { all?: boolean } = {}): void {
+export function guardRulesApproveCommand(ids?: string, options: GuardApprovalOptions = {}): void {
   const root = getRoot();
   const loaded = loadConfigSafely(root);
   if (loaded.invalid) return;
@@ -601,7 +643,7 @@ export function guardRulesApproveCommand(ids?: string, options: { all?: boolean 
   process.exitCode = 0;
 }
 
-export function guardPolicyExplainCommand(id: string, options: { json?: boolean } = {}): void {
+export function guardPolicyExplainCommand(id: string, options: GuardOutputOptions = {}): void {
   const root = getRoot();
   const loaded = loadConfigSafely(root, options);
   if (loaded.invalid) return;
@@ -642,7 +684,10 @@ export function guardPolicyExplainCommand(id: string, options: { json?: boolean 
   process.exitCode = 0;
 }
 
-export function guardContractsApproveCommand(ids?: string, options: { all?: boolean } = {}): void {
+export function guardContractsApproveCommand(
+  ids?: string,
+  options: GuardApprovalOptions = {},
+): void {
   const root = getRoot();
   const loaded = loadConfigSafely(root);
   if (loaded.invalid) return;
@@ -684,7 +729,10 @@ export function guardContractsApproveCommand(ids?: string, options: { all?: bool
   process.exitCode = 0;
 }
 
-export function guardContractsRejectCommand(ids?: string, options: { all?: boolean } = {}): void {
+export function guardContractsRejectCommand(
+  ids?: string,
+  options: GuardApprovalOptions = {},
+): void {
   const root = getRoot();
   const loaded = loadConfigSafely(root);
   if (loaded.invalid) return;
@@ -723,9 +771,7 @@ export function guardContractsRejectCommand(ids?: string, options: { all?: boole
   process.exitCode = 0;
 }
 
-export function guardReviewCommand(
-  options: { maxDiffChars?: string; requirement?: string; base?: string } = {},
-): void {
+export function guardReviewCommand(options: GuardReviewOptions = {}): void {
   const root = getRoot();
   const requirement = readRequirement(root, options.requirement);
   if (options.requirement && !requirement) return;

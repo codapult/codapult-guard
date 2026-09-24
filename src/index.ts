@@ -1,4 +1,5 @@
 /** Public, framework-agnostic Guard API. */
+export * from './core/model/types.js';
 export * from './core/guard.js';
 export * from './core/errors.js';
 export * from './core/discovery/discovery.js';

@@ -28,7 +28,7 @@ export interface GuardDoctorReport {
   status: 'ok' | 'warning' | 'fail';
   initialized: boolean;
   items: GuardDoctorItem[];
-  recommendation?: string;
+  recommendation?: string | undefined;
 }
 
 const requiredArtifacts = [

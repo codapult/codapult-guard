@@ -12,7 +12,7 @@ export interface GuardErrorPayload {
   errorCode: GuardErrorCode;
   message: string;
   recoverable: boolean;
-  hint?: string;
+  hint?: string | undefined;
 }
 
 export function guardErrorPayload(

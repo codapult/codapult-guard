@@ -30,44 +30,96 @@ import {
   guardContractsFileSchema,
   guardProposalSchema,
 } from './policy/schemas.js';
+import type {
+  GuardAdapterName,
+  GuardContractKind,
+  GuardRuleKind,
+  GuardRuleStatus,
+  GuardSeverity,
+  GuardToolMode,
+} from './model/types.js';
 
-export type GuardSeverity = 'error' | 'warning' | 'info';
+export type {
+  GuardAdapterName,
+  GuardContractKind,
+  GuardRuleKind,
+  GuardRuleStatus,
+  GuardSeverity,
+  GuardToolMode,
+} from './model/types.js';
 export type GuardOutcomeStatus = 'pass' | 'fail' | 'warning' | 'needs-review' | 'not-configured';
 
-export function classifyGuardOutcome(input: {
-  configured?: boolean;
-  errors?: number;
-  warnings?: number;
-  needsReview?: boolean;
-}): GuardOutcomeStatus {
+export interface GuardOutcomeInput {
+  configured?: boolean | undefined;
+  errors?: number | undefined;
+  warnings?: number | undefined;
+  needsReview?: boolean | undefined;
+}
+
+interface GuardStateLockOptions {
+  waitMs?: number | undefined;
+  noWait?: boolean | undefined;
+}
+
+interface GuardBaselineUpdateOptions {
+  add?: string[] | undefined;
+  remove?: string[] | undefined;
+  reason?: string | undefined;
+}
+
+interface GuardConfigWriteOptions extends GuardStateLockOptions {
+  expectedRevision?: number | undefined;
+}
+
+interface GuardPendingProposal {
+  id: string;
+  type: 'rule' | 'contract';
+}
+
+export interface GuardSensitiveText {
+  value: string;
+  redacted: boolean;
+  redactionCount: number;
+}
+
+interface GuardReviewDiff {
+  diff: string;
+  truncated: boolean;
+  redacted: boolean;
+  changedFiles: string[];
+  changes: GuardFileChange[];
+  error?: string | undefined;
+}
+
+export interface GuardInitializationResult {
+  config: GuardConfig;
+  report: GuardReport;
+}
+
+export function classifyGuardOutcome(input: GuardOutcomeInput): GuardOutcomeStatus {
   if (input.configured === false) return 'not-configured';
   if ((input.errors ?? 0) > 0) return 'fail';
   if (input.needsReview) return 'needs-review';
   return (input.warnings ?? 0) > 0 ? 'warning' : 'pass';
 }
-export type GuardRuleKind = 'forbidden-import' | 'client-forbidden-import';
-export type GuardRuleStatus = 'active' | 'proposed';
-export type GuardContractKind =
-  'guidance' | 'import-boundary' | 'required-call' | 'package-boundary';
-
 export interface GuardContract {
   id: string;
   statement: string;
-  kind?: GuardContractKind;
-  severity?: GuardSeverity;
-  scope?: string[];
-  entrypoints?: string[];
-  exclude?: string[];
-  guidance?: string[];
-  references?: string[];
-  mustImport?: string[];
-  mustNotImport?: string[];
-  mustCall?: string[];
-  fromPackages?: string[];
-  mustNotImportPackages?: string[];
-  status?: GuardRuleStatus;
-  confidence?: 'high' | 'medium' | 'low';
-  evidence?: string[];
+  kind?: GuardContractKind | undefined;
+  severity?: GuardSeverity | undefined;
+  scope?: string[] | undefined;
+  entrypoints?: string[] | undefined;
+  exclude?: string[] | undefined;
+  guidance?: string[] | undefined;
+  references?: string[] | undefined;
+  mustImport?: string[] | undefined;
+  mustNotImport?: string[] | undefined;
+  mustCall?: string[] | undefined;
+  fromPackages?: string[] | undefined;
+  mustNotImportPackages?: string[] | undefined;
+  status?: GuardRuleStatus | undefined;
+  confidence?: 'high' | 'medium' | 'low' | undefined;
+  evidence?: string[] | undefined;
 }
 
 export interface GuardRule {
@@ -76,31 +128,31 @@ export interface GuardRule {
   severity: GuardSeverity;
   kind: GuardRuleKind;
   patterns: string[];
-  files?: string[];
-  status?: GuardRuleStatus;
-  confidence?: 'high' | 'medium' | 'low';
-  evidence?: string[];
+  files?: string[] | undefined;
+  status?: GuardRuleStatus | undefined;
+  confidence?: 'high' | 'medium' | 'low' | undefined;
+  evidence?: string[] | undefined;
 }
 
 export interface GuardConfig {
   version: 1;
-  revision?: number;
-  contentFingerprint?: string;
+  revision?: number | undefined;
+  contentFingerprint?: string | undefined;
   rules: GuardRule[];
-  contracts?: GuardContract[];
+  contracts?: GuardContract[] | undefined;
 }
 
 export interface GuardProposalFile {
   version: 1;
   generatedAt: string;
-  proposalId?: string;
-  projectFingerprint?: string;
-  revision?: number;
-  contentFingerprint?: string;
+  proposalId?: string | undefined;
+  projectFingerprint?: string | undefined;
+  revision?: number | undefined;
+  contentFingerprint?: string | undefined;
   rules: GuardRule[];
   contracts: GuardContract[];
   questions: string[];
-  decisions?: GuardProposalDecision[];
+  decisions?: GuardProposalDecision[] | undefined;
 }
 
 export interface GuardProposalDecision {
@@ -108,9 +160,9 @@ export interface GuardProposalDecision {
   type: 'rule' | 'contract';
   decision: 'approved' | 'rejected';
   decidedAt: string;
-  proposalId?: string;
-  proposalFingerprint?: string;
-  revision?: number;
+  proposalId?: string | undefined;
+  proposalFingerprint?: string | undefined;
+  revision?: number | undefined;
 }
 
 export type GuardProposalFreshness = 'current' | 'stale' | 'unknown';
@@ -127,16 +179,13 @@ export interface GuardAgentConfig {
   };
 }
 
-export type GuardToolMode = 'auto' | 'on' | 'off';
-export type GuardAdapterName = 'dependency-graph' | 'security' | 'dependency-hygiene';
-
 export interface GuardFinding {
   ruleId: string;
   severity: GuardSeverity;
   file: string;
   line: number;
   importPath: string;
-  resolvedPath?: string;
+  resolvedPath?: string | undefined;
   message: string;
   fingerprint: string;
 }
@@ -144,7 +193,7 @@ export interface GuardFinding {
 export interface GuardFileChange {
   path: string;
   status: 'added' | 'modified' | 'deleted' | 'renamed';
-  previousPath?: string;
+  previousPath?: string | undefined;
 }
 
 export interface GuardContractIssue {
@@ -162,25 +211,25 @@ export interface GuardReport {
 }
 
 interface ScanGuardOptions {
-  changedOnly?: boolean;
-  changedFiles?: Set<string>;
-  baseline?: Set<string>;
-  includeArchitectureInsights?: boolean;
+  changedOnly?: boolean | undefined;
+  changedFiles?: Set<string> | undefined;
+  baseline?: Set<string> | undefined;
+  includeArchitectureInsights?: boolean | undefined;
 }
 
 export interface GuardReviewPacket {
   version: 1;
   outcome: GuardOutcomeStatus;
-  diffBase?: string;
+  diffBase?: string | undefined;
   changedFiles: string[];
   changes: GuardFileChange[];
   diff: string;
   truncated: boolean;
   redacted: boolean;
-  diffError?: string;
+  diffError?: string | undefined;
   project: ProjectModel;
   contracts: GuardContract[];
-  requirement?: string;
+  requirement?: string | undefined;
   deterministicFindings: GuardFinding[];
   impact: GuardImpactAnalysis;
   reviewInstructions: string[];
@@ -264,7 +313,7 @@ function processIsAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    return (error as { code?: string }).code === 'EPERM';
+    return (error as { code?: string | undefined }).code === 'EPERM';
   }
 }
 
@@ -290,7 +339,7 @@ function safeGeneration(value: unknown): value is string {
 export function withGuardStateLock<T>(
   root: string,
   callback: () => T,
-  options: { waitMs?: number; noWait?: boolean } = {},
+  options: GuardStateLockOptions = {},
 ): T {
   const normalizedRoot = resolve(root);
   if (activeStateLock?.root === normalizedRoot) {
@@ -322,7 +371,7 @@ export function withGuardStateLock<T>(
       lock = candidate;
       break;
     } catch (error) {
-      if ((error as { code?: string }).code !== 'EEXIST') throw error;
+      if ((error as { code?: string | undefined }).code !== 'EEXIST') throw error;
       const owner = readStateLock(lockPath);
       const ownerDead = owner?.hostname === hostname() && !processIsAlive(owner.pid);
       let malformedStale = false;
@@ -382,7 +431,7 @@ function atomicWriteFile(path: string, content: string): void {
       writeFileSync(lockPath, `${process.pid}\n`, { encoding: 'utf8', flag: 'wx' });
       lockAcquired = true;
     } catch (error) {
-      if ((error as { code?: string }).code === 'EEXIST') {
+      if ((error as { code?: string | undefined }).code === 'EEXIST') {
         try {
           if (Date.now() - statSync(lockPath).mtimeMs > 60_000) {
             unlinkSync(lockPath);
@@ -527,7 +576,7 @@ export function loadBaseline(root: string): Set<string> {
 
 export function updateBaseline(
   root: string,
-  options: { add?: string[]; remove?: string[]; reason?: string } = {},
+  options: GuardBaselineUpdateOptions = {},
 ): Set<string> {
   return withGuardStateLock(root, () => {
     const next = loadBaseline(root);
@@ -573,7 +622,7 @@ export function updateBaseline(
 export function writeGuardConfig(
   root: string,
   guardConfig: GuardConfig,
-  options: { expectedRevision?: number; waitMs?: number; noWait?: boolean } = {},
+  options: GuardConfigWriteOptions = {},
 ): void {
   withGuardStateLock(
     root,
@@ -631,7 +680,7 @@ export function recordGuardProposalDecision(
 
 export function getPendingGuardProposals(
   proposals: GuardProposalFile | undefined,
-): { id: string; type: 'rule' | 'contract' }[] {
+): GuardPendingProposal[] {
   if (!proposals) return [];
   const decisions = new Map<string, GuardProposalDecision>();
   for (const decision of proposals.decisions ?? []) {
@@ -950,7 +999,7 @@ export function writeProjectModel(root: string, model: ProjectModel): void {
 export function writeProjectState(
   root: string,
   model: ProjectModel,
-  options: { waitMs?: number; noWait?: boolean } = {},
+  options: GuardStateLockOptions = {},
 ): string {
   return withGuardStateLock(
     root,
@@ -1220,7 +1269,7 @@ function importLine(sourceFile: SourceFile, importPath: string): number {
 
 interface ModuleImportReference {
   source: string;
-  resolved?: string;
+  resolved?: string | undefined;
 }
 
 function moduleImportReferences(module: ProjectModel['modules'][number]): ModuleImportReference[] {
@@ -1564,11 +1613,7 @@ function parseGitChanges(root: string, args: string[]): GuardFileChange[] {
 }
 
 /** @internal Redacts common credential shapes before a diff enters an AI review packet. */
-export function redactSensitiveText(value: string): {
-  value: string;
-  redacted: boolean;
-  redactionCount: number;
-} {
+export function redactSensitiveText(value: string): GuardSensitiveText {
   let redacted = false;
   let redactionCount = 0;
   let redactedValue = value;
@@ -1601,18 +1646,7 @@ function isSafeGitRevision(value: string): boolean {
   );
 }
 
-function reviewDiff(
-  root: string,
-  maxChars: number,
-  base?: string,
-): {
-  diff: string;
-  truncated: boolean;
-  redacted: boolean;
-  changedFiles: string[];
-  changes: GuardFileChange[];
-  error?: string;
-} {
+function reviewDiff(root: string, maxChars: number, base?: string): GuardReviewDiff {
   try {
     if (base !== undefined && !isSafeGitRevision(base)) {
       return {
@@ -1820,8 +1854,8 @@ export function buildGuardReviewPacket(
 
 export function initializeGuard(
   root: string,
-  options: { force?: boolean; waitMs?: number; noWait?: boolean } = {},
-): { config: GuardConfig; report: GuardReport } {
+  options: GuardConfigWriteOptions & { force?: boolean | undefined } = {},
+): GuardInitializationResult {
   return withGuardStateLock(
     root,
     () => {

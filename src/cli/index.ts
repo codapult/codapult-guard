@@ -25,6 +25,16 @@ import { config } from '../core/config.js';
 import { GuardConfigError, GuardStateBusyError, GuardStateStaleError } from '../core/guard.js';
 import { guardErrorPayload } from '../core/errors.js';
 
+interface BaselineCommandOptions {
+  all?: boolean | undefined;
+  reason?: string | undefined;
+  json?: boolean | undefined;
+}
+
+interface BaselineListOptions {
+  json?: boolean | undefined;
+}
+
 const program = new Command()
   .name(config.commandName)
   .description('Local-first architecture guardrails for JavaScript and TypeScript projects')
@@ -80,13 +90,13 @@ const baseline = guard.command('baseline');
 baseline
   .command('list')
   .option('--json')
-  .action((options: { json?: boolean }) => guardBaselineCommand('list', undefined, options));
+  .action((options: BaselineListOptions) => guardBaselineCommand('list', undefined, options));
 baseline
   .command('accept [ids]')
   .option('--all')
   .option('--reason <text>')
   .option('--json')
-  .action((ids: string | undefined, options: { all?: boolean; reason?: string; json?: boolean }) =>
+  .action((ids: string | undefined, options: BaselineCommandOptions) =>
     guardBaselineCommand('accept', ids, options),
   );
 baseline
@@ -94,7 +104,7 @@ baseline
   .option('--all')
   .option('--reason <text>')
   .option('--json')
-  .action((ids: string | undefined, options: { all?: boolean; reason?: string; json?: boolean }) =>
+  .action((ids: string | undefined, options: BaselineCommandOptions) =>
     guardBaselineCommand('remove', ids, options),
   );
 

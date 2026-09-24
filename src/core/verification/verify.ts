@@ -1,11 +1,11 @@
 import { type CommandResult } from '../../adapters/command.js';
+import type { ProjectCheck } from '../model/types.js';
 import {
   runProjectAdapters,
   runProjectChecks,
   runWorkspaceProjectChecks,
   inspectProjectRuntime,
   type GuardAdapter,
-  type ProjectCheck,
   type ProjectCheckResults,
   type ProjectRuntimeDiagnostics,
 } from '../../adapters/project-checks.js';
@@ -25,19 +25,29 @@ import { discoverProject } from '../discovery/discovery.js';
 
 export type GuardVerificationCheck = ProjectCheck;
 
+export interface GuardVerificationOptions {
+  checks?: GuardVerificationCheck[] | undefined;
+  changedOnly?: boolean | undefined;
+  timeout?: number | undefined;
+  requirement?: string | undefined;
+  tools?: GuardToolMode | undefined;
+  strict?: boolean | undefined;
+  projectChecks?: boolean | undefined;
+}
+
 export interface GuardVerificationResult {
   status: 'ok' | 'fail' | 'not-configured';
   outcome: 'pass' | 'fail' | 'warning' | 'needs-review' | 'not-configured';
-  errorCode?: 'GUARD_NOT_CONFIGURED' | 'GUARD_CONFIG_INVALID';
-  recoverable?: boolean;
-  tools?: GuardToolMode;
+  errorCode?: 'GUARD_NOT_CONFIGURED' | 'GUARD_CONFIG_INVALID' | undefined;
+  recoverable?: boolean | undefined;
+  tools?: GuardToolMode | undefined;
   checks: ProjectCheckResults;
   workspaceChecks: Record<string, ProjectCheckResults>;
   adapters: Partial<Record<GuardAdapter, CommandResult>>;
   runtime: ProjectRuntimeDiagnostics;
-  configError?: string;
-  architecture?: GuardReport;
-  impact?: GuardImpactAnalysis;
+  configError?: string | undefined;
+  architecture?: GuardReport | undefined;
+  impact?: GuardImpactAnalysis | undefined;
   contractIssues: GuardContractIssue[];
   requirement: {
     status: 'delegated-to-review';
@@ -48,15 +58,7 @@ export interface GuardVerificationResult {
 
 export function runGuardVerification(
   root: string,
-  options: {
-    checks?: GuardVerificationCheck[];
-    changedOnly?: boolean;
-    timeout?: number;
-    requirement?: string;
-    tools?: GuardToolMode;
-    strict?: boolean;
-    projectChecks?: boolean;
-  } = {},
+  options: GuardVerificationOptions = {},
 ): GuardVerificationResult {
   const requirement = {
     status: 'delegated-to-review' as const,

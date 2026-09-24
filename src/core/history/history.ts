@@ -33,7 +33,7 @@ export interface GuardHistoryDiff {
 type SnapshotInsights = Partial<ProjectModel['insights']>;
 
 function snapshotInsights(model: ProjectModel): SnapshotInsights {
-  return (model as unknown as { insights?: SnapshotInsights }).insights ?? {};
+  return (model as unknown as { insights?: SnapshotInsights | undefined }).insights ?? {};
 }
 
 function dependencyEdges(model: ProjectModel): string[] {
