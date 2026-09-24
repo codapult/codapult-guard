@@ -25,6 +25,12 @@ describe('runGuardVerification', () => {
       adapters: {},
       requirement: { status: 'delegated-to-review', provided: true },
     });
+    expect(result.run).toMatchObject({
+      version: 1,
+      command: 'verify',
+      outcome: 'not-configured',
+      gate: 'configuration',
+    });
   });
 
   it('fails closed with a structured error when policy is corrupted', () => {

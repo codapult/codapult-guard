@@ -22,6 +22,12 @@ import {
 } from '../guard.js';
 import { analyzeProjectImpact, type GuardImpactAnalysis } from '../analysis/impact.js';
 import { discoverProject } from '../discovery/discovery.js';
+import {
+  finishGuardRun,
+  recordGuardRunStage,
+  startGuardRun,
+  type GuardRunManifest,
+} from '../history/runs.js';
 
 export type GuardVerificationCheck = ProjectCheck;
 
@@ -54,12 +60,14 @@ export interface GuardVerificationResult {
     provided: boolean;
     message: string;
   };
+  run: GuardRunManifest;
 }
 
 export function runGuardVerification(
   root: string,
   options: GuardVerificationOptions = {},
 ): GuardVerificationResult {
+  const runContext = startGuardRun();
   const requirement = {
     status: 'delegated-to-review' as const,
     provided: Boolean(options.requirement?.trim()),
@@ -67,11 +75,14 @@ export function runGuardVerification(
       ? 'Requirement text is included in semantic review input; deterministic verify does not judge natural-language acceptance criteria.'
       : 'Requirement satisfaction is evaluated by guard review using the task and diff.',
   };
+  const runtimeStartedAt = Date.now();
   const runtime = inspectProjectRuntime(root);
+  recordGuardRunStage(runContext, 'runtime', 'ok', runtimeStartedAt);
   let config;
   try {
     config = loadGuardConfig(root);
   } catch (error) {
+    const run = finishGuardRun(root, runContext, 'fail', 'configuration');
     return {
       status: 'fail',
       outcome: 'fail',
@@ -84,9 +95,11 @@ export function runGuardVerification(
       configError: error instanceof Error ? error.message : String(error),
       contractIssues: [],
       requirement,
+      run,
     };
   }
-  if (!config)
+  if (!config) {
+    const run = finishGuardRun(root, runContext, 'not-configured', 'configuration');
     return {
       status: 'not-configured',
       outcome: 'not-configured',
@@ -98,12 +111,22 @@ export function runGuardVerification(
       runtime,
       contractIssues: [],
       requirement,
+      run,
     };
+  }
 
   const agentConfig = loadGuardAgentConfig(root);
   const projectChecks = options.projectChecks ?? agentConfig.completionGate.projectChecks;
   const checks = projectChecks ? (options.checks ?? agentConfig.completionGate.checks) : [];
+  const checksStartedAt = Date.now();
   const results = runProjectChecks(root, checks, { timeout: options.timeout });
+  recordGuardRunStage(
+    runContext,
+    'project-checks',
+    projectChecks ? 'ok' : 'skipped',
+    checksStartedAt,
+  );
+  const discoveryStartedAt = Date.now();
   const workspaceModel = discoverProject(root);
   const impact = analyzeProjectImpact(
     workspaceModel,
@@ -121,7 +144,9 @@ export function runGuardVerification(
       rootResults: results,
     },
   );
+  recordGuardRunStage(runContext, 'discovery-impact', 'ok', discoveryStartedAt);
   const toolMode = options.tools ?? agentConfig.tools;
+  const adaptersStartedAt = Date.now();
   const adapters =
     toolMode === 'off'
       ? {}
@@ -130,13 +155,21 @@ export function runGuardVerification(
           timeout: options.timeout,
           tooling: agentConfig.tooling,
         });
+  recordGuardRunStage(
+    runContext,
+    'adapters',
+    toolMode === 'off' ? 'skipped' : 'ok',
+    adaptersStartedAt,
+  );
 
+  const architectureStartedAt = Date.now();
   const architecture = scanGuard(root, config, {
     changedOnly: options.changedOnly,
     baseline: loadBaseline(root),
     includeArchitectureInsights: true,
   });
   const contractIssues = validateGuardContracts(root, config.contracts ?? []);
+  recordGuardRunStage(runContext, 'architecture-policy', 'ok', architectureStartedAt);
   const commandFailed = Object.values(results).some((result) => result.status === 'failed');
   const workspaceCommandFailed = Object.values(workspaceChecks).some((packageResults) =>
     Object.values(packageResults).some((result) => result.status === 'failed'),
@@ -159,12 +192,27 @@ export function runGuardVerification(
     architectureFailed ||
     contractIssues.length > 0 ||
     missingRequiredTools;
+  const outcome = classifyGuardOutcome({
+    errors: failed ? 1 : 0,
+    warnings: architectureWarnings ? 1 : 0,
+  });
+  const gate = architectureFailed
+    ? 'architecture'
+    : contractIssues.length > 0
+      ? 'contracts'
+      : commandFailed || workspaceCommandFailed
+        ? 'project-checks'
+        : adapterFailed
+          ? 'adapters'
+          : missingRequiredTools
+            ? 'required-tools'
+            : !runtime.compatible && projectChecks
+              ? 'runtime'
+              : 'none';
+  const run = finishGuardRun(root, runContext, outcome, gate);
   return {
     status: failed ? 'fail' : 'ok',
-    outcome: classifyGuardOutcome({
-      errors: failed ? 1 : 0,
-      warnings: architectureWarnings ? 1 : 0,
-    }),
+    outcome,
     tools: toolMode,
     checks: results,
     workspaceChecks,
@@ -174,5 +222,6 @@ export function runGuardVerification(
     impact,
     contractIssues,
     requirement,
+    run,
   };
 }

@@ -34,6 +34,7 @@ import {
   initializeGuard,
   GuardAlreadyInitializedError,
   GuardStateBusyError,
+  GuardBaselineReasonError,
   writeGuardAgentConfig,
   defaultGuardAgentConfig,
   loadGuardProposals,
@@ -192,6 +193,15 @@ describe('scanGuard', () => {
     expect(loadBaseline(root)).toEqual(new Set(['legacy-fingerprint', 'new-fingerprint']));
     expect(readFileSync(join(root, GUARD_BASELINE_META_FILE), 'utf8')).toContain(
       'Reviewed legacy debt',
+    );
+  });
+
+  it('requires a written reason for every manual baseline change', () => {
+    const root = createProject({});
+
+    expect(() => updateBaseline(root, { add: ['fingerprint'] })).toThrow(GuardBaselineReasonError);
+    expect(() => updateBaseline(root, { remove: ['fingerprint'] })).toThrow(
+      GuardBaselineReasonError,
     );
   });
 

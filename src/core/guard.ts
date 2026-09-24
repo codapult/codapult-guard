@@ -297,6 +297,13 @@ export class GuardStateStaleError extends Error {
   }
 }
 
+export class GuardBaselineReasonError extends Error {
+  constructor() {
+    super('A reason is required when changing the Guard baseline.');
+    this.name = 'GuardBaselineReasonError';
+  }
+}
+
 interface GuardStateLock {
   pid: number;
   hostname: string;
@@ -608,6 +615,9 @@ export function updateBaseline(
   root: string,
   options: GuardBaselineUpdateOptions = {},
 ): Set<string> {
+  if ((options.add?.length ?? 0) > 0 || (options.remove?.length ?? 0) > 0) {
+    if (!options.reason?.trim()) throw new GuardBaselineReasonError();
+  }
   return withGuardStateLock(root, () => {
     const next = loadBaseline(root);
     for (const fingerprint of options.add ?? []) next.add(fingerprint);

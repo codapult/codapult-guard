@@ -9,6 +9,7 @@ export type {
   GuardVerificationResult,
 } from './core/verification/verify.js';
 export * from './core/history/history.js';
+export * from './core/history/runs.js';
 export * from './core/output/sarif.js';
 export * from './core/analysis/doctor.js';
 export * from './core/analysis/packs.js';
