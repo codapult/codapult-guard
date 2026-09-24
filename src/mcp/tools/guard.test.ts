@@ -40,6 +40,7 @@ vi.mock('../../core/guard.js', () => ({
   initializeGuard: vi.fn(() => ({ report: { findings: [] } })),
   GuardAlreadyInitializedError: class extends Error {},
   recordGuardProposalDecision: vi.fn(),
+  applyGuardProposalDecision: vi.fn(),
   validateGuardProposalApproval: vi.fn(() => undefined),
   writeGuardConfig: vi.fn(),
   writeProjectState: vi.fn(() => 'working-tree'),

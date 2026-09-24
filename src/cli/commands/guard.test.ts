@@ -43,6 +43,7 @@ vi.mock('../../core/guard.js', () => ({
   loadGuardProposals: vi.fn(),
   writeGuardProposals: vi.fn(),
   recordGuardProposalDecision: vi.fn(),
+  applyGuardProposalDecision: vi.fn(),
   validateGuardProposalApproval: vi.fn(() => undefined),
   getGuardProposalFreshness: vi.fn(() => 'current'),
 }));
@@ -135,9 +136,11 @@ describe('guard commands', () => {
 
     guardRulesApproveCommand('approved-rule');
 
-    expect(vi.mocked(guardIndex.writeGuardConfig)).toHaveBeenCalledWith(
+    expect(vi.mocked(guardIndex.applyGuardProposalDecision)).toHaveBeenCalledWith(
       '/project',
       expect.objectContaining({ rules: [expect.objectContaining({ status: 'active' })] }),
+      [{ id: 'approved-rule', type: 'rule', decision: 'approved' }],
+      { source: 'cli' },
     );
     process.exitCode = undefined;
   });

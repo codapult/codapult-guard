@@ -24,9 +24,8 @@ import {
   updateBaseline,
   loadGuardConfig,
   loadGuardProposals,
-  writeGuardConfig,
+  applyGuardProposalDecision,
   writeGuardProposals,
-  recordGuardProposalDecision,
   validateGuardProposalApproval,
   getGuardProposalFreshness,
   scanGuard,
@@ -636,14 +635,14 @@ export function guardRulesApproveCommand(ids?: string, options: GuardApprovalOpt
     process.exitCode = 1;
     return;
   }
-  writeGuardConfig(root, {
-    ...config,
-    rules: config.rules.map((rule) =>
-      selectedIds.has(rule.id) ? { ...rule, status: 'active' as const } : rule,
-    ),
-  });
-  recordGuardProposalDecision(
+  applyGuardProposalDecision(
     root,
+    {
+      ...config,
+      rules: config.rules.map((rule) =>
+        selectedIds.has(rule.id) ? { ...rule, status: 'active' as const } : rule,
+      ),
+    },
     selected.map((rule) => ({ id: rule.id, type: 'rule', decision: 'approved' as const })),
     { source: 'cli' },
   );
@@ -725,14 +724,14 @@ export function guardContractsApproveCommand(
     process.exitCode = 1;
     return;
   }
-  writeGuardConfig(root, {
-    ...config,
-    contracts: (config.contracts ?? []).map((contract) =>
-      selectedIds.has(contract.id) ? { ...contract, status: 'active' as const } : contract,
-    ),
-  });
-  recordGuardProposalDecision(
+  applyGuardProposalDecision(
     root,
+    {
+      ...config,
+      contracts: (config.contracts ?? []).map((contract) =>
+        selectedIds.has(contract.id) ? { ...contract, status: 'active' as const } : contract,
+      ),
+    },
     selected.map((contract) => ({
       id: contract.id,
       type: 'contract',
@@ -776,12 +775,12 @@ export function guardContractsRejectCommand(
     process.exitCode = 1;
     return;
   }
-  writeGuardConfig(root, {
-    ...config,
-    contracts: config.contracts ?? [],
-  });
-  recordGuardProposalDecision(
+  applyGuardProposalDecision(
     root,
+    {
+      ...config,
+      contracts: config.contracts ?? [],
+    },
     selected.map((contract) => ({
       id: contract.id,
       type: 'contract',

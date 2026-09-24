@@ -24,9 +24,8 @@ import {
   GuardAlreadyInitializedError,
   GuardStateBusyError,
   GuardStateStaleError,
-  recordGuardProposalDecision,
+  applyGuardProposalDecision,
   validateGuardProposalApproval,
-  writeGuardConfig,
   writeProjectState,
   scanGuard,
   validateGuardPolicy,
@@ -546,17 +545,28 @@ export function registerGuardTools(server: McpServer): void {
             else nextRules.push(active);
           }
         }
-        writeGuardConfig(root, { version: 1, rules: nextRules, contracts: nextContracts });
+        applyGuardProposalDecision(
+          root,
+          { version: 1, rules: nextRules, contracts: nextContracts },
+          selected.map((item) => ({
+            id: item.id,
+            type: 'statement' in item ? ('contract' as const) : ('rule' as const),
+            decision,
+          })),
+          { source: 'mcp' },
+        );
+      } else {
+        applyGuardProposalDecision(
+          root,
+          loadedConfig.config ?? { version: 1 as const, rules: [], contracts: [] },
+          selected.map((item) => ({
+            id: item.id,
+            type: 'statement' in item ? ('contract' as const) : ('rule' as const),
+            decision,
+          })),
+          { source: 'mcp' },
+        );
       }
-      recordGuardProposalDecision(
-        root,
-        selected.map((item) => ({
-          id: item.id,
-          type: 'statement' in item ? ('contract' as const) : ('rule' as const),
-          decision,
-        })),
-        { source: 'mcp' },
-      );
       return jsonToolResult({ status: 'ok', root, decision, ids });
     },
   );

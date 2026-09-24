@@ -522,11 +522,13 @@ function atomicWriteFile(path: string, content: string): void {
   }
 }
 
+function writeGuardArtifactUnlocked(root: string, relativePath: string, value: unknown): void {
+  mkdirSync(resolve(root, GUARD_DIR), { recursive: true });
+  atomicWriteFile(resolve(root, relativePath), `${JSON.stringify(value, null, 2)}\n`);
+}
+
 function writeGuardArtifact(root: string, relativePath: string, value: unknown): void {
-  withGuardStateLock(root, () => {
-    mkdirSync(resolve(root, GUARD_DIR), { recursive: true });
-    atomicWriteFile(resolve(root, relativePath), `${JSON.stringify(value, null, 2)}\n`);
-  });
+  withGuardStateLock(root, () => writeGuardArtifactUnlocked(root, relativePath, value));
 }
 
 function hasProjectTool(model: ProjectModel, name: string): boolean {
@@ -706,39 +708,74 @@ export function updateBaseline(
   });
 }
 
+function writeGuardConfigUnlocked(
+  root: string,
+  guardConfig: GuardConfig,
+  options: GuardConfigWriteOptions = {},
+): void {
+  mkdirSync(resolve(root, GUARD_DIR), { recursive: true });
+  const current = loadGuardConfigUnlocked(root);
+  const currentRevision = current?.revision ?? 0;
+  const expectedRevision = options.expectedRevision ?? guardConfig.revision;
+  if (expectedRevision !== undefined && expectedRevision !== currentRevision) {
+    throw new GuardStateStaleError();
+  }
+  const nextRevision = currentRevision + 1;
+  const contentFingerprint = fingerprintGuardConfig(guardConfig);
+  const { contracts = [], ...rulesConfig } = guardConfig;
+  atomicWriteFile(
+    resolve(root, GUARD_RULES_FILE),
+    `${JSON.stringify({ ...rulesConfig, revision: nextRevision, contentFingerprint }, null, 2)}\n`,
+  );
+  atomicWriteFile(
+    resolve(root, GUARD_CONTRACTS_FILE),
+    `${JSON.stringify({ version: 1, contracts }, null, 2)}\n`,
+  );
+}
+
 export function writeGuardConfig(
   root: string,
   guardConfig: GuardConfig,
   options: GuardConfigWriteOptions = {},
 ): void {
-  withGuardStateLock(
-    root,
-    () => {
-      mkdirSync(resolve(root, GUARD_DIR), { recursive: true });
-      const current = loadGuardConfig(root);
-      const currentRevision = current?.revision ?? 0;
-      const expectedRevision = options.expectedRevision ?? guardConfig.revision;
-      if (expectedRevision !== undefined && expectedRevision !== currentRevision) {
-        throw new GuardStateStaleError();
-      }
-      const nextRevision = currentRevision + 1;
-      const contentFingerprint = fingerprintGuardConfig(guardConfig);
-      const { contracts = [], ...rulesConfig } = guardConfig;
-      atomicWriteFile(
-        resolve(root, GUARD_RULES_FILE),
-        `${JSON.stringify({ ...rulesConfig, revision: nextRevision, contentFingerprint }, null, 2)}\n`,
-      );
-      atomicWriteFile(
-        resolve(root, GUARD_CONTRACTS_FILE),
-        `${JSON.stringify({ version: 1, contracts }, null, 2)}\n`,
-      );
-    },
-    options,
-  );
+  withGuardStateLock(root, () => writeGuardConfigUnlocked(root, guardConfig, options), options);
 }
 
 export function writeGuardProposals(root: string, proposals: GuardProposalFile): void {
   writeGuardArtifact(root, GUARD_PROPOSALS_FILE, proposals);
+}
+
+function appendGuardProposalDecisionsUnlocked(
+  root: string,
+  decisions: Pick<GuardProposalDecision, 'id' | 'type' | 'decision'>[],
+  options: Pick<GuardProposalDecision, 'source'>,
+): void {
+  const proposals = loadGuardProposals(root);
+  if (!proposals || decisions.length === 0) return;
+  const decidedAt = new Date().toISOString();
+  const commit = (() => {
+    try {
+      return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, stdio: 'pipe' })
+        .toString()
+        .trim();
+    } catch {
+      return undefined;
+    }
+  })();
+  const nextDecisions = decisions.map((decision) => ({
+    ...decision,
+    decidedAt,
+    source: options.source,
+    ...(process.env.GUARD_APPROVER?.trim() ? { actor: process.env.GUARD_APPROVER.trim() } : {}),
+    ...(commit ? { commit } : {}),
+    ...(proposals.proposalId ? { proposalId: proposals.proposalId } : {}),
+    ...(proposals.contentFingerprint ? { proposalFingerprint: proposals.contentFingerprint } : {}),
+    ...(typeof proposals.revision === 'number' ? { revision: proposals.revision } : {}),
+  }));
+  writeGuardArtifactUnlocked(root, GUARD_PROPOSALS_FILE, {
+    ...proposals,
+    decisions: [...(proposals.decisions ?? []), ...nextDecisions],
+  });
 }
 
 export function recordGuardProposalDecision(
@@ -747,34 +784,19 @@ export function recordGuardProposalDecision(
   options: Pick<GuardProposalDecision, 'source'> = { source: 'external' },
 ): void {
   withGuardStateLock(root, () => {
-    const proposals = loadGuardProposals(root);
-    if (!proposals || decisions.length === 0) return;
-    const decidedAt = new Date().toISOString();
-    const commit = (() => {
-      try {
-        return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, stdio: 'pipe' })
-          .toString()
-          .trim();
-      } catch {
-        return undefined;
-      }
-    })();
-    const nextDecisions = decisions.map((decision) => ({
-      ...decision,
-      decidedAt,
-      source: options.source,
-      ...(process.env.GUARD_APPROVER?.trim() ? { actor: process.env.GUARD_APPROVER.trim() } : {}),
-      ...(commit ? { commit } : {}),
-      ...(proposals.proposalId ? { proposalId: proposals.proposalId } : {}),
-      ...(proposals.contentFingerprint
-        ? { proposalFingerprint: proposals.contentFingerprint }
-        : {}),
-      ...(typeof proposals.revision === 'number' ? { revision: proposals.revision } : {}),
-    }));
-    writeGuardProposals(root, {
-      ...proposals,
-      decisions: [...(proposals.decisions ?? []), ...nextDecisions],
-    });
+    appendGuardProposalDecisionsUnlocked(root, decisions, options);
+  });
+}
+
+export function applyGuardProposalDecision(
+  root: string,
+  guardConfig: GuardConfig,
+  decisions: Pick<GuardProposalDecision, 'id' | 'type' | 'decision'>[],
+  options: Pick<GuardProposalDecision, 'source'>,
+): void {
+  withGuardStateLock(root, () => {
+    writeGuardConfigUnlocked(root, guardConfig);
+    appendGuardProposalDecisionsUnlocked(root, decisions, options);
   });
 }
 
