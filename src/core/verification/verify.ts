@@ -192,6 +192,21 @@ export function runGuardVerification(
     architectureFailed ||
     contractIssues.length > 0 ||
     missingRequiredTools;
+  const projectChecksFailed =
+    commandFailed || workspaceCommandFailed || (projectChecks && !runtime.compatible);
+  const adaptersFailed = adapterFailed || missingRequiredTools;
+  runContext.stages['project-checks'] = {
+    ...runContext.stages['project-checks'],
+    status: projectChecks ? (projectChecksFailed ? 'fail' : 'ok') : 'skipped',
+  };
+  runContext.stages.adapters = {
+    ...runContext.stages.adapters,
+    status: toolMode === 'off' ? 'skipped' : adaptersFailed ? 'fail' : 'ok',
+  };
+  runContext.stages['architecture-policy'] = {
+    ...runContext.stages['architecture-policy'],
+    status: architectureFailed || contractIssues.length > 0 ? 'fail' : 'ok',
+  };
   const outcome = classifyGuardOutcome({
     errors: failed ? 1 : 0,
     warnings: architectureWarnings ? 1 : 0,

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { config } from '../config.js';
@@ -70,6 +71,14 @@ export function finishGuardRun(
   gate: string,
   command = 'verify',
 ): GuardRunManifest {
+  let commit: string | undefined;
+  try {
+    commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, stdio: 'pipe' })
+      .toString()
+      .trim();
+  } catch {
+    commit = undefined;
+  }
   const manifest: GuardRunManifest = {
     version: 1,
     runId: context.runId,
@@ -80,6 +89,7 @@ export function finishGuardRun(
     outcome,
     gate,
     stages: context.stages,
+    ...(commit ? { commit } : {}),
   };
   try {
     writeGuardRun(root, manifest);
