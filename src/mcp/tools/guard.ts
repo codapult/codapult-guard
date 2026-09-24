@@ -50,6 +50,11 @@ interface GuardConfigLoadResult {
   error?: JsonToolResult | undefined;
 }
 
+interface GuardBaselineLoadResult {
+  baseline?: Set<string> | undefined;
+  error?: JsonToolResult | undefined;
+}
+
 function getGuardRoot(root?: string): string {
   return root ? findGuardRoot(root) : findGuardRoot();
 }
@@ -89,6 +94,28 @@ function loadConfigSafely(root: string): GuardConfigLoadResult {
             outcome: 'error',
             recoverable: true,
             hint: 'Repair the invalid Guard artifact, then run codapult-guard doctor.',
+          },
+        ),
+        true,
+      ),
+    };
+  }
+}
+
+function loadBaselineSafely(root: string): GuardBaselineLoadResult {
+  try {
+    return { baseline: loadBaseline(root) };
+  } catch (error) {
+    return {
+      error: jsonToolResult(
+        guardErrorPayload(
+          'GUARD_CONFIG_INVALID',
+          error instanceof Error ? error.message : String(error),
+          {
+            configured: true,
+            outcome: 'error',
+            recoverable: true,
+            hint: 'Repair baseline.json, then run codapult-guard doctor.',
           },
         ),
         true,
@@ -260,9 +287,11 @@ export function registerGuardTools(server: McpServer): void {
           canRetry: false,
         });
       }
+      const loadedBaseline = loadBaselineSafely(root);
+      if (loadedBaseline.error) return loadedBaseline.error;
       const report = scanGuard(root, config, {
         changedOnly: true,
-        baseline: loadBaseline(root),
+        baseline: loadedBaseline.baseline,
         includeArchitectureInsights: true,
       });
       const contractIssues = validateGuardContracts(root, config.contracts ?? []);
@@ -637,10 +666,14 @@ export function registerGuardTools(server: McpServer): void {
       if (!config) {
         return notConfiguredToolResult();
       }
+      const loadedBaseline: GuardBaselineLoadResult = changed_only
+        ? loadBaselineSafely(root)
+        : { baseline: new Set<string>() };
+      if (loadedBaseline.error) return loadedBaseline.error;
       const packet = buildGuardReviewPacket(
         root,
         config,
-        changed_only ? loadBaseline(root) : new Set(),
+        loadedBaseline.baseline ?? new Set(),
         max_diff_chars,
         changed_only,
         requirement,
@@ -668,9 +701,11 @@ export function registerGuardTools(server: McpServer): void {
       if (!config) {
         return notConfiguredToolResult();
       }
+      const loadedBaseline = loadBaselineSafely(root);
+      if (loadedBaseline.error) return loadedBaseline.error;
       const report = scanGuard(root, config, {
         changedOnly: changed_only,
-        baseline: loadBaseline(root),
+        baseline: loadedBaseline.baseline,
         includeArchitectureInsights: true,
       });
       const contractIssues = validateGuardContracts(root, config.contracts ?? []);

@@ -37,7 +37,7 @@ function resourceError(uri: string, error: unknown): ReturnType<typeof jsonResou
   return jsonResource(
     uri,
     guardErrorPayload(errorCode, error instanceof Error ? error.message : String(error), {
-      configured: false,
+      configured: errorCode !== 'GUARD_CONFIG_INVALID',
       outcome: 'error',
       recoverable: true,
       hint: 'Repair the invalid Guard artifact, then run codapult-guard doctor.',

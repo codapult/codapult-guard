@@ -306,7 +306,7 @@ interface GuardStateLock {
   expiresAt: string;
 }
 
-let activeStateLock: { root: string; depth: number } | undefined;
+const activeStateLocks = new Map<string, number>();
 
 function processIsAlive(pid: number): boolean {
   try {
@@ -321,15 +321,40 @@ function sleepSync(milliseconds: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 }
 
+function removeLockFile(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {
+    // Lock cleanup is best effort. A later invocation can recover an orphaned lock by PID.
+  }
+}
+
 function readStateLock(path: string): GuardStateLock | undefined {
   try {
     const value = JSON.parse(readFileSync(path, 'utf8')) as GuardStateLock;
-    return Number.isInteger(value.pid) && value.pid > 0 && typeof value.token === 'string'
+    const hasValidDate = (candidate: string): boolean =>
+      typeof candidate === 'string' && Number.isFinite(Date.parse(candidate));
+    return Number.isInteger(value.pid) &&
+      value.pid > 0 &&
+      typeof value.hostname === 'string' &&
+      value.hostname.length > 0 &&
+      typeof value.command === 'string' &&
+      typeof value.token === 'string' &&
+      value.token.length > 0 &&
+      hasValidDate(value.createdAt) &&
+      hasValidDate(value.expiresAt)
       ? value
       : undefined;
   } catch {
     return undefined;
   }
+}
+
+function getActiveStateRoot(path: string): string | undefined {
+  const normalizedPath = resolve(path);
+  return [...activeStateLocks.keys()]
+    .filter((root) => normalizedPath === root || normalizedPath.startsWith(`${root}${sep}`))
+    .sort((left, right) => right.length - left.length)[0];
 }
 
 function safeGeneration(value: unknown): value is string {
@@ -342,12 +367,13 @@ export function withGuardStateLock<T>(
   options: GuardStateLockOptions = {},
 ): T {
   const normalizedRoot = resolve(root);
-  if (activeStateLock?.root === normalizedRoot) {
-    activeStateLock.depth += 1;
+  const activeDepth = activeStateLocks.get(normalizedRoot);
+  if (activeDepth !== undefined) {
+    activeStateLocks.set(normalizedRoot, activeDepth + 1);
     try {
       return callback();
     } finally {
-      activeStateLock.depth -= 1;
+      activeStateLocks.set(normalizedRoot, activeDepth);
     }
   }
   const lockPath = resolve(normalizedRoot, GUARD_STATE_LOCK_FILE);
@@ -395,13 +421,15 @@ export function withGuardStateLock<T>(
       delay = Math.min(delay * 2, 500);
     }
   }
-  activeStateLock = { root: normalizedRoot, depth: 1 };
+  activeStateLocks.set(normalizedRoot, 1);
   try {
     return callback();
   } finally {
-    activeStateLock = undefined;
+    activeStateLocks.delete(normalizedRoot);
     const current = readStateLock(lockPath);
-    if (current?.token === lock.token) unlinkSync(lockPath);
+    if (current?.token === lock.token) {
+      removeLockFile(lockPath);
+    }
   }
 }
 
@@ -418,7 +446,7 @@ function readJson(filePath: string): unknown {
 }
 
 function atomicWriteFile(path: string, content: string): void {
-  if (activeStateLock && resolve(path).startsWith(`${activeStateLock.root}${sep}`)) {
+  if (getActiveStateRoot(path) !== undefined) {
     const temporaryPath = `${path}.tmp-${process.pid}-${randomUUID()}`;
     writeFileSync(temporaryPath, content, 'utf8');
     renameSync(temporaryPath, path);
@@ -448,7 +476,9 @@ function atomicWriteFile(path: string, content: string): void {
     writeFileSync(temporaryPath, content, 'utf8');
     renameSync(temporaryPath, path);
   } finally {
-    if (lockAcquired) unlinkSync(lockPath);
+    if (lockAcquired) {
+      removeLockFile(lockPath);
+    }
   }
 }
 

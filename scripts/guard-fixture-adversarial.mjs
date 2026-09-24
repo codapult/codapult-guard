@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -32,6 +32,14 @@ for (const name of names) {
   const project = mkdtempSync(join(tmpdir(), `guard-adversarial-${name}-`));
   try {
     cpSync(source, project, { recursive: true });
+    // Minimal fixtures intentionally focus on one module behavior. Add a local
+    // project marker so Guard never walks into an unrelated ancestor checkout.
+    if (!existsSync(join(project, 'package.json'))) {
+      writeFileSync(
+        join(project, 'package.json'),
+        `${JSON.stringify({ name: `guard-fixture-${name}`, private: true }, null, 2)}\n`,
+      );
+    }
     run(project, ['init']);
     const model = JSON.parse(readFileSync(join(project, '.codapult/guard/project.json'), 'utf8'));
     if (model.files.length === 0) failures.push(`${name}: discovery returned no files`);

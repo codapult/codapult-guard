@@ -39,6 +39,7 @@ import {
   loadGuardProposals,
   recordGuardProposalDecision,
   writeGuardProposals,
+  withGuardStateLock,
   fingerprintProjectModel,
   getGuardProposalFreshness,
   getPendingGuardProposals,
@@ -277,10 +278,31 @@ describe('guard contracts', () => {
     mkdirSync(join(root, GUARD_DIR), { recursive: true });
     writeFileSync(
       join(root, GUARD_DIR, '.state.lock'),
-      JSON.stringify({ pid: 987_654_321, hostname: hostname(), token: 'orphaned' }),
+      JSON.stringify({
+        pid: 987_654_321,
+        hostname: hostname(),
+        command: 'vitest',
+        token: 'orphaned',
+        createdAt: new Date(Date.now() - 120_000).toISOString(),
+        expiresAt: new Date(Date.now() + 180_000).toISOString(),
+      }),
     );
 
     expect(() => writeGuardConfig(root, { version: 1, rules: [] }, { noWait: true })).not.toThrow();
+  });
+
+  it('keeps nested locks for different project roots independent', () => {
+    const firstRoot = createProject({});
+    const secondRoot = createProject({});
+
+    expect(() =>
+      withGuardStateLock(firstRoot, () =>
+        withGuardStateLock(secondRoot, () => {
+          writeGuardConfig(firstRoot, { version: 1, rules: [] });
+          writeGuardConfig(secondRoot, { version: 1, rules: [] });
+        }),
+      ),
+    ).not.toThrow();
   });
 
   it('loads project contracts without treating them as executable findings', () => {
