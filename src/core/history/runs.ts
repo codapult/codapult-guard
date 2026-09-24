@@ -50,6 +50,13 @@ export interface GuardRunSummary {
   last?: GuardRunManifest | undefined;
 }
 
+export class GuardRunManifestError extends Error {
+  constructor() {
+    super('Guard run manifest is invalid or contains an unsafe run ID.');
+    this.name = 'GuardRunManifestError';
+  }
+}
+
 function isGuardRunManifest(value: unknown): value is GuardRunManifest {
   if (value === null || typeof value !== 'object') return false;
   const manifest = value as Partial<GuardRunManifest>;
@@ -122,6 +129,7 @@ function pruneGuardRuns(root: string): void {
 }
 
 export function writeGuardRun(root: string, manifest: GuardRunManifest): void {
+  if (!isGuardRunManifest(manifest)) throw new GuardRunManifestError();
   const directory = resolve(root, GUARD_RUNS_DIR);
   mkdirSync(directory, { recursive: true });
   const path = resolve(directory, `${manifest.runId}.json`);

@@ -10,6 +10,7 @@ import {
   GUARD_RUNS_DIR,
   GUARD_RUN_RETENTION,
   writeGuardRun,
+  GuardRunManifestError,
   type GuardRunManifest,
 } from './runs.js';
 
@@ -26,7 +27,8 @@ function createRoot(): string {
 }
 
 function manifest(runId: string, outcome: GuardRunManifest['outcome']): GuardRunManifest {
-  const sequence = Number(runId.replace('guard-', ''));
+  const parsedSequence = Number(runId.replace('guard-', ''));
+  const sequence = Number.isFinite(parsedSequence) ? parsedSequence : 1;
   const startedAt = new Date(Date.UTC(2026, 0, 1, 0, 0, sequence)).toISOString();
   const completedAt = new Date(Date.parse(startedAt) + 1_000).toISOString();
   return {
@@ -105,5 +107,13 @@ describe('Guard run observability', () => {
     }
 
     expect(listGuardRuns(root, GUARD_RUN_RETENTION + 1)).toHaveLength(GUARD_RUN_RETENTION);
+  });
+
+  it('rejects a run ID that could escape the run directory', () => {
+    const root = createRoot();
+    const unsafe = manifest('../escaped', 'pass');
+
+    expect(() => writeGuardRun(root, unsafe)).toThrow(GuardRunManifestError);
+    expect(existsSync(join(root, '.codapult/guard/escaped.json'))).toBe(false);
   });
 });
