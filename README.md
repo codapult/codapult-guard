@@ -327,6 +327,9 @@ and Guard rejects the same declared actor when a proposal was generated with `GU
 These variables provide declared provenance only; external branch protection or signed identity
 remains responsible for proving who approved the change.
 
+See [the extension map](docs/extensions.md) for the supported AI-host, CI/PR, policy-pack, tool
+adapter, approval-governance, and observability integrations.
+
 ## CI
 
 Copy the consumer workflow into a project that has installed and initialized Guard:

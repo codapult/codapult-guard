@@ -52,6 +52,7 @@ import {
 import { dim, fail, heading, info, success, warn } from '../ui.js';
 import { guardFindingsToSarif } from '../../core/output/sarif.js';
 import { analyzeProjectImpact } from '../../core/analysis/impact.js';
+import { listGuardRuns, summarizeGuardRuns } from '../../core/history/runs.js';
 
 interface GuardOutputOptions {
   json?: boolean | undefined;
@@ -307,6 +308,22 @@ export function guardHistoryCommand(): void {
     info(
       `${snapshot.revision}: ${snapshot.files} files, ${snapshot.modules} modules, ${snapshot.cycles} cycles`,
     );
+  }
+}
+
+export function guardRunsCommand(options: GuardOutputOptions = {}): void {
+  const root = getRoot();
+  const result = { summary: summarizeGuardRuns(root), runs: listGuardRuns(root) };
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  heading('Codapult Guard Runs');
+  info(
+    `${result.summary.total} run(s); ${result.summary.failed} failed, ${result.summary.warnings} warning, average ${result.summary.averageDurationMs} ms`,
+  );
+  for (const run of result.runs) {
+    info(`${run.runId}: ${run.outcome}, gate=${run.gate}, ${run.durationMs} ms`);
   }
 }
 

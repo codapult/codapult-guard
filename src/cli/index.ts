@@ -18,6 +18,7 @@ import {
   guardPolicyExplainCommand,
   guardProposeCommand,
   guardReviewCommand,
+  guardRunsCommand,
   guardRulesApproveCommand,
   guardVerifyCommand,
 } from './commands/guard.js';
@@ -58,6 +59,7 @@ guard.command('propose').option('--json').action(guardProposeCommand);
 guard.command('install-agent [target]').option('--json').action(guardInstallAgentCommand);
 guard.command('doctor').option('--json').option('--fix-cache').action(guardDoctorCommand);
 guard.command('history').action(guardHistoryCommand);
+guard.command('runs').option('--json').action(guardRunsCommand);
 guard.command('history-diff <from> <to>').option('--json').action(guardHistoryDiffCommand);
 guard.command('impact <files...>').option('--json').action(guardImpactCommand);
 guard

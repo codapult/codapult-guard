@@ -9,6 +9,10 @@ permissions:
   contents: read
   security-events: write
 
+concurrency:
+  group: codapult-guard-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   guard:
     name: Architecture Guard
@@ -33,6 +37,18 @@ jobs:
       # Run `codapult-guard init` once locally and commit the generated Guard memory.
       - name: Verify Guard and project checks
         run: pnpm exec codapult-guard verify --tools auto --json
+
+      - name: Prepare PR review packet
+        if: github.event_name == 'pull_request'
+        run: pnpm exec codapult-guard review --base "${{ github.event.pull_request.base.sha }}" --json > guard-review.json
+
+      - name: Upload PR review packet
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: codapult-guard-review
+          path: guard-review.json
+          if-no-files-found: ignore
 
       - name: Export Guard findings as SARIF
         if: always()

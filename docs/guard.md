@@ -273,6 +273,7 @@ command supports it for automation.
 | `codapult-guard propose`                         | Generate evidence-based rules/contracts for review. Does not activate them.                    |
 | `codapult-guard doctor [--fix-cache]`            | Diagnose state; optionally remove the disposable discovery cache.                              |
 | `codapult-guard history`                         | List persisted project snapshots.                                                              |
+| `codapult-guard runs`                            | List local verification runs and outcome/latency summary.                                      |
 | `codapult-guard history-diff <from> <to>`        | Compare files, modules, dependencies, capabilities, graph edges, and cycles.                   |
 | `codapult-guard impact <files...>`               | Explain direct/transitive dependencies, dependents, capabilities, and relevant contracts.      |
 | `codapult-guard policy explain <id>`             | Explain an active or proposed rule/contract, its evidence, and approval history.               |

@@ -15,6 +15,7 @@ import {
 } from '../core/guard.js';
 import { guardErrorPayload } from '../core/errors.js';
 import { DiscoveryStaleError } from '../core/discovery/discovery.js';
+import { listGuardRuns, summarizeGuardRuns } from '../core/history/runs.js';
 
 interface JsonResource {
   [key: string]: unknown;
@@ -46,6 +47,25 @@ function resourceError(uri: string, error: unknown): ReturnType<typeof jsonResou
 }
 
 export function registerGuardResources(server: McpServer): void {
+  server.registerResource(
+    'codapult_guard_runs',
+    'codapult://guard/runs',
+    {
+      title: 'Guard Run History',
+      description: 'Local verification outcomes, gates, and stage timings.',
+      mimeType: 'application/json',
+    },
+    () => {
+      const root = findGuardRoot();
+      return jsonResource('codapult://guard/runs', {
+        version: 1,
+        root,
+        summary: summarizeGuardRuns(root),
+        runs: listGuardRuns(root),
+      });
+    },
+  );
+
   server.registerResource(
     'codapult_guard_rules',
     'codapult://guard/rules',

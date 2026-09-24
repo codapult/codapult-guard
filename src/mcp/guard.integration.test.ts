@@ -50,6 +50,7 @@ describe('Guard MCP transport', () => {
     ]);
     const resources = await client.listResources();
     expect(resources.resources.map((resource) => resource.name)).toEqual([
+      'codapult_guard_runs',
       'codapult_guard_rules',
       'codapult_guard_context',
       'codapult_guard_architecture',
