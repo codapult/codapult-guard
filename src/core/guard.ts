@@ -226,7 +226,7 @@ export interface GuardFileChange {
 
 export interface GuardContractIssue {
   contractId: string;
-  field: 'scope' | 'reference' | 'definition';
+  field: 'scope' | 'reference' | 'definition' | 'files';
   value: string;
   message: string;
 }
@@ -1354,6 +1354,27 @@ export function validateGuardBudgets(
     }
   }
   return issues;
+}
+
+export function validateGuardPolicy(root: string, guardConfig: GuardConfig): GuardContractIssue[] {
+  const issues: GuardContractIssue[] = [];
+  for (const rule of guardConfig.rules) {
+    for (const file of rule.files ?? []) {
+      if (!isProjectPath(root, file)) {
+        issues.push({
+          contractId: `rule:${rule.id}`,
+          field: 'files',
+          value: file,
+          message: `Rule file scope must stay inside the project: ${file}`,
+        });
+      }
+    }
+  }
+  return [
+    ...issues,
+    ...validateGuardContracts(root, guardConfig.contracts ?? []),
+    ...validateGuardBudgets(root, guardConfig.budgets ?? []),
+  ];
 }
 
 function isSourceFile(file: string): boolean {

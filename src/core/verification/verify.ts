@@ -15,8 +15,7 @@ import {
   loadGuardConfig,
   scanGuard,
   classifyGuardOutcome,
-  validateGuardContracts,
-  validateGuardBudgets,
+  validateGuardPolicy,
   type GuardToolMode,
   type GuardContractIssue,
   type GuardReport,
@@ -169,10 +168,7 @@ export function runGuardVerification(
     baseline: loadBaseline(root),
     includeArchitectureInsights: true,
   });
-  const contractIssues = [
-    ...validateGuardContracts(root, config.contracts ?? []),
-    ...validateGuardBudgets(root, config.budgets ?? []),
-  ];
+  const contractIssues = validateGuardPolicy(root, config);
   recordGuardRunStage(runContext, 'architecture-policy', 'ok', architectureStartedAt);
   const commandFailed = Object.values(results).some((result) => result.status === 'failed');
   const workspaceCommandFailed = Object.values(workspaceChecks).some((packageResults) =>

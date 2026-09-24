@@ -15,7 +15,7 @@ import {
   isGuardAgentConfig,
   isGuardContractsFile,
   isGuardProposalFile,
-  validateGuardContracts,
+  validateGuardPolicy,
 } from '../guard.js';
 
 export interface GuardDoctorItem {
@@ -79,10 +79,7 @@ export function diagnoseGuard(root: string): GuardDoctorReport {
       (() => {
         try {
           const guardConfig = loadGuardConfig(root);
-          return (
-            guardConfig !== undefined &&
-            validateGuardContracts(root, guardConfig.contracts).length > 0
-          );
+          return guardConfig !== undefined && validateGuardPolicy(root, guardConfig).length > 0;
         } catch {
           return true;
         }

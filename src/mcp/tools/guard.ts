@@ -29,8 +29,7 @@ import {
   writeGuardConfig,
   writeProjectState,
   scanGuard,
-  validateGuardContracts,
-  validateGuardBudgets,
+  validateGuardPolicy,
   classifyGuardOutcome,
   type GuardConfig,
 } from '../../core/guard.js';
@@ -296,10 +295,7 @@ export function registerGuardTools(server: McpServer): void {
         baseline: loadedBaseline.baseline,
         includeArchitectureInsights: true,
       });
-      const contractIssues = [
-        ...validateGuardContracts(root, config.contracts ?? []),
-        ...validateGuardBudgets(root, config.budgets ?? []),
-      ];
+      const contractIssues = validateGuardPolicy(root, config);
       if (report.findings.some((finding) => finding.severity === 'error')) {
         return jsonToolResult({
           status: 'needs-repair',
@@ -644,10 +640,7 @@ export function registerGuardTools(server: McpServer): void {
         return notConfiguredToolResult();
       }
       const report = scanGuard(root, config, { includeArchitectureInsights: true });
-      const contractIssues = [
-        ...validateGuardContracts(root, config.contracts ?? []),
-        ...validateGuardBudgets(root, config.budgets ?? []),
-      ];
+      const contractIssues = validateGuardPolicy(root, config);
       const errors = report.findings.filter((finding) => finding.severity === 'error').length;
       const warnings = report.findings.filter((finding) => finding.severity === 'warning').length;
       const status =
@@ -738,7 +731,7 @@ export function registerGuardTools(server: McpServer): void {
         baseline: loadedBaseline.baseline,
         includeArchitectureInsights: true,
       });
-      const contractIssues = validateGuardContracts(root, config.contracts ?? []);
+      const contractIssues = validateGuardPolicy(root, config);
       const errors = report.findings.filter((finding) => finding.severity === 'error').length;
       return jsonToolResult(
         {

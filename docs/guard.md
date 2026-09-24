@@ -272,7 +272,7 @@ command supports it for automation.
 | `codapult-guard impact <files...>`               | Explain direct/transitive dependencies, dependents, capabilities, and relevant contracts.      |
 | `codapult-guard policy explain <id>`             | Explain an active or proposed rule/contract, its evidence, and approval history.               |
 | `codapult-guard check [--changed]`               | Enforce active Guard rules/contracts and report new findings.                                  |
-| `codapult-guard audit`                           | Run a full current Guard scan without baseline suppression and validate contracts.             |
+| `codapult-guard audit`                           | Run a full current Guard scan without baseline suppression and validate policy definitions.    |
 | `codapult-guard review`                          | Produce a bounded diff + project-context packet for semantic AI review.                        |
 | `codapult-guard review --base origin/main`       | Build the review packet from a PR base ref.                                                    |
 | `codapult-guard verify`                          | Run Guard, project checks, adapters, runtime, and contract verification as configured.         |
@@ -405,11 +405,11 @@ automatic claim that every dependent needs modification. `check --changed` inclu
 and their transitive dependents so a changed implementation cannot bypass an unchanged entrypoint
 contract.
 
-Scopes, entrypoints, exclusions, and references are repository-relative paths. Guard rejects
-absolute paths, `..` traversal, and symlinks that resolve outside the project root. `verify` and
-`audit` validate that these paths still exist and that contract definitions contain the required
-fields. A stale or unsafe contract is a policy problem, not a source-code finding, and causes
-verification to fail.
+Rule scopes, contract paths, and budget scopes are repository-relative paths. Guard rejects
+absolute paths, `..` traversal, and symlinks that resolve outside the project root. Rule scopes may
+target future files, while contract and budget scopes must still exist. `verify` and `audit` validate
+these paths and policy definitions before scanning. A stale or unsafe policy is a policy problem,
+not a source-code finding, and causes verification to fail.
 
 Import-boundary contracts cover static imports, re-exports, and literal dynamic imports. Repeated
 references to the same module are deduplicated into one finding. When TypeScript resolves an alias

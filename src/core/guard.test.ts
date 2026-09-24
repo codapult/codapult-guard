@@ -33,6 +33,7 @@ import {
   validateGuardContracts,
   validateGuardBudgets,
   validateGuardProposalApproval,
+  validateGuardPolicy,
   initializeGuard,
   GuardAlreadyInitializedError,
   GuardStateBusyError,
@@ -171,6 +172,29 @@ describe('scanGuard', () => {
       expect.objectContaining({ field: 'scope', value: '../outside' }),
       expect.objectContaining({ field: 'scope', value: '/tmp' }),
       expect.objectContaining({ field: 'scope', value: 'missing/*' }),
+    ]);
+  });
+
+  it('rejects rule scopes that escape the project root', () => {
+    const root = createProject({ 'src/service.ts': 'export const service = true;\n' });
+
+    expect(
+      validateGuardPolicy(root, {
+        version: 1,
+        rules: [
+          {
+            id: 'unsafe-scope',
+            description: 'Unsafe scope',
+            severity: 'error',
+            kind: 'forbidden-import',
+            patterns: ['secret'],
+            files: ['../outside', '/tmp'],
+          },
+        ],
+      }),
+    ).toEqual([
+      expect.objectContaining({ contractId: 'rule:unsafe-scope', field: 'files' }),
+      expect.objectContaining({ contractId: 'rule:unsafe-scope', field: 'files' }),
     ]);
   });
 

@@ -29,6 +29,7 @@ vi.mock('../../core/guard.js', () => ({
   scanGuard: vi.fn(() => ({ scannedFiles: 3, suppressed: 0, findings: [] })),
   validateGuardContracts: vi.fn(() => []),
   validateGuardBudgets: vi.fn(() => []),
+  validateGuardPolicy: vi.fn(() => []),
   buildGuardReviewPacket: vi.fn(() => ({ version: 1, changedFiles: [] })),
   buildGuardProposals: vi.fn(() => ({
     version: 1,

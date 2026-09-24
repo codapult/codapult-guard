@@ -31,8 +31,7 @@ import {
   getGuardProposalFreshness,
   scanGuard,
   classifyGuardOutcome,
-  validateGuardContracts,
-  validateGuardBudgets,
+  validateGuardPolicy,
   writeProjectState,
   type GuardToolMode,
   type GuardFinding,
@@ -445,10 +444,7 @@ export function guardCheckCommand(options: GuardCheckOptions = {}): void {
     baseline: loadBaseline(root),
     includeArchitectureInsights: true,
   });
-  const contractIssues = [
-    ...validateGuardContracts(root, config.contracts ?? []),
-    ...validateGuardBudgets(root, config.budgets ?? []),
-  ];
+  const contractIssues = validateGuardPolicy(root, config);
   const errors = report.findings.filter((finding) => finding.severity === 'error').length;
   const warnings = report.findings.filter((finding) => finding.severity === 'warning').length;
   const contractFindings: GuardFinding[] = contractIssues.map((issue) => ({
@@ -524,10 +520,7 @@ export function guardAuditCommand(options: GuardOutputOptions = {}): void {
     return;
   }
   const report = scanGuard(root, config, { includeArchitectureInsights: true });
-  const contractIssues = [
-    ...validateGuardContracts(root, config.contracts ?? []),
-    ...validateGuardBudgets(root, config.budgets ?? []),
-  ];
+  const contractIssues = validateGuardPolicy(root, config);
   const errors = report.findings.filter((finding) => finding.severity === 'error').length;
   const warnings = report.findings.filter((finding) => finding.severity === 'warning').length;
   if (options.json) {
