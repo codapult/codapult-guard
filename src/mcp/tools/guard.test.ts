@@ -199,12 +199,7 @@ describe('registerGuardTools', () => {
     const handler = server.tools.find((tool) => tool.name === 'codapult_guard_verify')!.handler;
 
     handler({});
-    expect(runGuardVerification).toHaveBeenCalledWith(
-      '/project',
-      expect.objectContaining({
-        projectChecks: undefined,
-      }),
-    );
+    expect(runGuardVerification).toHaveBeenCalledWith('/project', {});
 
     handler({ project_checks: false });
     expect(runGuardVerification).toHaveBeenLastCalledWith(

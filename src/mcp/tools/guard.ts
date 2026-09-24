@@ -39,14 +39,22 @@ import { runGuardVerification } from '../../core/verification/verify.js';
 
 const rootSchema = z.string().trim().min(1).optional().describe('Project path or workspace root.');
 
+interface JsonToolResult {
+  [key: string]: unknown;
+  content: { type: 'text'; text: string }[];
+  isError?: boolean | undefined;
+}
+
+interface GuardConfigLoadResult {
+  config?: GuardConfig | undefined;
+  error?: JsonToolResult | undefined;
+}
+
 function getGuardRoot(root?: string): string {
   return root ? findGuardRoot(root) : findGuardRoot();
 }
 
-function jsonToolResult(
-  value: unknown,
-  isError = false,
-): { content: { type: 'text'; text: string }[]; isError?: boolean } {
+function jsonToolResult(value: unknown, isError = false): JsonToolResult {
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }],
     ...(isError ? { isError: true } : {}),
@@ -67,10 +75,7 @@ function notConfiguredToolResult(): ReturnType<typeof jsonToolResult> {
   );
 }
 
-function loadConfigSafely(root: string): {
-  config?: GuardConfig;
-  error?: ReturnType<typeof jsonToolResult>;
-} {
+function loadConfigSafely(root: string): GuardConfigLoadResult {
   try {
     return { config: loadGuardConfig(root) };
   } catch (error) {

@@ -16,10 +16,12 @@ import {
 import { guardErrorPayload } from '../core/errors.js';
 import { DiscoveryStaleError } from '../core/discovery/discovery.js';
 
-function jsonResource(
-  uri: string,
-  value: unknown,
-): { contents: { uri: string; text: string; mimeType: string }[] } {
+interface JsonResource {
+  [key: string]: unknown;
+  contents: { uri: string; text: string; mimeType: string }[];
+}
+
+function jsonResource(uri: string, value: unknown): JsonResource {
   return {
     contents: [{ uri, text: JSON.stringify(value, null, 2), mimeType: 'application/json' }],
   };
