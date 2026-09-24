@@ -3,6 +3,18 @@ import { z } from 'zod';
 const severity = z.enum(['error', 'warning', 'info']);
 const status = z.enum(['active', 'proposed']);
 
+export const guardBudgetSchema = z.object({
+  id: z.string().trim().min(1),
+  description: z.string().trim().min(1),
+  metric: z.enum(['lines', 'bytes', 'imports']),
+  scope: z.array(z.string().trim().min(1)).min(1),
+  limit: z.number().int().positive(),
+  severity,
+  reason: z.string().trim().min(1),
+  status: status.optional(),
+  evidence: z.array(z.string()).optional(),
+});
+
 export const guardRuleSchema = z.object({
   id: z.string().trim().min(1),
   description: z.string().trim().min(1),
@@ -41,6 +53,7 @@ export const guardConfigSchema = z.object({
   contentFingerprint: z.string().optional(),
   rules: z.array(guardRuleSchema),
   contracts: z.array(guardContractSchema).optional(),
+  budgets: z.array(guardBudgetSchema).optional(),
 });
 
 export const guardContractsFileSchema = z.object({

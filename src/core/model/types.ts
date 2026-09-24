@@ -8,6 +8,8 @@ export type GuardRuleStatus = 'active' | 'proposed';
 export type GuardContractKind =
   'guidance' | 'import-boundary' | 'required-call' | 'package-boundary';
 
+export type GuardBudgetMetric = 'lines' | 'bytes' | 'imports';
+
 export type GuardToolMode = 'auto' | 'on' | 'off';
 
 export type GuardAdapterName = 'dependency-graph' | 'security' | 'dependency-hygiene';

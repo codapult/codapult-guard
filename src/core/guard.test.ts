@@ -96,6 +96,34 @@ describe('scanGuard', () => {
     });
   });
 
+  it('enforces explicitly scoped budgets without imposing a global file-size policy', () => {
+    const root = createProject({
+      'src/service.ts': 'export const one = 1;\nexport const two = 2;\nexport const three = 3;\n',
+      'generated/schema.ts': 'export const field = 1;\n'.repeat(20),
+    });
+
+    const report = scanGuard(root, {
+      version: 1,
+      rules: [],
+      budgets: [
+        {
+          id: 'service-lines',
+          description: 'Services must remain reviewable.',
+          metric: 'lines',
+          scope: ['src/services', 'src/service.ts'],
+          limit: 2,
+          severity: 'error',
+          reason: 'Keep service changes reviewable by one owner.',
+        },
+      ],
+    });
+
+    expect(report.findings).toContainEqual(
+      expect.objectContaining({ ruleId: 'budget:service-lines', file: 'src/service.ts' }),
+    );
+    expect(report.findings.some((finding) => finding.file === 'generated/schema.ts')).toBe(false);
+  });
+
   it('reports forbidden side-effect imports', () => {
     const root = createProject({
       'entry.ts': `import './server-only';\n`,

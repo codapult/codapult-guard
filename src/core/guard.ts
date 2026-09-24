@@ -33,6 +33,7 @@ import {
 import type {
   GuardAdapterName,
   GuardContractKind,
+  GuardBudgetMetric,
   GuardRuleKind,
   GuardRuleStatus,
   GuardSeverity,
@@ -42,6 +43,7 @@ import type {
 export type {
   GuardAdapterName,
   GuardContractKind,
+  GuardBudgetMetric,
   GuardRuleKind,
   GuardRuleStatus,
   GuardSeverity,
@@ -134,12 +136,25 @@ export interface GuardRule {
   evidence?: string[] | undefined;
 }
 
+export interface GuardBudget {
+  id: string;
+  description: string;
+  metric: GuardBudgetMetric;
+  scope: string[];
+  limit: number;
+  severity: GuardSeverity;
+  reason: string;
+  status?: GuardRuleStatus | undefined;
+  evidence?: string[] | undefined;
+}
+
 export interface GuardConfig {
   version: 1;
   revision?: number | undefined;
   contentFingerprint?: string | undefined;
   rules: GuardRule[];
   contracts?: GuardContract[] | undefined;
+  budgets?: GuardBudget[] | undefined;
 }
 
 export interface GuardProposalFile {
@@ -543,7 +558,13 @@ export function fingerprintProjectModel(model: ProjectModel): string {
 
 export function fingerprintGuardConfig(guardConfig: GuardConfig): string {
   return createHash('sha256')
-    .update(JSON.stringify({ rules: guardConfig.rules, contracts: guardConfig.contracts ?? [] }))
+    .update(
+      JSON.stringify({
+        rules: guardConfig.rules,
+        contracts: guardConfig.contracts ?? [],
+        budgets: guardConfig.budgets ?? [],
+      }),
+    )
     .digest('hex');
 }
 
@@ -564,11 +585,12 @@ function loadGuardConfigUnlocked(root: string): GuardConfig | undefined {
   if (existsSync(contractsPath)) {
     const contractFile = readJson(contractsPath);
     if (!isGuardContractsFile(contractFile)) throw new GuardConfigError(GUARD_CONTRACTS_FILE);
-    return { ...value, contracts: contractFile.contracts };
+    return { ...value, contracts: contractFile.contracts, budgets: value.budgets ?? [] };
   }
   return {
     ...value,
     contracts: value.contracts ?? [],
+    budgets: value.budgets ?? [],
   };
 }
 
@@ -1610,6 +1632,68 @@ function architectureInsightFindings(
   return findings;
 }
 
+function budgetMatchesFile(budget: GuardBudget, file: string): boolean {
+  return budget.scope.some((scope) =>
+    scope.endsWith('*')
+      ? file.startsWith(scope.slice(0, -1))
+      : file === scope || file.startsWith(`${scope}/`),
+  );
+}
+
+function budgetValue(
+  root: string,
+  metric: GuardBudgetMetric,
+  file: ProjectModel['files'][number],
+  module: ProjectModel['modules'][number] | undefined,
+): number {
+  if (metric === 'bytes') return file.bytes;
+  if (metric === 'imports') {
+    return module
+      ? new Set([...module.imports, ...module.exports, ...module.dynamicImports]).size
+      : 0;
+  }
+  try {
+    return readFileSync(resolve(root, file.path), 'utf8').split(/\r?\n/).length;
+  } catch {
+    return 0;
+  }
+}
+
+function scanBudgets(
+  root: string,
+  model: ProjectModel,
+  budgets: GuardBudget[],
+  changed?: Set<string>,
+): GuardFinding[] {
+  const modules = new Map(model.modules.map((module) => [module.path, module]));
+  return budgets
+    .filter((budget) => budget.status !== 'proposed')
+    .flatMap((budget) =>
+      model.files
+        .filter(
+          (file) =>
+            file.kind === 'source' &&
+            budgetMatchesFile(budget, file.path) &&
+            (!changed || changed.has(file.path)),
+        )
+        .flatMap((file) => {
+          const value = budgetValue(root, budget.metric, file, modules.get(file.path));
+          if (value <= budget.limit) return [];
+          return [
+            {
+              ruleId: `budget:${budget.id}`,
+              severity: budget.severity,
+              file: file.path,
+              line: 1,
+              importPath: `budget:${budget.metric}`,
+              message: `${budget.description} (${value} ${budget.metric}; limit ${budget.limit}).`,
+              fingerprint: `budget|${budget.id}|${file.path}|${budget.metric}`,
+            },
+          ];
+        }),
+    );
+}
+
 function isSafeReviewFile(file: string): boolean {
   return !(
     file === '.env' ||
@@ -1831,6 +1915,7 @@ export function scanGuard(
       scanFile(root, file, guardConfig.rules, modules.get(file), astProject),
     ),
     ...scanContracts(root, guardConfig.contracts ?? [], scope),
+    ...scanBudgets(root, model, guardConfig.budgets ?? [], scope),
     ...(options.includeArchitectureInsights ? architectureInsightFindings(root, scope) : []),
   ];
   const baseline = options.baseline ?? new Set<string>();
