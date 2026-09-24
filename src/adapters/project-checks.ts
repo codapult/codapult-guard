@@ -52,6 +52,7 @@ function notConfigured(check: string): CommandResult {
     exitCode: 0,
     stdout: '',
     stderr: `${check} script is not configured`,
+    durationMs: 0,
   };
 }
 
@@ -183,6 +184,9 @@ const adapterScriptPatterns: Record<GuardAdapter, RegExp> = {
   'dependency-graph': /(?:dep(?:endency)?[-:]?(?:check|graph|cruise)|madge|architecture)/i,
   security: /(?:security|semgrep|gitleaks|snyk|trivy|audit)/i,
   'dependency-hygiene': /(?:knip|dep(?:endency)?[-:]?(?:unused|hygiene))/i,
+  sast: /(?:semgrep|codeql|bearer|sast)/i,
+  'secret-scanning': /(?:gitleaks|trufflehog|secret[-_ ]?scan)/i,
+  'dependency-audit': /(?:npm audit|pnpm audit|yarn audit|osv|snyk|trivy|dependency[-_ ]?audit)/i,
 };
 
 /** Runs only explicitly configured project scripts; Guard does not recreate these tools. */
@@ -194,6 +198,7 @@ export function runProjectAdapters(
   const manager = packageManager(root, metadata.packageManager);
   const scripts = metadata.scripts ?? {};
   const results: Partial<Record<GuardAdapter, CommandResult>> = {};
+  const executed = new Map<string, CommandResult>();
   for (const [adapter, pattern] of Object.entries(adapterScriptPatterns) as [
     GuardAdapter,
     RegExp,
@@ -212,9 +217,14 @@ export function runProjectAdapters(
       continue;
     }
     const command = manager === 'npm' ? `npm run ${script}` : `${manager} run ${script}`;
-    results[adapter] = runProjectCommand(command, root, {
-      timeout: options.timeout ?? 120_000,
-    });
+    const previous = executed.get(command);
+    const result =
+      previous ??
+      runProjectCommand(command, root, {
+        timeout: options.timeout ?? 120_000,
+      });
+    executed.set(command, result);
+    results[adapter] = result;
   }
   return results;
 }

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { config } from '../config.js';
 
@@ -30,6 +30,15 @@ export interface GuardRunContext {
   startedAt: string;
   startedAtMs: number;
   stages: Record<string, GuardRunStage>;
+}
+
+export interface GuardRunSummary {
+  total: number;
+  passed: number;
+  failed: number;
+  warnings: number;
+  averageDurationMs: number;
+  last?: GuardRunManifest | undefined;
 }
 
 export function startGuardRun(): GuardRunContext {
@@ -62,6 +71,42 @@ export function writeGuardRun(root: string, manifest: GuardRunManifest): void {
   const temporaryPath = `${path}.tmp-${process.pid}-${manifest.runId}`;
   writeFileSync(temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
   renameSync(temporaryPath, path);
+}
+
+/** Reads locally persisted run manifests without reaching a remote service. */
+export function listGuardRuns(root: string, limit = 20): GuardRunManifest[] {
+  if (!Number.isInteger(limit) || limit < 1) return [];
+  const directory = resolve(root, GUARD_RUNS_DIR);
+  try {
+    return readdirSync(directory)
+      .filter((file) => file.endsWith('.json'))
+      .map((file) => {
+        try {
+          return JSON.parse(readFileSync(resolve(directory, file), 'utf8')) as GuardRunManifest;
+        } catch {
+          return undefined;
+        }
+      })
+      .filter((manifest): manifest is GuardRunManifest => manifest !== undefined)
+      .sort((left, right) => right.completedAt.localeCompare(left.completedAt))
+      .slice(0, limit);
+  } catch {
+    return [];
+  }
+}
+
+export function summarizeGuardRuns(root: string, limit = 100): GuardRunSummary {
+  const runs = listGuardRuns(root, limit);
+  const total = runs.length;
+  return {
+    total,
+    passed: runs.filter((run) => run.outcome === 'pass').length,
+    failed: runs.filter((run) => run.outcome === 'fail').length,
+    warnings: runs.filter((run) => run.outcome === 'warning').length,
+    averageDurationMs:
+      total === 0 ? 0 : Math.round(runs.reduce((sum, run) => sum + run.durationMs, 0) / total),
+    ...(total > 0 ? { last: runs[0] } : {}),
+  };
 }
 
 export function finishGuardRun(

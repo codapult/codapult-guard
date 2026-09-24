@@ -14,6 +14,12 @@ export type GuardToolMode = 'auto' | 'on' | 'off';
 
 export type GuardApprovalMode = 'local' | 'protected';
 
-export type GuardAdapterName = 'dependency-graph' | 'security' | 'dependency-hygiene';
+export type GuardAdapterName =
+  | 'dependency-graph'
+  | 'security'
+  | 'dependency-hygiene'
+  | 'sast'
+  | 'secret-scanning'
+  | 'dependency-audit';
 
 export type ProjectCheck = 'lint' | 'typecheck' | 'test' | 'build';

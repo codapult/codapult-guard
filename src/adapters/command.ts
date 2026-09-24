@@ -7,6 +7,7 @@ export interface CommandResult {
   exitCode: number;
   stdout: string;
   stderr: string;
+  durationMs: number;
   timedOut?: boolean | undefined;
   truncated?: boolean | undefined;
 }
@@ -70,6 +71,7 @@ export function runProjectCommand(
   cwd: string,
   options: RunProjectCommandOptions = {},
 ): CommandResult {
+  const startedAt = Date.now();
   const parsed = parseCommand(command);
   if (!parsed) {
     return {
@@ -79,6 +81,7 @@ export function runProjectCommand(
       exitCode: 2,
       stdout: '',
       stderr: 'Unsafe or empty project command rejected.',
+      durationMs: 0,
     };
   }
   try {
@@ -97,6 +100,7 @@ export function runProjectCommand(
       exitCode: 0,
       stdout: captured.value,
       stderr: '',
+      durationMs: Math.max(0, Date.now() - startedAt),
       truncated: captured.truncated,
     };
   } catch (error) {
@@ -120,6 +124,7 @@ export function runProjectCommand(
       exitCode,
       stdout: stdout.value,
       stderr: timedOut ? `${stderr.value}\n[command timed out]` : stderr.value,
+      durationMs: Math.max(0, Date.now() - startedAt),
       timedOut,
       truncated: stdout.truncated || stderr.truncated,
     };

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   inspectProjectRuntime,
   runProjectChecks,
+  runProjectAdapters,
   runWorkspaceProjectChecks,
 } from './project-checks.js';
 
@@ -129,5 +130,24 @@ describe('runProjectChecks', () => {
       status: 'passed',
       command: 'pnpm run test',
     });
+  });
+
+  it('does not execute the same configured script twice for overlapping adapters', () => {
+    const root = mkdtempSync(join(tmpdir(), 'guard-adapter-dedup-'));
+    roots.push(root);
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ scripts: { audit: 'node -e "process.exit(0)"' } }),
+    );
+
+    const result = runProjectAdapters(root, {
+      mode: 'auto',
+      tooling: {
+        security: { script: 'audit', enabled: true },
+        'dependency-audit': { script: 'audit', enabled: true },
+      },
+    });
+
+    expect(result.security).toBe(result['dependency-audit']);
   });
 });

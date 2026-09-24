@@ -24,6 +24,7 @@ describe('runProjectCommand', () => {
     const result = runProjectCommand('pnpm run test', root);
 
     expect(result.status).toBe('passed');
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
     expect(result.truncated).toBe(true);
     expect(result.stdout).toContain('[output truncated]');
   });
@@ -46,6 +47,7 @@ describe('runProjectCommand', () => {
 
     expect(result.status).toBe('failed');
     expect(result.exitCode).toBe(2);
+    expect(result.durationMs).toBe(0);
     expect(execFileSync).not.toHaveBeenCalled();
   });
 });
