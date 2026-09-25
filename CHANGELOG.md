@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/codapult/codapult-guard/compare/v0.4.0...v0.5.0) (2026-09-25)
+
+### Features
+
+* expand tool adapters and run observability ([717c248](https://github.com/codapult/codapult-guard/commit/717c248fe96cdc2ee488539d9ca59ccd360d7ef8))
+* expose Guard integration workflows ([0c7ca3e](https://github.com/codapult/codapult-guard/commit/0c7ca3e86b8b5d30b8c78788c7b77dce9623a8c2))
+
+### Bug Fixes
+
+* bound persisted Guard run history ([d0d292e](https://github.com/codapult/codapult-guard/commit/d0d292eb530fe690f9b1c8ad241df7c170b9907a))
+* reject unsafe Guard run manifests ([120ad4e](https://github.com/codapult/codapult-guard/commit/120ad4e5ef4cce011fc1d562d407fc9bfeb6b36a))
+* validate persisted run manifests ([dec9b0b](https://github.com/codapult/codapult-guard/commit/dec9b0bb5c552fe8e29e1ab13ddeaeec106d27fb))
+
 ## [0.4.0](https://github.com/codapult/codapult-guard/compare/v0.3.0...v0.4.0) (2026-09-24)
 
 ### Features
