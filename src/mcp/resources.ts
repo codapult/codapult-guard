@@ -10,6 +10,7 @@ import {
   loadGuardArtifact,
   loadGuardConfig,
   loadGuardProposals,
+  loadGuardWaivers,
   GuardStateBusyError,
   GuardStateStaleError,
 } from '../core/guard.js';
@@ -144,6 +145,28 @@ export function registerGuardResources(server: McpServer): void {
         });
       } catch (error) {
         return resourceError('codapult://guard/architecture', error);
+      }
+    },
+  );
+
+  server.registerResource(
+    'codapult_guard_waivers',
+    'codapult://guard/waivers',
+    {
+      title: 'Guard Waivers',
+      description: 'Active and expired time-bounded exceptions to Guard findings.',
+      mimeType: 'application/json',
+    },
+    () => {
+      const root = findGuardRoot();
+      try {
+        return jsonResource('codapult://guard/waivers', {
+          version: 1,
+          root,
+          waivers: loadGuardWaivers(root),
+        });
+      } catch (error) {
+        return resourceError('codapult://guard/waivers', error);
       }
     },
   );

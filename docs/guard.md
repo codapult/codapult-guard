@@ -150,6 +150,7 @@ Guard stores its project memory under `.codapult/guard/`:
 | `proposals.json`     | Evidence, confidence, questions, and approval/rejection history for proposed policy.                                      |
 | `baseline.json`      | Fingerprints of accepted pre-existing findings. Baseline suppression is fingerprint-based.                                |
 | `baseline-meta.json` | Metadata describing the baseline and its project snapshot.                                                                |
+| `waivers.json`       | Time-bounded, owner-attributed exceptions for active findings.                                                            |
 | `agent.json`         | Host-facing completion-gate and external-tool policy. It does not execute an LLM.                                         |
 | `cache.json`         | Optional discovery cache. Unchanged AST modules can be reused by content hash.                                            |
 | `history/`           | Project model snapshots, history diffs, and local verification run manifests.                                             |
@@ -312,6 +313,26 @@ current full scan; `baseline remove --all` removes fingerprints represented by t
 Each update preserves a decision record in `baseline-meta.json`. A written `--reason` is required
 for every manual baseline add or remove; initialization is the only operation that may create the
 initial baseline without a manual reason.
+
+### Temporary waivers
+
+Use a waiver for a known, temporary exception to an active rule or contract. Do not use it to
+replace baseline management or to create a broad path-level exemption. A waiver is tied to one
+finding fingerprint and requires an owner, reason, creation time, and expiry time:
+
+```bash
+pnpm exec codapult-guard waiver add <fingerprint> \
+  --owner platform-team \
+  --reason "Migration in progress" \
+  --expires 2026-12-28 \
+  --issue https://github.com/example/project/issues/123
+```
+
+Use `waiver list`, `waiver renew`, and `waiver remove` to manage the lifecycle. The default warning
+window is 14 days before expiry. Active waivers suppress only their exact fingerprint and remain
+visible in reports. Expired waivers no longer suppress findings. `check`, `audit`, and `verify`
+reports, review packets, the `codapult_guard_waivers` MCP tool, and the `codapult://guard/waivers` resource
+expose waiver state. Protected policy can require approval outside MCP.
 
 ### Scoped budgets
 
@@ -510,6 +531,7 @@ are:
 | `codapult_guard_review`          | Prepare a bounded/redacted semantic review packet.                                                             | No                                                                |
 | `codapult_guard_verify`          | Run the completion gate and return structured results.                                                         | Runs configured project commands; does not edit source.           |
 | `codapult_guard_audit`           | Full current scan and contract validation.                                                                     | No                                                                |
+| `codapult_guard_waivers`         | List or manage owner-attributed, time-bounded exceptions to exact finding fingerprints.                        | Writes require confirmation and policy approval.                  |
 | `codapult_guard_impact`          | Explain dependencies, transitive dependents, impact paths, capabilities, contracts, and graph edges for files. | No                                                                |
 | `codapult_guard_explain`         | Explain one rule/contract, its evidence, and suggested next steps.                                             | No                                                                |
 | `codapult_guard_next_action`     | Return the next bounded Guard action for an agent without changing project state.                              | No                                                                |

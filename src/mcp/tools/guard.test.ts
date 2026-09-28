@@ -109,6 +109,7 @@ describe('registerGuardTools', () => {
       'codapult_guard_audit',
       'codapult_guard_review',
       'codapult_guard_check',
+      'codapult_guard_waivers',
       'codapult_guard_impact',
       'codapult_guard_explain',
     ]);

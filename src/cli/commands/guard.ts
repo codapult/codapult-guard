@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import {
@@ -11,6 +12,7 @@ import {
   GUARD_PROJECT_FILE,
   GUARD_HISTORY_DIR,
   GUARD_RULES_FILE,
+  GuardWaiverError,
   findGuardRoot,
   discoverProjectWithMetrics,
   clearDiscoveryCache,
@@ -21,7 +23,9 @@ import {
   GuardAlreadyInitializedError,
   initializeGuard,
   loadBaseline,
+  loadGuardWaivers,
   updateBaseline,
+  updateGuardWaivers,
   loadGuardConfig,
   loadGuardProposals,
   applyGuardProposalDecision,
@@ -35,6 +39,7 @@ import {
   type GuardToolMode,
   type GuardFinding,
   type GuardConfig,
+  type GuardWaiver,
 } from '../../core/guard.js';
 import { guardErrorPayload } from '../../core/errors.js';
 import {
@@ -96,6 +101,13 @@ interface GuardBaselineOptions extends GuardOutputOptions {
   reason?: string | undefined;
 }
 
+export interface GuardWaiverOptions extends GuardOutputOptions {
+  owner?: string | undefined;
+  reason?: string | undefined;
+  expires?: string | undefined;
+  issue?: string | undefined;
+}
+
 interface GuardApprovalOptions {
   all?: boolean | undefined;
 }
@@ -113,6 +125,17 @@ function renderFindings(findings: ReturnType<typeof scanGuard>['findings']): voi
     printer(`${finding.file}:${finding.line} [${finding.ruleId}] ${finding.message}`);
     dim(`  import: ${finding.importPath}`);
     if (finding.resolvedPath) dim(`  resolved: ${finding.resolvedPath}`);
+  }
+}
+
+function renderWaiverStatus(report: ReturnType<typeof scanGuard>): void {
+  for (const waiver of report.waiverWarnings ?? []) {
+    warn(`Waiver ${waiver.id} expires soon: ${waiver.expiresAt} (${waiver.owner})`);
+    dim(`  ${waiver.fingerprint}: ${waiver.reason}`);
+  }
+  for (const waiver of report.expiredWaivers ?? []) {
+    warn(`Waiver ${waiver.id} expired: ${waiver.expiresAt} (${waiver.owner})`);
+    dim(`  The original finding is active again: ${waiver.fingerprint}`);
   }
 }
 
@@ -425,6 +448,7 @@ export function guardVerifyCommand(options: GuardVerifyOptions = {}): void {
   const findings = result.architecture?.findings ?? [];
   if (findings.length === 0) success('architecture: no new regressions');
   else renderFindings(findings);
+  if (result.architecture) renderWaiverStatus(result.architecture);
   for (const issue of result.contractIssues) warn(`[${issue.contractId}] ${issue.message}`);
   if (result.contractIssues.length > 0) fail(`contracts: ${result.contractIssues.length} invalid`);
   dim(`requirements: ${result.requirement.message}`);
@@ -462,7 +486,9 @@ export function guardCheckCommand(options: GuardCheckOptions = {}): void {
   });
   const contractIssues = validateGuardPolicy(root, config);
   const errors = report.findings.filter((finding) => finding.severity === 'error').length;
-  const warnings = report.findings.filter((finding) => finding.severity === 'warning').length;
+  const warnings =
+    report.findings.filter((finding) => finding.severity === 'warning').length +
+    (report.waiverWarnings ?? []).length;
   const contractFindings: GuardFinding[] = contractIssues.map((issue) => ({
     ruleId: `contract:${issue.contractId}`,
     severity: 'error',
@@ -503,6 +529,7 @@ export function guardCheckCommand(options: GuardCheckOptions = {}): void {
     `Scanned ${report.scannedFiles} source file(s); suppressed ${report.suppressed} baseline finding(s).`,
   );
   renderFindings(report.findings);
+  renderWaiverStatus(report);
   for (const issue of contractIssues) warn(`[${issue.contractId}] ${issue.message}`);
   if (errors > 0 || contractIssues.length > 0)
     fail(`${errors + contractIssues.length} issue(s) found`);
@@ -538,7 +565,9 @@ export function guardAuditCommand(options: GuardOutputOptions = {}): void {
   const report = scanGuard(root, config, { includeArchitectureInsights: true });
   const contractIssues = validateGuardPolicy(root, config);
   const errors = report.findings.filter((finding) => finding.severity === 'error').length;
-  const warnings = report.findings.filter((finding) => finding.severity === 'warning').length;
+  const warnings =
+    report.findings.filter((finding) => finding.severity === 'warning').length +
+    (report.waiverWarnings ?? []).length;
   if (options.json) {
     console.log(
       JSON.stringify(
@@ -564,6 +593,7 @@ export function guardAuditCommand(options: GuardOutputOptions = {}): void {
   heading('Codapult Guard Audit');
   dim(`Scanned ${report.scannedFiles} source file(s); baseline is ignored for this full audit.`);
   renderFindings(report.findings);
+  renderWaiverStatus(report);
   for (const issue of contractIssues) warn(`[${issue.contractId}] ${issue.message}`);
   if (errors > 0) fail(`${errors} error(s) found`);
   else if (warnings > 0 || contractIssues.length > 0) {
@@ -619,6 +649,96 @@ export function guardBaselineCommand(
     success(
       `${action === 'accept' ? 'Accepted' : 'Removed'} ${selected.length} baseline fingerprint(s).`,
     );
+  process.exitCode = 0;
+}
+
+export function guardWaiverCommand(
+  action: 'list' | 'add' | 'remove' | 'renew',
+  value?: string,
+  options: GuardWaiverOptions = {},
+): void {
+  const root = getRoot();
+  const waivers = loadGuardWaivers(root);
+  const reason = options.reason?.trim();
+  if (action === 'list') {
+    const result = { count: waivers.length, waivers };
+    if (options.json) console.log(JSON.stringify(result, null, 2));
+    else {
+      heading('Codapult Guard Waivers');
+      for (const waiver of waivers) {
+        const status = Date.parse(waiver.expiresAt) <= Date.now() ? 'expired' : 'active';
+        info(`${waiver.id} [${status}] ${waiver.owner} → ${waiver.expiresAt}`);
+        dim(`  ${waiver.fingerprint}: ${waiver.reason}`);
+      }
+    }
+    process.exitCode = 0;
+    return;
+  }
+  if (!reason) throw new GuardWaiverError('A reason is required for waiver changes.');
+  const config = loadGuardConfig(root);
+  if (!config) throw new GuardWaiverError('Guard is not initialized.');
+  if (
+    config.approval?.mode === 'protected' &&
+    config.approval.requireDistinctActor &&
+    !process.env.GUARD_APPROVER?.trim()
+  ) {
+    throw new GuardWaiverError(
+      'Protected Guard policy requires GUARD_APPROVER for waiver changes.',
+    );
+  }
+  if (action === 'add') {
+    const owner = options.owner?.trim();
+    if (!value || !owner || !options.expires) {
+      throw new GuardWaiverError('Add requires <fingerprint>, --owner, and --expires.');
+    }
+    const expires = new Date(options.expires);
+    if (!Number.isFinite(expires.getTime()))
+      throw new GuardWaiverError('Invalid waiver expiry date.');
+    const expiresAt = expires.toISOString();
+    const finding = scanGuard(root, config, {
+      waivers: [],
+      includeArchitectureInsights: true,
+    }).findings.find((candidate) => candidate.fingerprint === value);
+    if (!finding) throw new GuardWaiverError(`Finding fingerprint not found: ${value}`);
+    const waiver: GuardWaiver = {
+      id: `waiver-${randomUUID()}`,
+      fingerprint: value,
+      ruleId: finding.ruleId,
+      owner,
+      reason,
+      createdAt: new Date().toISOString(),
+      expiresAt,
+      ...(options.issue ? { issue: options.issue } : {}),
+      ...(process.env.GUARD_APPROVER?.trim()
+        ? { approvedBy: process.env.GUARD_APPROVER.trim() }
+        : {}),
+    };
+    updateGuardWaivers(root, {
+      action,
+      waiverId: waiver.id,
+      waiver,
+      reason,
+      actor: process.env.GUARD_APPROVER,
+    });
+    if (options.json) console.log(JSON.stringify({ action, waiver }, null, 2));
+    else success(`Added waiver ${waiver.id}; expires ${waiver.expiresAt}.`);
+  } else {
+    if (!value) throw new GuardWaiverError(`Waiver id is required to ${action}.`);
+    const expires = action === 'renew' ? new Date(options.expires ?? '') : undefined;
+    if (expires && !Number.isFinite(expires.getTime())) {
+      throw new GuardWaiverError('Invalid waiver expiry date.');
+    }
+    const expiresAt = expires?.toISOString();
+    updateGuardWaivers(root, {
+      action,
+      waiverId: value,
+      ...(expiresAt ? { expiresAt } : {}),
+      reason,
+      actor: process.env.GUARD_APPROVER,
+    });
+    if (options.json) console.log(JSON.stringify({ action, waiverId: value, expiresAt }, null, 2));
+    else success(`${action === 'renew' ? 'Renewed' : 'Removed'} waiver ${value}.`);
+  }
   process.exitCode = 0;
 }
 

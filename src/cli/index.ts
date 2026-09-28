@@ -21,6 +21,8 @@ import {
   guardRunsCommand,
   guardRulesApproveCommand,
   guardVerifyCommand,
+  guardWaiverCommand,
+  type GuardWaiverOptions,
 } from './commands/guard.js';
 import { config } from '../core/config.js';
 import {
@@ -28,8 +30,13 @@ import {
   GuardConfigError,
   GuardStateBusyError,
   GuardStateStaleError,
+  GuardWaiverError,
 } from '../core/guard.js';
 import { guardErrorPayload } from '../core/errors.js';
+
+interface GuardOutputOptions {
+  json?: boolean | undefined;
+}
 
 interface BaselineCommandOptions {
   all?: boolean | undefined;
@@ -115,6 +122,33 @@ baseline
     guardBaselineCommand('remove', ids, options),
   );
 
+const waivers = guard.command('waiver');
+waivers
+  .command('list')
+  .option('--json')
+  .action((options: GuardOutputOptions) => guardWaiverCommand('list', undefined, options));
+waivers
+  .command('add <fingerprint>')
+  .requiredOption('--owner <owner>')
+  .requiredOption('--reason <text>')
+  .requiredOption('--expires <date>')
+  .option('--issue <url>')
+  .option('--json')
+  .action((fingerprint: string, options: GuardWaiverOptions) =>
+    guardWaiverCommand('add', fingerprint, options),
+  );
+waivers
+  .command('remove <id>')
+  .requiredOption('--reason <text>')
+  .option('--json')
+  .action((id: string, options: GuardWaiverOptions) => guardWaiverCommand('remove', id, options));
+waivers
+  .command('renew <id>')
+  .requiredOption('--expires <date>')
+  .requiredOption('--reason <text>')
+  .option('--json')
+  .action((id: string, options: GuardWaiverOptions) => guardWaiverCommand('renew', id, options));
+
 program
   .command('mcp-server')
   .description('start the Guard MCP server over stdio')
@@ -129,7 +163,8 @@ try {
     error instanceof GuardConfigError ||
     error instanceof GuardBaselineReasonError ||
     error instanceof GuardStateBusyError ||
-    error instanceof GuardStateStaleError
+    error instanceof GuardStateStaleError ||
+    error instanceof GuardWaiverError
   ) {
     const isBusy = error instanceof GuardStateBusyError;
     const isStale = error instanceof GuardStateStaleError;

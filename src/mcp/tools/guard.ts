@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   buildArchitectureMemory,
@@ -16,6 +17,7 @@ import {
   loadGuardConfig,
   loadGuardAgentConfig,
   loadGuardProposals,
+  loadGuardWaivers,
   getPendingGuardProposals,
   getGuardProposalFreshness,
   loadProjectModel,
@@ -28,9 +30,11 @@ import {
   validateGuardProposalApproval,
   writeProjectState,
   scanGuard,
+  updateGuardWaivers,
   validateGuardPolicy,
   classifyGuardOutcome,
   type GuardConfig,
+  type GuardWaiver,
 } from '../../core/guard.js';
 import { guardErrorPayload } from '../../core/errors.js';
 import { analyzeProjectImpact } from '../../core/analysis/impact.js';
@@ -64,6 +68,16 @@ function jsonToolResult(value: unknown, isError = false): JsonToolResult {
     content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }],
     ...(isError ? { isError: true } : {}),
   };
+}
+
+function waiverToolError(error: unknown): JsonToolResult {
+  return jsonToolResult(
+    {
+      status: 'invalid',
+      message: error instanceof Error ? error.message : 'Waiver update failed.',
+    },
+    true,
+  );
 }
 
 function notConfiguredToolResult(): ReturnType<typeof jsonToolResult> {
@@ -755,6 +769,130 @@ export function registerGuardTools(server: McpServer): void {
         },
         errors > 0 || contractIssues.length > 0,
       );
+    },
+  );
+
+  server.registerTool(
+    'codapult_guard_waivers',
+    {
+      title: 'Guard Waivers',
+      description:
+        'List and manage time-bounded, project-approved exceptions to active Guard findings.',
+      inputSchema: {
+        root: rootSchema,
+        action: z.enum(['list', 'add', 'remove', 'renew']).default('list'),
+        fingerprint: z.string().trim().min(1).optional(),
+        id: z.string().trim().min(1).optional(),
+        owner: z.string().trim().min(1).optional(),
+        reason: z.string().trim().min(1).max(2000).optional(),
+        expires_at: z.iso.datetime({ offset: true }).optional(),
+        issue: z.url().optional(),
+        confirm: z.boolean().default(false),
+      },
+    },
+    ({
+      root: requestedRoot,
+      action,
+      fingerprint,
+      id,
+      owner,
+      reason,
+      expires_at,
+      issue,
+      confirm,
+    }) => {
+      const root = getGuardRoot(requestedRoot);
+      let waivers: GuardWaiver[];
+      try {
+        waivers = loadGuardWaivers(root);
+      } catch (error) {
+        return waiverToolError(error);
+      }
+      if (action === 'list') return jsonToolResult({ status: 'ok', waivers });
+      const loaded = loadConfigSafely(root);
+      if (loaded.error) return loaded.error;
+      if (
+        loaded.config?.approval?.mode === 'protected' &&
+        !loaded.config.approval.allowMcpApproval
+      ) {
+        return jsonToolResult(
+          {
+            status: 'approval-required',
+            message:
+              'Protected Guard policy requires waiver approval outside the MCP agent surface.',
+            action,
+          },
+          true,
+        );
+      }
+      if (
+        loaded.config?.approval?.mode === 'protected' &&
+        loaded.config.approval.requireDistinctActor &&
+        !process.env.GUARD_APPROVER?.trim()
+      ) {
+        return jsonToolResult(
+          {
+            status: 'approval-required',
+            message: 'Protected Guard policy requires GUARD_APPROVER for waiver changes.',
+            action,
+          },
+          true,
+        );
+      }
+      if (!confirm) return jsonToolResult({ status: 'needs-confirmation', action });
+      if (!reason)
+        return jsonToolResult({ status: 'invalid', message: 'reason is required.' }, true);
+      if (action === 'add') {
+        if (!fingerprint || !owner || !expires_at) {
+          return jsonToolResult(
+            { status: 'invalid', message: 'fingerprint, owner, and expires_at are required.' },
+            true,
+          );
+        }
+        const finding = scanGuard(root, loaded.config ?? { version: 1, rules: [] }, {
+          waivers: [],
+          includeArchitectureInsights: true,
+        }).findings.find((candidate) => candidate.fingerprint === fingerprint);
+        if (!finding) return jsonToolResult({ status: 'not-found', fingerprint }, true);
+        const waiver: GuardWaiver = {
+          id: `waiver-${randomUUID()}`,
+          fingerprint,
+          ruleId: finding.ruleId,
+          owner,
+          reason,
+          createdAt: new Date().toISOString(),
+          expiresAt: expires_at,
+          ...(issue ? { issue } : {}),
+          ...(process.env.GUARD_APPROVER?.trim()
+            ? { approvedBy: process.env.GUARD_APPROVER.trim() }
+            : {}),
+        };
+        try {
+          updateGuardWaivers(root, {
+            action,
+            waiverId: waiver.id,
+            waiver,
+            reason,
+            actor: process.env.GUARD_APPROVER,
+          });
+        } catch (error) {
+          return waiverToolError(error);
+        }
+        return jsonToolResult({ status: 'ok', action, waiver });
+      }
+      if (!id) return jsonToolResult({ status: 'invalid', message: 'id is required.' }, true);
+      try {
+        updateGuardWaivers(root, {
+          action,
+          waiverId: id,
+          ...(expires_at ? { expiresAt: expires_at } : {}),
+          reason,
+          actor: process.env.GUARD_APPROVER,
+        });
+      } catch (error) {
+        return waiverToolError(error);
+      }
+      return jsonToolResult({ status: 'ok', action, id });
     },
   );
 

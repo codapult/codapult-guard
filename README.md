@@ -231,11 +231,32 @@ Guard state is stored in `.codapult/guard/`:
 ├── proposals.json     evidence and approval history
 ├── baseline.json      accepted pre-existing findings
 ├── agent.json         AI-host completion-gate configuration
+├── waivers.json       time-bounded exceptions to active findings
 └── history/           project snapshots and local verification run manifests
 ```
 
 Commit policy and baseline files when the team wants shared guardrails. Treat cache artifacts as
 disposable according to the project’s policy, and never commit secrets.
+
+### Temporary waivers
+
+Baseline records legacy findings that existed when Guard was introduced. A waiver is different: it
+temporarily suppresses one active finding and must have an owner, reason, and expiry date.
+
+```bash
+codapult-guard waiver add <fingerprint> \
+  --owner platform-team \
+  --reason "Migration in progress" \
+  --expires 2026-12-28
+codapult-guard waiver list
+codapult-guard waiver renew <id> --expires 2027-01-31 --reason "Migration continues"
+codapult-guard waiver remove <id> --reason "Migration completed"
+```
+
+Guard warns when a waiver is within the configured warning window (14 days by default). Once it
+expires, the original finding is active again. Protected policy can forbid waiver changes through
+MCP so an agent can propose a waiver but cannot approve it itself. Waivers are intentionally
+fingerprint-specific; changing the violating code invalidates the waiver.
 
 ### Optional scoped budgets
 
