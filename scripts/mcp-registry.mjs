@@ -66,8 +66,8 @@ const sync = async () => {
 };
 
 const waitForNpmPackage = async () => {
-  const timeoutMs = Number(process.env.MCP_NPM_WAIT_TIMEOUT_MS ?? 300_000);
-  const intervalMs = Number(process.env.MCP_NPM_WAIT_INTERVAL_MS ?? 10_000);
+  const timeoutMs = Number(process.env.MCP_NPM_WAIT_TIMEOUT_MS ?? 600_000);
+  const intervalMs = Number(process.env.MCP_NPM_WAIT_INTERVAL_MS ?? 30_000);
   assert(Number.isFinite(timeoutMs) && timeoutMs > 0, 'MCP_NPM_WAIT_TIMEOUT_MS must be positive');
   assert(
     Number.isFinite(intervalMs) && intervalMs > 0,
@@ -76,6 +76,11 @@ const waitForNpmPackage = async () => {
   const packageUrl = `https://registry.npmjs.org/${encodeURIComponent(expected.packageName)}`;
   const deadline = Date.now() + timeoutMs;
   let lastStatus = 'not found';
+
+  // Initial wait
+  await new Promise((resolve) => {
+    setTimeout(resolve, intervalMs);
+  });
 
   while (Date.now() < deadline) {
     try {
