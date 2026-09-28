@@ -1,0 +1,20 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.codapult/guard",
+  "description": "Local-first architecture guardrails for JavaScript and TypeScript projects. Provides deterministic project context, architecture policy checks, impact analysis, and verification tools to AI coding agents over MCP.",
+  "repository": {
+    "url": "https://github.com/codapult/codapult-guard",
+    "source": "github"
+  },
+  "version": "0.5.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@codapult/guard",
+      "version": "0.5.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

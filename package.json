@@ -1,6 +1,7 @@
 {
   "name": "@codapult/guard",
   "version": "0.5.0",
+  "mcpName": "io.github.codapult/guard",
   "description": "Local-first architecture guardrails for JavaScript and TypeScript projects, with first-class support for Next.js SaaS and AI-assisted development",
   "license": "MIT",
   "packageManager": "pnpm@12.4.2+sha512.08adc6613180275c7c9edada39dcf08c9c61ad4e7eaf330a4f3461f102b0f907423454d117f98e72d47fef0616070644d7bffc973a6a57f5090a6d7c368b07c9",
@@ -53,7 +54,9 @@
     "lint:fix": "eslint --fix .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "release:check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build && npm pack --dry-run",
+    "release:check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build && npm pack --dry-run && pnpm mcp:validate",
+    "mcp:validate": "node scripts/mcp-registry.mjs validate",
+    "mcp:sync": "node scripts/mcp-registry.mjs sync",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:guard:coverage": "vitest run src/core src/adapters/project-checks.test.ts --coverage --coverage.include='src/core/**/*.ts' --coverage.include='src/adapters/project-checks.ts'",

@@ -43,8 +43,30 @@ jobs:
           PACKAGE_VERSION=$(node -p "require('./package.json').version")
           test "$RELEASE_TAG" = "v$PACKAGE_VERSION"
 
+      - name: Synchronize MCP Registry metadata
+        run: pnpm mcp:sync
+
       - name: Validate release contents
         run: pnpm release:check
 
       - name: Publish package
         run: npm publish --provenance --access public
+
+      - name: Install MCP Publisher
+        run: |
+          MCP_PUBLISHER_VERSION=v1.8.1
+          MCP_PUBLISHER_SHA256=a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
+          curl --fail --location --output mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum --check
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+          chmod +x mcp-publisher
+
+      - name: Validate MCP Registry metadata with official publisher
+        run: ./mcp-publisher validate server.json
+
+      - name: Authenticate to MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish server metadata to MCP Registry
+        run: ./mcp-publisher publish

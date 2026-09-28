@@ -308,6 +308,14 @@ task finished
 For Cursor, Claude Code, Codex, Gemini CLI, GitHub Copilot, and generic hosts, see
 [`docs/integrations/`](docs/integrations/).
 
+### MCP Registry
+
+Guard is also prepared for discovery through the official [MCP Registry](https://registry.modelcontextprotocol.io/).
+The Registry entry points to the published `@codapult/guard` npm package and its stdio MCP server;
+it does not replace npm installation or the host-specific configuration above. Registry metadata is
+validated during CI and published after npm in the release workflow. The Registry is currently in
+preview, so the canonical installation path remains npm.
+
 For workflows where the authoring agent must not approve its own policy proposals, set Guard to
 protected mode in `rules.json`:
 
