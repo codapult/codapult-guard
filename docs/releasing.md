@@ -39,9 +39,9 @@ workflow pins and verifies the Linux x64 `mcp-publisher` binary; update its vers
 deliberately when upgrading the publisher.
 
 If npm publication succeeds but Registry publication fails because npm propagation is delayed,
-rerun the failed workflow after the package becomes visible. The npm step verifies the existing
-version and continues only when its `mcpName` matches; it does not attempt to overwrite an npm
-version.
+use the workflow's **Run workflow** action with the failed release tag after the package becomes
+visible. The npm step verifies the existing version and continues only when its `mcpName` matches;
+it does not attempt to overwrite an npm version.
 
 ## Why use both GitHub Release and npm?
 
