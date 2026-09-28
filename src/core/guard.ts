@@ -41,6 +41,7 @@ import type {
   GuardSeverity,
   GuardToolMode,
   GuardWaiver,
+  GuardWaiverPolicy,
   GuardWaiverDecision,
 } from './model/types.js';
 
@@ -54,6 +55,7 @@ export type {
   GuardSeverity,
   GuardToolMode,
   GuardWaiver,
+  GuardWaiverPolicy,
   GuardWaiverDecision,
 } from './model/types.js';
 export type GuardOutcomeStatus = 'pass' | 'fail' | 'warning' | 'needs-review' | 'not-configured';
@@ -163,7 +165,7 @@ export interface GuardConfig {
   contracts?: GuardContract[] | undefined;
   budgets?: GuardBudget[] | undefined;
   approval?: GuardApprovalPolicy | undefined;
-  waiverPolicy?: { warningDays: number } | undefined;
+  waiverPolicy?: GuardWaiverPolicy | undefined;
 }
 
 export interface GuardApprovalPolicy {
@@ -781,6 +783,17 @@ export interface GuardWaiverUpdateOptions {
   reason: string;
   expiresAt?: string | undefined;
   actor?: string | undefined;
+  maxLifetimeDays?: number | undefined;
+}
+
+function assertWaiverLifetime(expiresAt: string, maxLifetimeDays: number | undefined): void {
+  if (maxLifetimeDays === undefined) return;
+  const lifetime = Date.parse(expiresAt) - Date.now();
+  if (lifetime > maxLifetimeDays * 24 * 60 * 60 * 1000) {
+    throw new GuardWaiverError(
+      `A waiver may not exceed the configured maximum lifetime of ${maxLifetimeDays} day(s).`,
+    );
+  }
 }
 
 function readGuardWaiversUnlocked(root: string): GuardWaiversFile {
@@ -824,6 +837,7 @@ export function updateGuardWaivers(root: string, options: GuardWaiverUpdateOptio
       if (Date.parse(options.waiver.expiresAt) <= Date.parse(options.waiver.createdAt)) {
         throw new GuardWaiverError('A waiver must expire after it is created.');
       }
+      assertWaiverLifetime(options.waiver.expiresAt, options.maxLifetimeDays);
       const candidate = guardWaiversFileSchema.safeParse({
         version: 1,
         waivers: [...current.waivers, options.waiver],
@@ -843,6 +857,7 @@ export function updateGuardWaivers(root: string, options: GuardWaiverUpdateOptio
         if (!options.expiresAt || Date.parse(options.expiresAt) <= Date.now()) {
           throw new GuardWaiverError('A renewed waiver must expire in the future.');
         }
+        assertWaiverLifetime(options.expiresAt, options.maxLifetimeDays);
         current.waivers[index] = { ...current.waivers[index], expiresAt: options.expiresAt };
       }
     }

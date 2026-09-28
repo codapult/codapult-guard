@@ -61,4 +61,25 @@ describe('guardFindingsToSarif', () => {
       }),
     );
   });
+
+  it('emits location-free operational notices', () => {
+    const sarif = guardFindingsToSarif(
+      [],
+      [
+        {
+          ruleId: 'guard-waiver-expiring',
+          level: 'warning',
+          message: 'Waiver expires soon.',
+        },
+      ],
+    );
+
+    expect(sarif.runs[0].results).toEqual([
+      {
+        ruleId: 'guard-waiver-expiring',
+        level: 'warning',
+        message: { text: 'Waiver expires soon.' },
+      },
+    ]);
+  });
 });

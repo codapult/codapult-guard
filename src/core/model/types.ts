@@ -24,6 +24,11 @@ export interface GuardWaiver {
   approvedBy?: string | undefined;
 }
 
+export interface GuardWaiverPolicy {
+  warningDays: number;
+  maxDays?: number | undefined;
+}
+
 export interface GuardWaiverDecision {
   at: string;
   action: 'add' | 'renew' | 'remove';

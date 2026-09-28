@@ -874,6 +874,7 @@ export function registerGuardTools(server: McpServer): void {
             waiver,
             reason,
             actor: process.env.GUARD_APPROVER,
+            maxLifetimeDays: loaded.config?.waiverPolicy?.maxDays,
           });
         } catch (error) {
           return waiverToolError(error);
@@ -888,6 +889,7 @@ export function registerGuardTools(server: McpServer): void {
           ...(expires_at ? { expiresAt: expires_at } : {}),
           reason,
           actor: process.env.GUARD_APPROVER,
+          maxLifetimeDays: loaded.config?.waiverPolicy?.maxDays,
         });
       } catch (error) {
         return waiverToolError(error);

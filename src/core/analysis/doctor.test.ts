@@ -51,4 +51,34 @@ describe('diagnoseGuard', () => {
     expect(report.status).toBe('fail');
     expect(report.items.find((item) => item.path === GUARD_CONTRACTS_FILE)?.status).toBe('invalid');
   });
+
+  it('warns when a client boundary rule is explicitly downgraded', () => {
+    const root = mkdtempSync(join(tmpdir(), 'guard-doctor-boundary-'));
+    roots.push(root);
+    mkdirSync(join(root, GUARD_DIR), { recursive: true });
+    writeFileSync(
+      join(root, GUARD_RULES_FILE),
+      JSON.stringify({
+        version: 1,
+        rules: [
+          {
+            id: 'client-no-db',
+            description: 'Client code must not import the database.',
+            severity: 'warning',
+            kind: 'client-forbidden-import',
+            patterns: ['@/lib/db'],
+          },
+        ],
+      }),
+    );
+
+    const report = diagnoseGuard(root);
+
+    expect(report.status).toBe('warning');
+    expect(report.items).toContainEqual({
+      path: GUARD_RULES_FILE,
+      status: 'warning',
+      message: "Boundary rule 'client-no-db' is warning-only and will not block changes.",
+    });
+  });
 });

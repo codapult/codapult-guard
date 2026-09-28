@@ -396,6 +396,27 @@ describe('scanGuard', () => {
     ).toThrow(GuardWaiverError);
   });
 
+  it('enforces an optional maximum lifetime for new waiver grants', () => {
+    const root = createProject({});
+    expect(() =>
+      updateGuardWaivers(root, {
+        action: 'add',
+        waiverId: 'long-lived',
+        waiver: {
+          id: 'long-lived',
+          fingerprint: 'fp',
+          ruleId: 'rule',
+          owner: 'team',
+          reason: 'Temporary migration',
+          createdAt: new Date().toISOString(),
+          expiresAt: '2098-10-01T00:00:00.000Z',
+        },
+        reason: 'Temporary migration',
+        maxLifetimeDays: 30,
+      }),
+    ).toThrow('maximum lifetime of 30 day(s)');
+  });
+
   it('creates waiver state during initialization and refuses an invalid renewal', () => {
     const root = createProject({ 'src/index.ts': 'export const value = 1;\n' });
 

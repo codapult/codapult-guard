@@ -20,7 +20,7 @@ import {
 
 export interface GuardDoctorItem {
   path: string;
-  status: 'ok' | 'missing' | 'invalid';
+  status: 'ok' | 'missing' | 'invalid' | 'warning';
   message: string;
 }
 
@@ -41,6 +41,38 @@ const requiredArtifacts = [
   GUARD_CONTRACTS_FILE,
   GUARD_PROPOSALS_FILE,
 ] as const;
+
+function downgradedBoundaryItems(root: string): GuardDoctorItem[] {
+  let guardConfig;
+  try {
+    guardConfig = loadGuardConfig(root);
+  } catch {
+    return [];
+  }
+  if (!guardConfig) return [];
+
+  const items: GuardDoctorItem[] = guardConfig.rules
+    .filter((rule) => rule.kind === 'client-forbidden-import' && rule.severity === 'warning')
+    .map((rule) => ({
+      path: GUARD_RULES_FILE,
+      status: 'warning' as const,
+      message: `Boundary rule '${rule.id}' is warning-only and will not block changes.`,
+    }));
+  items.push(
+    ...(guardConfig.contracts ?? [])
+      .filter(
+        (contract) =>
+          (contract.kind === 'import-boundary' || contract.kind === 'package-boundary') &&
+          contract.severity === 'warning',
+      )
+      .map((contract) => ({
+        path: GUARD_CONTRACTS_FILE,
+        status: 'warning' as const,
+        message: `Boundary contract '${contract.id}' is warning-only and will not block changes.`,
+      })),
+  );
+  return items;
+}
 
 function parseJson(root: string, path: string): unknown {
   try {
@@ -95,6 +127,7 @@ export function diagnoseGuard(root: string): GuardDoctorReport {
     }
     return { path, status: 'ok', message: 'Artifact is present and readable.' };
   });
+  items.push(...downgradedBoundaryItems(root));
   if (initialized && existsSync(resolve(root, GUARD_BASELINE_META_FILE))) {
     const metadata = parseJson(root, GUARD_BASELINE_META_FILE);
     items.push({
@@ -111,11 +144,12 @@ export function diagnoseGuard(root: string): GuardDoctorReport {
   }
   const missing = items.filter((item) => item.status === 'missing');
   const invalid = items.filter((item) => item.status === 'invalid');
+  const warnings = items.filter((item) => item.status === 'warning');
   return {
     status:
       invalid.length > 0 || (initialized && missing.length > 0)
         ? 'fail'
-        : missing.length > 0
+        : missing.length > 0 || warnings.length > 0
           ? 'warning'
           : 'ok',
     initialized,
@@ -126,6 +160,11 @@ export function diagnoseGuard(root: string): GuardDoctorReport {
         }
       : missing.length > 0
         ? { recommendation: 'Run `codapult-guard analyze` or reinitialize Guard intentionally.' }
-        : {}),
+        : warnings.length > 0
+          ? {
+              recommendation:
+                'Review downgraded boundary policy before relying on Guard as a hard gate.',
+            }
+          : {}),
   };
 }

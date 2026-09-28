@@ -87,7 +87,16 @@ export const guardConfigSchema = z.object({
       requireDistinctActor: z.boolean(),
     })
     .optional(),
-  waiverPolicy: z.object({ warningDays: z.number().int().min(0).max(3650) }).optional(),
+  waiverPolicy: z
+    .object({
+      warningDays: z.number().int().min(0).max(3650),
+      maxDays: z.number().int().positive().max(3650).optional(),
+    })
+    .refine((policy) => policy.maxDays === undefined || policy.maxDays >= policy.warningDays, {
+      message: 'waiverPolicy.maxDays must be greater than or equal to warningDays',
+      path: ['maxDays'],
+    })
+    .optional(),
 });
 
 export const guardContractsFileSchema = z.object({

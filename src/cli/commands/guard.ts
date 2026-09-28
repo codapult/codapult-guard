@@ -55,7 +55,7 @@ import {
   type GuardAgentTarget,
 } from '../../adapters/agents/agent-integration.js';
 import { dim, fail, heading, info, success, warn } from '../ui.js';
-import { guardFindingsToSarif } from '../../core/output/sarif.js';
+import { guardFindingsToSarif, type GuardSarifNotice } from '../../core/output/sarif.js';
 import { analyzeProjectImpact } from '../../core/analysis/impact.js';
 import { listGuardRuns, summarizeGuardRuns } from '../../core/history/runs.js';
 
@@ -312,6 +312,7 @@ export function guardDoctorCommand(
     for (const item of report.items) {
       if (item.status === 'ok') success(`${item.path}: ok`);
       else if (item.status === 'missing') warn(`${item.path}: missing`);
+      else if (item.status === 'warning') warn(`${item.path}: ${item.message}`);
       else fail(`${item.path}: invalid`);
     }
     if (report.recommendation) dim(report.recommendation);
@@ -499,8 +500,24 @@ export function guardCheckCommand(options: GuardCheckOptions = {}): void {
     fingerprint: `contract-invalid|${issue.contractId}|${issue.field}|${issue.value}`,
   }));
   if (options.sarif) {
+    const waiverNotices: GuardSarifNotice[] = [
+      ...(report.waiverWarnings ?? []).map((waiver) => ({
+        ruleId: 'guard-waiver-expiring',
+        level: 'warning' as const,
+        message: `Waiver ${waiver.id} for ${waiver.ruleId} expires at ${waiver.expiresAt}. Owner: ${waiver.owner}.`,
+      })),
+      ...(report.expiredWaivers ?? []).map((waiver) => ({
+        ruleId: 'guard-waiver-expired',
+        level: 'warning' as const,
+        message: `Waiver ${waiver.id} for ${waiver.ruleId} expired at ${waiver.expiresAt}; the finding is active again.`,
+      })),
+    ];
     console.log(
-      JSON.stringify(guardFindingsToSarif([...report.findings, ...contractFindings]), null, 2),
+      JSON.stringify(
+        guardFindingsToSarif([...report.findings, ...contractFindings], waiverNotices),
+        null,
+        2,
+      ),
     );
     process.exitCode = errors > 0 || contractIssues.length > 0 ? 1 : 0;
     return;
@@ -719,6 +736,7 @@ export function guardWaiverCommand(
       waiver,
       reason,
       actor: process.env.GUARD_APPROVER,
+      maxLifetimeDays: config.waiverPolicy?.maxDays,
     });
     if (options.json) console.log(JSON.stringify({ action, waiver }, null, 2));
     else success(`Added waiver ${waiver.id}; expires ${waiver.expiresAt}.`);
@@ -735,6 +753,7 @@ export function guardWaiverCommand(
       ...(expiresAt ? { expiresAt } : {}),
       reason,
       actor: process.env.GUARD_APPROVER,
+      maxLifetimeDays: config.waiverPolicy?.maxDays,
     });
     if (options.json) console.log(JSON.stringify({ action, waiverId: value, expiresAt }, null, 2));
     else success(`${action === 'renew' ? 'Renewed' : 'Removed'} waiver ${value}.`);
