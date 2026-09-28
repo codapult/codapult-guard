@@ -30,6 +30,10 @@ const validate = () => {
     typeof expected.name === 'string' && expected.name.length > 0,
     'package.json must define mcpName',
   );
+  assert(
+    typeof serverJson.description === 'string' && serverJson.description.length <= 100,
+    'server.json description must be at most 100 characters',
+  );
   assert(serverJson.name === expected.name, 'server.json name must match package.json mcpName');
   assert(
     serverJson.repository?.url === packageJson.repository.url.replace(/\.git$/, ''),
