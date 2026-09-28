@@ -3,6 +3,32 @@ import { z } from 'zod';
 const severity = z.enum(['error', 'warning', 'info']);
 const status = z.enum(['active', 'proposed']);
 
+export const guardWaiverSchema = z.object({
+  id: z.string().trim().min(1),
+  fingerprint: z.string().trim().min(1),
+  ruleId: z.string().trim().min(1),
+  owner: z.string().trim().min(1),
+  reason: z.string().trim().min(1),
+  createdAt: z.iso.datetime({ offset: true }),
+  expiresAt: z.iso.datetime({ offset: true }),
+  issue: z.url().optional(),
+  approvedBy: z.string().trim().min(1).optional(),
+});
+
+export const guardWaiverDecisionSchema = z.object({
+  at: z.iso.datetime({ offset: true }),
+  action: z.enum(['add', 'renew', 'remove']),
+  waiverId: z.string().trim().min(1),
+  reason: z.string().trim().min(1),
+  actor: z.string().trim().min(1).optional(),
+});
+
+export const guardWaiversFileSchema = z.object({
+  version: z.literal(1),
+  waivers: z.array(guardWaiverSchema),
+  decisions: z.array(guardWaiverDecisionSchema),
+});
+
 export const guardBudgetSchema = z.object({
   id: z.string().trim().min(1),
   description: z.string().trim().min(1),
@@ -61,6 +87,7 @@ export const guardConfigSchema = z.object({
       requireDistinctActor: z.boolean(),
     })
     .optional(),
+  waiverPolicy: z.object({ warningDays: z.number().int().min(0).max(3650) }).optional(),
 });
 
 export const guardContractsFileSchema = z.object({

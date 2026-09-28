@@ -181,9 +181,9 @@ export function runGuardVerification(
       (result) => result.status === 'not-configured',
     );
   const architectureFailed = architecture.findings.some((finding) => finding.severity === 'error');
-  const architectureWarnings = architecture.findings.some(
-    (finding) => finding.severity === 'warning',
-  );
+  const architectureWarnings =
+    architecture.findings.some((finding) => finding.severity === 'warning') ||
+    (architecture.waiverWarnings ?? []).length > 0;
   const failed =
     (projectChecks && !runtime.compatible) ||
     commandFailed ||

@@ -29,6 +29,7 @@ import {
   guardConfigSchema,
   guardContractsFileSchema,
   guardProposalSchema,
+  guardWaiversFileSchema,
 } from './policy/schemas.js';
 import type {
   GuardAdapterName,
@@ -39,6 +40,8 @@ import type {
   GuardRuleStatus,
   GuardSeverity,
   GuardToolMode,
+  GuardWaiver,
+  GuardWaiverDecision,
 } from './model/types.js';
 
 export type {
@@ -50,6 +53,8 @@ export type {
   GuardRuleStatus,
   GuardSeverity,
   GuardToolMode,
+  GuardWaiver,
+  GuardWaiverDecision,
 } from './model/types.js';
 export type GuardOutcomeStatus = 'pass' | 'fail' | 'warning' | 'needs-review' | 'not-configured';
 
@@ -158,6 +163,7 @@ export interface GuardConfig {
   contracts?: GuardContract[] | undefined;
   budgets?: GuardBudget[] | undefined;
   approval?: GuardApprovalPolicy | undefined;
+  waiverPolicy?: { warningDays: number } | undefined;
 }
 
 export interface GuardApprovalPolicy {
@@ -243,6 +249,9 @@ export interface GuardReport {
   findings: GuardFinding[];
   suppressed: number;
   scannedFiles: number;
+  waived: number;
+  waiverWarnings: GuardWaiver[];
+  expiredWaivers: GuardWaiver[];
 }
 
 interface ScanGuardOptions {
@@ -250,6 +259,8 @@ interface ScanGuardOptions {
   changedFiles?: Set<string> | undefined;
   baseline?: Set<string> | undefined;
   includeArchitectureInsights?: boolean | undefined;
+  waivers?: GuardWaiver[] | undefined;
+  now?: string | undefined;
 }
 
 export interface GuardReviewPacket {
@@ -266,6 +277,9 @@ export interface GuardReviewPacket {
   contracts: GuardContract[];
   requirement?: string | undefined;
   deterministicFindings: GuardFinding[];
+  waived: number;
+  waiverWarnings: GuardWaiver[];
+  expiredWaivers: GuardWaiver[];
   impact: GuardImpactAnalysis;
   reviewInstructions: string[];
 }
@@ -274,6 +288,7 @@ export const GUARD_DIR = `.${config.appName}/guard`;
 export const GUARD_RULES_FILE = `${GUARD_DIR}/rules.json`;
 export const GUARD_BASELINE_FILE = `${GUARD_DIR}/baseline.json`;
 export const GUARD_BASELINE_META_FILE = `${GUARD_DIR}/baseline-meta.json`;
+export const GUARD_WAIVERS_FILE = `${GUARD_DIR}/waivers.json`;
 export const GUARD_PROJECT_FILE = `${GUARD_DIR}/project.json`;
 export const GUARD_HISTORY_DIR = `${GUARD_DIR}/history`;
 export const GUARD_ARCHITECTURE_FILE = `${GUARD_DIR}/architecture.json`;
@@ -296,6 +311,7 @@ export const defaultGuardConfig: GuardConfig = {
     allowMcpApproval: true,
     requireDistinctActor: false,
   },
+  waiverPolicy: { warningDays: 14 },
 };
 
 export const defaultGuardAgentConfig: GuardAgentConfig = {
@@ -342,6 +358,13 @@ export class GuardBaselineReasonError extends Error {
   constructor() {
     super('A reason is required when changing the Guard baseline.');
     this.name = 'GuardBaselineReasonError';
+  }
+}
+
+export class GuardWaiverError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GuardWaiverError';
   }
 }
 
@@ -729,6 +752,118 @@ export function loadBaseline(root: string): Set<string> {
   const value = readJson(path);
   if (!Array.isArray(value)) throw new GuardConfigError(GUARD_BASELINE_FILE);
   return new Set(value.filter((item): item is string => typeof item === 'string'));
+}
+
+interface GuardWaiversFile {
+  version: 1;
+  waivers: GuardWaiver[];
+  decisions: GuardWaiverDecision[];
+}
+
+function validateGuardWaiversFile(value: GuardWaiversFile): void {
+  const ids = new Set<string>();
+  const fingerprints = new Set<string>();
+  for (const waiver of value.waivers) {
+    if (ids.has(waiver.id)) throw new GuardConfigError(GUARD_WAIVERS_FILE);
+    if (fingerprints.has(waiver.fingerprint)) throw new GuardConfigError(GUARD_WAIVERS_FILE);
+    if (Date.parse(waiver.expiresAt) <= Date.parse(waiver.createdAt)) {
+      throw new GuardConfigError(GUARD_WAIVERS_FILE);
+    }
+    ids.add(waiver.id);
+    fingerprints.add(waiver.fingerprint);
+  }
+}
+
+export interface GuardWaiverUpdateOptions {
+  action: 'add' | 'renew' | 'remove';
+  waiver?: GuardWaiver | undefined;
+  waiverId: string;
+  reason: string;
+  expiresAt?: string | undefined;
+  actor?: string | undefined;
+}
+
+function readGuardWaiversUnlocked(root: string): GuardWaiversFile {
+  const path = resolve(root, GUARD_WAIVERS_FILE);
+  if (!existsSync(path)) return { version: 1, waivers: [], decisions: [] };
+  const parsed = guardWaiversFileSchema.safeParse(readJson(path));
+  if (!parsed.success) throw new GuardConfigError(GUARD_WAIVERS_FILE);
+  validateGuardWaiversFile(parsed.data);
+  return parsed.data;
+}
+
+export function loadGuardWaivers(root: string): GuardWaiver[] {
+  if (!existsSync(resolve(root, GUARD_DIR))) return readGuardWaiversUnlocked(root).waivers;
+  return withGuardStateLock(root, () => readGuardWaiversUnlocked(root).waivers);
+}
+
+export function writeGuardWaivers(root: string): void {
+  withGuardStateLock(root, () => {
+    const file: GuardWaiversFile = { version: 1, waivers: [], decisions: [] };
+    atomicWriteFile(resolve(root, GUARD_WAIVERS_FILE), `${JSON.stringify(file, null, 2)}\n`);
+  });
+}
+
+export function updateGuardWaivers(root: string, options: GuardWaiverUpdateOptions): GuardWaiver[] {
+  if (!options.reason.trim())
+    throw new GuardWaiverError('A reason is required for waiver changes.');
+  return withGuardStateLock(root, () => {
+    const current = readGuardWaiversUnlocked(root);
+    const index = current.waivers.findIndex((waiver) => waiver.id === options.waiverId);
+    if (options.action === 'add') {
+      if (!options.waiver) throw new GuardWaiverError('A waiver is required when adding one.');
+      if (
+        index >= 0 ||
+        current.waivers.some((waiver) => waiver.fingerprint === options.waiver?.fingerprint)
+      ) {
+        throw new GuardWaiverError('A waiver already exists for this id or fingerprint.');
+      }
+      if (Date.parse(options.waiver.expiresAt) <= Date.now()) {
+        throw new GuardWaiverError('A waiver must expire in the future.');
+      }
+      if (Date.parse(options.waiver.expiresAt) <= Date.parse(options.waiver.createdAt)) {
+        throw new GuardWaiverError('A waiver must expire after it is created.');
+      }
+      const candidate = guardWaiversFileSchema.safeParse({
+        version: 1,
+        waivers: [...current.waivers, options.waiver],
+        decisions: current.decisions,
+      });
+      if (!candidate.success) throw new GuardWaiverError('The waiver data is invalid.');
+      try {
+        validateGuardWaiversFile(candidate.data);
+      } catch {
+        throw new GuardWaiverError('The waiver data is invalid.');
+      }
+      current.waivers.push(options.waiver);
+    } else {
+      if (index < 0) throw new GuardWaiverError(`Waiver not found: ${options.waiverId}`);
+      if (options.action === 'remove') current.waivers.splice(index, 1);
+      else {
+        if (!options.expiresAt || Date.parse(options.expiresAt) <= Date.now()) {
+          throw new GuardWaiverError('A renewed waiver must expire in the future.');
+        }
+        current.waivers[index] = { ...current.waivers[index], expiresAt: options.expiresAt };
+      }
+    }
+    const decision: GuardWaiverDecision = {
+      at: new Date().toISOString(),
+      action: options.action,
+      waiverId: options.waiverId,
+      reason: options.reason.trim(),
+      ...(options.actor?.trim() ? { actor: options.actor.trim() } : {}),
+    };
+    current.decisions = [...current.decisions, decision].slice(-500);
+    const validated = guardWaiversFileSchema.safeParse(current);
+    if (!validated.success) throw new GuardWaiverError('The waiver data is invalid.');
+    try {
+      validateGuardWaiversFile(validated.data);
+    } catch {
+      throw new GuardWaiverError('The waiver data is invalid.');
+    }
+    atomicWriteFile(resolve(root, GUARD_WAIVERS_FILE), `${JSON.stringify(current, null, 2)}\n`);
+    return current.waivers;
+  });
 }
 
 export function updateBaseline(
@@ -2108,12 +2243,46 @@ export function scanGuard(
     ...(options.includeArchitectureInsights ? architectureInsightFindings(root, scope) : []),
   ];
   const baseline = options.baseline ?? new Set<string>();
-  const findings = allFindings.filter((finding) => !baseline.has(finding.fingerprint));
+  const waivers = options.waivers ?? loadGuardWaivers(root);
+  if (options.waivers) {
+    const parsedWaivers = guardWaiversFileSchema.safeParse({
+      version: 1,
+      waivers,
+      decisions: [],
+    });
+    if (!parsedWaivers.success) throw new GuardWaiverError('The waiver data is invalid.');
+    try {
+      validateGuardWaiversFile(parsedWaivers.data);
+    } catch {
+      throw new GuardWaiverError('The waiver data is invalid.');
+    }
+  }
+  const nowValue = options.now ?? new Date().toISOString();
+  const now = Date.parse(nowValue);
+  if (!Number.isFinite(now)) throw new GuardWaiverError(`Invalid Guard time: ${nowValue}`);
+  const activeWaivers = new Map(
+    waivers
+      .filter((waiver) => Date.parse(waiver.expiresAt) > now)
+      .map((waiver) => [waiver.fingerprint, waiver]),
+  );
+  const warningDays = guardConfig.waiverPolicy?.warningDays ?? 14;
+  const warningLimit = now + warningDays * 24 * 60 * 60 * 1000;
+  const currentFingerprints = new Set(allFindings.map((finding) => finding.fingerprint));
+  const relevantWaivers = waivers.filter((waiver) => currentFingerprints.has(waiver.fingerprint));
+  const waiverWarnings = relevantWaivers.filter(
+    (waiver) => Date.parse(waiver.expiresAt) > now && Date.parse(waiver.expiresAt) <= warningLimit,
+  );
+  const expiredWaivers = relevantWaivers.filter((waiver) => Date.parse(waiver.expiresAt) <= now);
+  const baselineFindings = allFindings.filter((finding) => !baseline.has(finding.fingerprint));
+  const findings = baselineFindings.filter((finding) => !activeWaivers.has(finding.fingerprint));
   return {
     configured: true,
     findings,
     suppressed: allFindings.length - findings.length,
     scannedFiles: files.length,
+    waived: baselineFindings.length - findings.length,
+    waiverWarnings,
+    expiredWaivers,
   };
 }
 
@@ -2149,6 +2318,9 @@ export function buildGuardReviewPacket(
     contracts: guardConfig.contracts ?? [],
     ...(requirement ? { requirement } : {}),
     deterministicFindings: report.findings,
+    waived: report.waived,
+    waiverWarnings: report.waiverWarnings,
+    expiredWaivers: report.expiredWaivers,
     impact,
     reviewInstructions: [
       ...(requirement
@@ -2180,6 +2352,9 @@ export function initializeGuard(
       const guardConfig = loadGuardConfig(root) ?? buildGeneratedGuardConfig(projectModel);
       ensureGeneratedStateIgnored(root, projectModel);
       writeGuardConfig(root, guardConfig);
+      if (options.force || !existsSync(resolve(root, GUARD_WAIVERS_FILE))) {
+        writeGuardWaivers(root);
+      }
       if (options.force || !existsSync(resolve(root, GUARD_AGENT_FILE))) {
         writeGuardAgentConfig(root);
       }

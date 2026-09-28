@@ -11,6 +11,7 @@ import {
   GUARD_AGENT_FILE,
   GUARD_BASELINE_META_FILE,
   GUARD_BASELINE_FILE,
+  GUARD_WAIVERS_FILE,
   GUARD_PROPOSALS_FILE,
   GUARD_CONTRACTS_FILE,
   buildGeneratedGuardConfig,
@@ -21,7 +22,9 @@ import {
   loadGuardAgentConfig,
   loadGuardArtifact,
   loadBaseline,
+  loadGuardWaivers,
   updateBaseline,
+  updateGuardWaivers,
   scanGuard,
   type GuardConfig,
   writeProjectSnapshot,
@@ -38,6 +41,7 @@ import {
   GuardAlreadyInitializedError,
   GuardStateBusyError,
   GuardBaselineReasonError,
+  GuardWaiverError,
   writeGuardAgentConfig,
   defaultGuardAgentConfig,
   loadGuardProposals,
@@ -305,6 +309,134 @@ describe('scanGuard', () => {
     expect(() => updateBaseline(root, { remove: ['fingerprint'] })).toThrow(
       GuardBaselineReasonError,
     );
+  });
+
+  it('suppresses an active finding with a fingerprint waiver and reports its expiry warning', () => {
+    const root = createProject({
+      'client.tsx': `'use client';\nimport { db } from '@/lib/db';\n`,
+    });
+    const initial = scanGuard(root, config);
+    const [finding] = initial.findings;
+    const expiresAt = '2098-10-05T00:00:00.000Z';
+
+    updateGuardWaivers(root, {
+      action: 'add',
+      waiverId: 'waiver-1',
+      waiver: {
+        id: 'waiver-1',
+        fingerprint: finding.fingerprint,
+        ruleId: finding.ruleId,
+        owner: 'platform-team',
+        reason: 'Migration in progress',
+        createdAt: '2098-09-28T00:00:00.000Z',
+        expiresAt,
+      },
+      reason: 'Migration in progress',
+    });
+
+    const report = scanGuard(
+      root,
+      { ...config, waiverPolicy: { warningDays: 14 } },
+      {
+        now: '2098-09-28T00:00:00.000Z',
+      },
+    );
+
+    expect(report.findings).toEqual([]);
+    expect(report.waived).toBe(1);
+    expect(report.waiverWarnings).toHaveLength(1);
+    expect(loadGuardWaivers(root)).toHaveLength(1);
+    expect(readFileSync(join(root, GUARD_WAIVERS_FILE), 'utf8')).toContain('Migration in progress');
+  });
+
+  it('does not suppress a finding with an expired waiver', () => {
+    const root = createProject({
+      'client.tsx': `'use client';\nimport { db } from '@/lib/db';\n`,
+    });
+    const [finding] = scanGuard(root, config).findings;
+
+    updateGuardWaivers(root, {
+      action: 'add',
+      waiverId: 'expired-waiver',
+      waiver: {
+        id: 'expired-waiver',
+        fingerprint: finding.fingerprint,
+        ruleId: finding.ruleId,
+        owner: 'platform-team',
+        reason: 'Expired migration',
+        createdAt: '2098-09-01T00:00:00.000Z',
+        expiresAt: '2098-10-01T00:00:00.000Z',
+      },
+      reason: 'Expired migration',
+    });
+
+    const report = scanGuard(root, config, { now: '2098-10-02T00:00:00.000Z' });
+    expect(report.findings).toHaveLength(1);
+    expect(report.expiredWaivers).toHaveLength(1);
+    expect(report.waived).toBe(0);
+  });
+
+  it('requires a future expiry and preserves waiver decisions', () => {
+    const root = createProject({});
+    expect(() =>
+      updateGuardWaivers(root, {
+        action: 'add',
+        waiverId: 'invalid',
+        waiver: {
+          id: 'invalid',
+          fingerprint: 'fp',
+          ruleId: 'rule',
+          owner: 'team',
+          reason: 'reason',
+          createdAt: '2098-09-28T00:00:00.000Z',
+          expiresAt: '2020-01-01T00:00:00.000Z',
+        },
+        reason: 'reason',
+      }),
+    ).toThrow(GuardWaiverError);
+  });
+
+  it('creates waiver state during initialization and refuses an invalid renewal', () => {
+    const root = createProject({ 'src/index.ts': 'export const value = 1;\n' });
+
+    initializeGuard(root);
+
+    expect(existsSync(join(root, GUARD_WAIVERS_FILE))).toBe(true);
+    expect(() =>
+      updateGuardWaivers(root, {
+        action: 'renew',
+        waiverId: 'missing',
+        expiresAt: 'not-a-date',
+        reason: 'Attempted renewal',
+      }),
+    ).toThrow(GuardWaiverError);
+  });
+
+  it('does not warn about an expired waiver after its finding is fixed', () => {
+    const root = createProject({
+      'client.tsx': `'use client';\nimport { db } from '@/lib/db';\n`,
+    });
+    const [finding] = scanGuard(root, config).findings;
+
+    updateGuardWaivers(root, {
+      action: 'add',
+      waiverId: 'fixed-waiver',
+      waiver: {
+        id: 'fixed-waiver',
+        fingerprint: finding.fingerprint,
+        ruleId: finding.ruleId,
+        owner: 'platform-team',
+        reason: 'Temporary migration',
+        createdAt: '2098-09-01T00:00:00.000Z',
+        expiresAt: '2099-10-10T00:00:00.000Z',
+      },
+      reason: 'Temporary migration',
+    });
+    writeFileSync(join(root, 'client.tsx'), `'use client';\nexport const value = 1;\n`, 'utf8');
+
+    const report = scanGuard(root, config, { now: '2100-10-20T00:00:00.000Z' });
+    expect(report.findings).toHaveLength(0);
+    expect(report.expiredWaivers).toHaveLength(0);
   });
 
   it('requires a declared distinct approver for protected proposals', () => {

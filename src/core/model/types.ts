@@ -12,6 +12,26 @@ export type GuardBudgetMetric = 'lines' | 'bytes' | 'imports';
 
 export type GuardToolMode = 'auto' | 'on' | 'off';
 
+export interface GuardWaiver {
+  id: string;
+  fingerprint: string;
+  ruleId: string;
+  owner: string;
+  reason: string;
+  createdAt: string;
+  expiresAt: string;
+  issue?: string | undefined;
+  approvedBy?: string | undefined;
+}
+
+export interface GuardWaiverDecision {
+  at: string;
+  action: 'add' | 'renew' | 'remove';
+  waiverId: string;
+  reason: string;
+  actor?: string | undefined;
+}
+
 export type GuardApprovalMode = 'local' | 'protected';
 
 export type GuardAdapterName =
