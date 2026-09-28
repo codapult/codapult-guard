@@ -34,10 +34,7 @@ const validate = () => {
     typeof serverJson.description === 'string' && serverJson.description.length <= 100,
     'server.json description must be at most 100 characters',
   );
-  assert(
-    serverJson.name === expected.name,
-    'server.json name must match package.json mcpName',
-  );
+  assert(serverJson.name === expected.name, 'server.json name must match package.json mcpName');
   assert(
     serverJson.repository?.url === packageJson.repository.url.replace(/\.git$/, ''),
     'server.json repository URL is out of sync',
@@ -51,10 +48,7 @@ const validate = () => {
     packageEntry.version === expected.version,
     `server.json npm version must be ${expected.version}`,
   );
-  assert(
-    packageEntry.transport?.type === 'stdio',
-    'Guard must be registered with stdio transport',
-  );
+  assert(packageEntry.transport?.type === 'stdio', 'Guard must be registered with stdio transport');
   assert(
     expected.name.startsWith('io.github.codapult/'),
     'GitHub-authenticated MCP names must use the codapult namespace',
@@ -74,6 +68,11 @@ const sync = async () => {
 const waitForNpmPackage = async () => {
   const timeoutMs = Number(process.env.MCP_NPM_WAIT_TIMEOUT_MS ?? 300_000);
   const intervalMs = Number(process.env.MCP_NPM_WAIT_INTERVAL_MS ?? 10_000);
+  assert(Number.isFinite(timeoutMs) && timeoutMs > 0, 'MCP_NPM_WAIT_TIMEOUT_MS must be positive');
+  assert(
+    Number.isFinite(intervalMs) && intervalMs > 0,
+    'MCP_NPM_WAIT_INTERVAL_MS must be positive',
+  );
   const packageUrl = `https://registry.npmjs.org/${encodeURIComponent(expected.packageName)}`;
   const deadline = Date.now() + timeoutMs;
   let lastStatus = 'not found';
@@ -92,7 +91,12 @@ const waitForNpmPackage = async () => {
           );
           return;
         }
-        lastStatus = published === undefined ? 'version not found' : 'mcpName mismatch';
+        if (published !== undefined) {
+          throw new Error(
+            `npm package ${expected.packageName}@${expected.version} has mcpName ${String(published.mcpName)}, expected ${expected.name}.`,
+          );
+        }
+        lastStatus = 'version not found';
       } else {
         lastStatus = `HTTP ${response.status}`;
       }
@@ -105,9 +109,9 @@ const waitForNpmPackage = async () => {
     console.log(
       `Waiting for npm propagation (${lastStatus}); retrying in ${Math.min(intervalMs, remainingMs)}ms.`,
     );
-    await new Promise((resolve) =>
-      setTimeout(resolve, Math.min(intervalMs, remainingMs)),
-    );
+    await new Promise((resolve) => {
+      setTimeout(resolve, Math.min(intervalMs, remainingMs));
+    });
   }
 
   throw new Error(
@@ -123,9 +127,7 @@ if (command === 'sync') {
   console.log(`MCP Registry metadata synchronized to ${expected.version}.`);
 } else if (command === 'validate') {
   validate();
-  console.log(
-    `MCP Registry metadata is valid for ${expected.packageName}@${expected.version}.`,
-  );
+  console.log(`MCP Registry metadata is valid for ${expected.packageName}@${expected.version}.`);
 } else if (command === 'wait') {
   validate();
   await waitForNpmPackage();
