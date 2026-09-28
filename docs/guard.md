@@ -334,6 +334,27 @@ visible in reports. Expired waivers no longer suppress findings. `check`, `audit
 reports, review packets, the `codapult_guard_waivers` MCP tool, and the `codapult://guard/waivers` resource
 expose waiver state. Protected policy can require approval outside MCP.
 
+Projects may cap the duration of each newly added or renewed waiver without imposing a global
+expiry policy:
+
+```json
+{
+  "waiverPolicy": {
+    "warningDays": 14,
+    "maxDays": 90
+  }
+}
+```
+
+`maxDays` limits the requested lifetime from the time of the add or renew operation. It is an
+optional governance control; omit it when the project wants explicit, owner-reviewed expiry dates
+without a fixed maximum. Boundary violations reported by Guard remain blocking when their finding
+severity is `error`; warnings and expiry reminders are advisory.
+
+`codapult-guard doctor` also reports explicitly downgraded client, import, or package boundaries as
+warnings. It does not change their configured severity; the project owner decides whether the
+boundary should become blocking.
+
 ### Scoped budgets
 
 Budgets are optional policy for a specific risk boundary, not a global file-size rule. They support

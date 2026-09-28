@@ -31,9 +31,8 @@ that marker to verify npm package ownership. The `mcp:validate` script checks th
 package identifier, transport, and versions locally. `release-it` runs `mcp:sync` after bumping the
 package version so the release commit contains matching metadata.
 
-The Registry currently hosts server metadata, not npm artifacts, and is in preview. Therefore the
-Registry publication is deliberately a post-npm release step and is not part of ordinary local
-development. The release job uses GitHub OIDC; configure the workflow's `id-token: write`
+The Registry hosts server metadata, not npm artifacts. Therefore Registry publication is deliberately
+a post-npm release step and is not part of ordinary local development. The release job uses GitHub OIDC; configure the workflow's `id-token: write`
 permission and protect the release environment before enabling production publication. The release
 workflow pins and verifies the Linux x64 `mcp-publisher` binary; update its version and checksum
 deliberately when upgrading the publisher.

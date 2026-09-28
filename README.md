@@ -258,6 +258,19 @@ expires, the original finding is active again. Protected policy can forbid waive
 MCP so an agent can propose a waiver but cannot approve it itself. Waivers are intentionally
 fingerprint-specific; changing the violating code invalidates the waiver.
 
+Teams can optionally cap each new waiver or renewal with `waiverPolicy.maxDays` in `rules.json`:
+
+```json
+"waiverPolicy": { "warningDays": 14, "maxDays": 90 }
+```
+
+The cap applies to the requested grant from the current operation; it does not silently delete or
+rewrite existing waivers. Boundary findings with severity `error` fail `check`; warning findings
+and waiver-expiry reminders remain advisory.
+
+Run `codapult-guard doctor` to detect an explicitly downgraded client or package boundary. Doctor
+reports it as a warning and leaves the project policy unchanged.
+
 ### Optional scoped budgets
 
 Budgets are policy, not a universal style rule. Add them only for a named risk boundary such as a
@@ -331,11 +344,11 @@ For Cursor, Claude Code, Codex, Gemini CLI, GitHub Copilot, and generic hosts, s
 
 ### MCP Registry
 
-Guard is also prepared for discovery through the official [MCP Registry](https://registry.modelcontextprotocol.io/).
-The Registry entry points to the published `@codapult/guard` npm package and its stdio MCP server;
-it does not replace npm installation or the host-specific configuration above. Registry metadata is
-validated during CI and published after npm in the release workflow. The Registry is currently in
-preview, so the canonical installation path remains npm.
+Guard is published in the official [MCP Registry](https://registry.modelcontextprotocol.io/?q=io.github.codapult%2Fguard)
+under the server name `io.github.codapult/guard`. The Registry is the discovery layer for the
+published `@codapult/guard` npm package and its stdio MCP server; it does not replace npm
+installation or the host-specific configuration above. For deterministic setup, install the npm
+package directly and use the MCP configuration shown below.
 
 For workflows where the authoring agent must not approve its own policy proposals, set Guard to
 protected mode in `rules.json`:
