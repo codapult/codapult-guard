@@ -1,4 +1,13 @@
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -22,13 +31,28 @@ function run(project, args) {
 }
 
 function runAllowFailure(project, args) {
-  const result = spawnSync(process.execPath, [cli, ...args], {
-    cwd: project,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: 120_000,
-  });
-  return { code: result.status ?? 1, output: result.stdout ?? '' };
+  const outputDir = mkdtempSync(join(tmpdir(), 'guard-regression-output-'));
+  const stdoutPath = join(outputDir, 'stdout');
+  const stderrPath = join(outputDir, 'stderr');
+  const stdout = openSync(stdoutPath, 'w');
+  const stderr = openSync(stderrPath, 'w');
+  try {
+    const result = spawnSync(process.execPath, [cli, ...args], {
+      cwd: project,
+      stdio: ['ignore', stdout, stderr],
+      timeout: 120_000,
+    });
+    closeSync(stdout);
+    closeSync(stderr);
+    return {
+      code: result.status ?? 1,
+      signal: result.signal,
+      output: readFileSync(stdoutPath, 'utf8'),
+      error: readFileSync(stderrPath, 'utf8'),
+    };
+  } finally {
+    rmSync(outputDir, { recursive: true, force: true });
+  }
 }
 
 const failures = [];
@@ -63,9 +87,12 @@ for (const name of projects) {
     try {
       result = JSON.parse(output);
     } catch (error) {
-      throw new Error(`invalid Guard JSON output: ${JSON.stringify(output.slice(0, 500))}`, {
-        cause: error,
-      });
+      throw new Error(
+        `invalid Guard JSON output (exit ${check.code}, signal ${check.signal ?? 'none'}): ${JSON.stringify(output.slice(0, 500))}${check.error ? ` stderr: ${JSON.stringify(check.error.slice(0, 500))}` : ''}`,
+        {
+          cause: error,
+        },
+      );
     }
     if (
       check.code === 0 ||

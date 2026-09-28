@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 const cli = resolve(process.env.GUARD_CLI ?? 'dist/cli/index.js');
@@ -12,20 +13,35 @@ const projects = requested?.length
   : ['next-learn', 'vite-react-ts-starter', 'hono-node-server', 'changesets', 'express'];
 
 function run(project, args) {
+  const outputDir = mkdtempSync(join(tmpdir(), 'guard-smoke-output-'));
+  const stdoutPath = join(outputDir, 'stdout');
+  const stderrPath = join(outputDir, 'stderr');
+  const stdout = openSync(stdoutPath, 'w');
+  const stderr = openSync(stderrPath, 'w');
   try {
-    const output = execFileSync(process.execPath, [cli, ...args], {
+    const result = spawnSync(process.execPath, [cli, ...args], {
       cwd: project,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', stdout, stderr],
       timeout: 120_000,
     });
+    closeSync(stdout);
+    closeSync(stderr);
+    const output = readFileSync(stdoutPath, 'utf8');
+    const errorOutput = readFileSync(stderrPath, 'utf8');
+    if (result.status !== 0) {
+      throw new Error(
+        `exit ${result.status ?? 'unknown'}${result.signal ? ` (${result.signal})` : ''}: ${errorOutput.slice(0, 1000)}`,
+      );
+    }
     if (!output.trim()) {
-      throw new Error('The host denied spawning the CLI child process or it returned no output.');
+      throw new Error('The CLI returned no output.');
     }
     return output;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`${args.join(' ')} failed in ${project}: ${message}`, { cause: error });
+  } finally {
+    rmSync(outputDir, { recursive: true, force: true });
   }
 }
 
