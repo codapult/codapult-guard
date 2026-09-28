@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.1](https://github.com/codapult/codapult-guard/compare/v0.6.0...v0.6.1) (2026-09-28)
+
+### Bug Fixes
+
+* shorten MCP Registry description ([5a7569f](https://github.com/codapult/codapult-guard/commit/5a7569f35d250bdefdbb1bd8d28f20cd557f0c84))
+
 ## [0.6.0](https://github.com/codapult/codapult-guard/compare/v0.5.0...v0.6.0) (2026-09-28)
 
 ### Features
