@@ -11,7 +11,8 @@ The GitHub Release is not a second package distribution channel.
 2. The `release.yml` workflow checks out the tag, verifies that the tag and package version match,
    runs the complete release check, validates `server.json`, and publishes the exact package to npm
    with provenance.
-3. After npm publication succeeds, the workflow authenticates with GitHub OIDC and publishes the
+3. The workflow waits until the exact npm version is visible and contains the expected `mcpName`.
+4. After npm publication succeeds, the workflow authenticates with GitHub OIDC and publishes the
    matching MCP server metadata to the official Registry.
 
 If a release is prepared manually, update `CHANGELOG.md` and `package.json`, run
@@ -36,6 +37,11 @@ development. The release job uses GitHub OIDC; configure the workflow's `id-toke
 permission and protect the release environment before enabling production publication. The release
 workflow pins and verifies the Linux x64 `mcp-publisher` binary; update its version and checksum
 deliberately when upgrading the publisher.
+
+If npm publication succeeds but Registry publication fails because npm propagation is delayed,
+rerun the failed workflow after the package becomes visible. The npm step verifies the existing
+version and continues only when its `mcpName` matches; it does not attempt to overwrite an npm
+version.
 
 ## Why use both GitHub Release and npm?
 

@@ -57,6 +57,7 @@
     "release:check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build && npm pack --dry-run && pnpm mcp:validate",
     "mcp:validate": "node scripts/mcp-registry.mjs validate",
     "mcp:sync": "node scripts/mcp-registry.mjs sync",
+    "mcp:wait": "node scripts/mcp-registry.mjs wait",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:guard:coverage": "vitest run src/core src/adapters/project-checks.test.ts --coverage --coverage.include='src/core/**/*.ts' --coverage.include='src/adapters/project-checks.ts'",

@@ -34,7 +34,10 @@ const validate = () => {
     typeof serverJson.description === 'string' && serverJson.description.length <= 100,
     'server.json description must be at most 100 characters',
   );
-  assert(serverJson.name === expected.name, 'server.json name must match package.json mcpName');
+  assert(
+    serverJson.name === expected.name,
+    'server.json name must match package.json mcpName',
+  );
   assert(
     serverJson.repository?.url === packageJson.repository.url.replace(/\.git$/, ''),
     'server.json repository URL is out of sync',
@@ -48,7 +51,10 @@ const validate = () => {
     packageEntry.version === expected.version,
     `server.json npm version must be ${expected.version}`,
   );
-  assert(packageEntry.transport?.type === 'stdio', 'Guard must be registered with stdio transport');
+  assert(
+    packageEntry.transport?.type === 'stdio',
+    'Guard must be registered with stdio transport',
+  );
   assert(
     expected.name.startsWith('io.github.codapult/'),
     'GitHub-authenticated MCP names must use the codapult namespace',
@@ -65,6 +71,50 @@ const sync = async () => {
   await writeFile(serverPath, `${JSON.stringify(serverJson, null, 2)}\n`);
 };
 
+const waitForNpmPackage = async () => {
+  const timeoutMs = Number(process.env.MCP_NPM_WAIT_TIMEOUT_MS ?? 300_000);
+  const intervalMs = Number(process.env.MCP_NPM_WAIT_INTERVAL_MS ?? 10_000);
+  const packageUrl = `https://registry.npmjs.org/${encodeURIComponent(expected.packageName)}`;
+  const deadline = Date.now() + timeoutMs;
+  let lastStatus = 'not found';
+
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(packageUrl, {
+        headers: { accept: 'application/json' },
+      });
+      if (response.ok) {
+        const metadata = await response.json();
+        const published = metadata.versions?.[expected.version];
+        if (published?.mcpName === expected.name) {
+          console.log(
+            `npm package ${expected.packageName}@${expected.version} is available with mcpName.`,
+          );
+          return;
+        }
+        lastStatus = published === undefined ? 'version not found' : 'mcpName mismatch';
+      } else {
+        lastStatus = `HTTP ${response.status}`;
+      }
+    } catch (error) {
+      lastStatus = error instanceof Error ? error.message : String(error);
+    }
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    console.log(
+      `Waiting for npm propagation (${lastStatus}); retrying in ${Math.min(intervalMs, remainingMs)}ms.`,
+    );
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(intervalMs, remainingMs)),
+    );
+  }
+
+  throw new Error(
+    `Timed out waiting for ${expected.packageName}@${expected.version} on npm (${lastStatus}).`,
+  );
+};
+
 const command = process.argv[2] ?? 'validate';
 
 if (command === 'sync') {
@@ -73,7 +123,12 @@ if (command === 'sync') {
   console.log(`MCP Registry metadata synchronized to ${expected.version}.`);
 } else if (command === 'validate') {
   validate();
-  console.log(`MCP Registry metadata is valid for ${expected.packageName}@${expected.version}.`);
+  console.log(
+    `MCP Registry metadata is valid for ${expected.packageName}@${expected.version}.`,
+  );
+} else if (command === 'wait') {
+  validate();
+  await waitForNpmPackage();
 } else {
   throw new Error(`Unknown command: ${command}`);
 }
