@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2](https://github.com/codapult/codapult-guard/compare/v0.6.1...v0.6.2) (2026-09-28)
+
+### Bug Fixes
+
+* use project formatting and bound npm wait ([73224c1](https://github.com/codapult/codapult-guard/commit/73224c15314b1229cae0d6525372a0cf5a85063b))
+* wait for npm propagation before registry publish ([9a21bb2](https://github.com/codapult/codapult-guard/commit/9a21bb2bf15f698a07bf74b527fc9ab11fa7a68c))
+
 ## [0.6.1](https://github.com/codapult/codapult-guard/compare/v0.6.0...v0.6.1) (2026-09-28)
 
 ### Bug Fixes
