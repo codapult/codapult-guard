@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.0](https://github.com/codapult/codapult-guard/compare/v0.5.0...v0.6.0) (2026-09-28)
+
+### Features
+
+* **ci:** publish Guard metadata to MCP Registry ([7b4ddb8](https://github.com/codapult/codapult-guard/commit/7b4ddb886a39a1b4f928320984ea963defe9ca15))
+
 ## [0.5.0](https://github.com/codapult/codapult-guard/compare/v0.4.0...v0.5.0) (2026-09-25)
 
 ### Features
