@@ -19,6 +19,7 @@ deterministic evidence.
 - [Install and initialize](#install-and-initialize)
 - [The generated state](#the-generated-state)
 - [The daily workflow](#the-daily-workflow)
+- [Policy scope and state changes](#policy-scope-and-state-changes)
 - [Command reference](#command-reference)
 - [Rules, contracts, and proposals](#rules-contracts-and-proposals)
 - [What Guard discovers](#what-guard-discovers)
@@ -229,6 +230,37 @@ Inspect Guard state and missing artifacts:
 pnpm exec codapult-guard doctor
 ```
 
+## Policy scope and state changes
+
+Guard keeps one project policy, and each policy item can be scoped to the boundary it protects:
+
+| Policy item | Scope controls                                                         |
+| ----------- | ---------------------------------------------------------------------- |
+| Rule        | `files`, import patterns, and deterministic rule kind                  |
+| Contract    | `scope`, `entrypoints`, import/package constraints, and required calls |
+| Budget      | `scope`, metric, limit, severity, and written reason                   |
+| Baseline    | Exact finding fingerprints accepted as legacy debt                     |
+| Waiver      | One active finding fingerprint, owner, reason, and expiry              |
+
+The normal verification path does not change source code or approved policy. The operations below
+have explicit state-changing behavior:
+
+| Operation                            | Reads                             | Writes                                       | Policy effect                      |
+| ------------------------------------ | --------------------------------- | -------------------------------------------- | ---------------------------------- |
+| `check`, `audit`, `review`, `impact` | Project and Guard state           | Output only                                  | None                               |
+| `verify`                             | Project and Guard state           | Local run manifest; runs configured commands | None                               |
+| `analyze`                            | Project source and Git state      | Derived facts and snapshot                   | Does not change baseline or policy |
+| `init`                               | Project source and Git state      | Initial Guard state                          | Creates the initial baseline       |
+| `propose`                            | Project source and policy         | Optional proposal file                       | Proposals are not active policy    |
+| `rules/contracts approve\|reject`    | Policy and proposal state         | Policy and decision history                  | Activates or rejects proposals     |
+| `baseline accept\|remove`            | Current findings and baseline     | Baseline and decision history                | Changes legacy-debt suppression    |
+| `waiver add\|renew\|remove`          | Current findings and waiver state | Waivers and decision history                 | Changes a temporary exception      |
+
+`check` and MCP `codapult_guard_check` scan the full current project unless changed-only mode is
+requested. `check --changed`, `verify --changed`, and MCP `changed_only: true` scope deterministic
+findings to changed files; `review` is changed-only by default and also includes impact evidence.
+`audit` intentionally ignores baseline suppression so maintenance can see the complete current debt.
+
 Guard fails closed when `rules.json` or `contracts.json` is malformed: `verify` returns a structured
 failure and CLI checks do not treat corrupted policy as an uninitialized project. Repair the file
 or review the diagnosis before using `init --force`.
@@ -266,28 +298,30 @@ pnpm exec codapult-guard history-diff <from> <to>
 All commands return a non-zero exit code when their decision is blocking. Add `--json` where the
 command supports it for automation.
 
-| Command                                          | Use                                                                                            |
-| ------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| `codapult-guard init [--no-wait]`                | Create Guard state and establish the initial baseline. Refuses an existing baseline.           |
-| `codapult-guard init --force [--no-wait]`        | Replace existing Guard state intentionally.                                                    |
-| `codapult-guard analyze [--refresh] [--no-wait]` | Refresh persisted discovery, architecture, conventions, and snapshot. Does not alter baseline. |
-| `codapult-guard propose`                         | Generate evidence-based rules/contracts for review. Does not activate them.                    |
-| `codapult-guard doctor [--fix-cache]`            | Diagnose state; optionally remove the disposable discovery cache.                              |
-| `codapult-guard history`                         | List persisted project snapshots.                                                              |
-| `codapult-guard runs`                            | List local verification runs and outcome/latency summary.                                      |
-| `codapult-guard history-diff <from> <to>`        | Compare files, modules, dependencies, capabilities, graph edges, and cycles.                   |
-| `codapult-guard impact <files...>`               | Explain direct/transitive dependencies, dependents, capabilities, and relevant contracts.      |
-| `codapult-guard policy explain <id>`             | Explain an active or proposed rule/contract, its evidence, and approval history.               |
-| `codapult-guard check [--changed]`               | Enforce active Guard rules/contracts and report new findings.                                  |
-| `codapult-guard audit`                           | Run a full current Guard scan without baseline suppression and validate policy definitions.    |
-| `codapult-guard review`                          | Produce a bounded diff + project-context packet for semantic AI review.                        |
-| `codapult-guard review --base origin/main`       | Build the review packet from a PR base ref.                                                    |
-| `codapult-guard verify`                          | Run Guard, project checks, adapters, runtime, and contract verification as configured.         |
-| `codapult-guard rules approve <ids>`             | Activate selected proposed rules.                                                              |
-| `codapult-guard rules approve --all`             | Activate every proposed rule deliberately.                                                     |
-| `codapult-guard contracts approve <ids>`         | Activate selected proposed contracts.                                                          |
-| `codapult-guard contracts reject <ids>`          | Record rejection for selected proposed contracts.                                              |
-| `codapult-guard install-agent <target>`          | Add or update a managed Guard instruction block for an AI host.                                |
+| Command                                          | Use                                                                                               |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| `codapult-guard init [--no-wait]`                | Create Guard state and establish the initial baseline. Refuses an existing baseline.              |
+| `codapult-guard init --force [--no-wait]`        | Replace existing Guard state intentionally.                                                       |
+| `codapult-guard analyze [--refresh] [--no-wait]` | Refresh persisted discovery, architecture, conventions, and snapshot. Does not alter baseline.    |
+| `codapult-guard propose`                         | Generate evidence-based rules/contracts for review. Does not activate them.                       |
+| `codapult-guard doctor [--fix-cache]`            | Diagnose state; optionally remove the disposable discovery cache.                                 |
+| `codapult-guard history`                         | List persisted project snapshots.                                                                 |
+| `codapult-guard runs`                            | List local verification runs and outcome/latency summary.                                         |
+| `codapult-guard history-diff <from> <to>`        | Compare files, modules, dependencies, capabilities, graph edges, and cycles.                      |
+| `codapult-guard impact <files...>`               | Explain direct/transitive dependencies, dependents, capabilities, and relevant contracts.         |
+| `codapult-guard policy explain <id>`             | Explain an active or proposed rule/contract, its evidence, and approval history.                  |
+| `codapult-guard check [--changed]`               | Enforce active Guard rules/contracts; `--changed` limits findings to changed and untracked files. |
+| `codapult-guard audit`                           | Run a full current Guard scan without baseline suppression and validate policy definitions.       |
+| `codapult-guard review`                          | Produce a bounded diff + project-context packet for semantic AI review.                           |
+| `codapult-guard review --base origin/main`       | Build the review packet from a PR base ref.                                                       |
+| `codapult-guard verify`                          | Run Guard, project checks, adapters, runtime, and contract verification as configured.            |
+| `codapult-guard rules approve <ids>`             | Activate selected proposed rules.                                                                 |
+| `codapult-guard rules approve --all`             | Activate every proposed rule deliberately.                                                        |
+| `codapult-guard contracts approve <ids>`         | Activate selected proposed contracts.                                                             |
+| `codapult-guard contracts reject <ids>`          | Record rejection for selected proposed contracts.                                                 |
+| `codapult-guard baseline accept\|remove <ids>`   | Add or remove baseline fingerprints; a written reason is required.                                |
+| `codapult-guard waiver add\|renew\|remove`       | Manage owner-attributed, time-bounded exceptions to exact finding fingerprints.                   |
+| `codapult-guard install-agent <target>`          | Add or update a managed Guard instruction block for an AI host.                                   |
 
 `codapult-guard review` does not call an LLM. It creates input for one. A review packet includes changed
 files, typed file changes, a bounded/redacted diff, project model, contracts, deterministic
@@ -593,6 +627,10 @@ For a client with a generic stdio configuration, use the same command and set `c
 repository root. Do not use `@codapult/cli` for standalone Guard projects: that package is the
 Codapult SaaS CLI and is a separate integration. Host-specific setup and instruction files are
 available in [`docs/integrations/`](integrations/README.md).
+
+Guard is also discoverable in the official [MCP Registry](https://registry.modelcontextprotocol.io/?q=io.github.codapult%2Fguard)
+as `io.github.codapult/guard`. Registry discovery identifies the published npm-backed server; the
+selected host still needs a local installation and stdio configuration with the project root.
 
 After connecting, verify the server by calling `codapult_guard_context` or
 `codapult_guard_audit`. If the MCP process starts outside the repository, pass the absolute

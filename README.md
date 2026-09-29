@@ -172,6 +172,23 @@ Policy paths are validated as project-relative paths. Guard rejects traversal, a
 symlinks escaping the project root; import-boundary checks include imports, re-exports, and literal
 dynamic imports.
 
+### Policy scope and state changes
+
+Guard stores policy at the project level, while each policy item can target a narrower boundary:
+
+| Policy item | Scope controls                                                         |
+| ----------- | ---------------------------------------------------------------------- |
+| Rule        | `files`, import patterns, and rule kind                                |
+| Contract    | `scope`, `entrypoints`, import/package constraints, and required calls |
+| Budget      | `scope`, metric, limit, severity, and written reason                   |
+| Baseline    | Exact finding fingerprints already accepted as legacy debt             |
+| Waiver      | One active finding fingerprint, with owner, reason, and expiry         |
+
+Routine checks do not change source code, rules, contracts, baseline, or waivers. Commands that
+change policy are explicit: `init`, `rules/contracts approve|reject`, `baseline accept|remove`, and
+`waiver add|renew|remove`. `analyze` refreshes derived project facts, while `verify` may run the
+project's configured commands and records a local run manifest; neither changes approved policy.
+
 ## What Guard discovers
 
 The model is framework-aware without being framework-dependent:
@@ -207,7 +224,7 @@ init once → edit → check --changed → review → verify → commit / merge
 ```
 
 1. `init` builds project memory and establishes the initial baseline.
-2. `check --changed` is the fast deterministic architecture gate.
+2. `check` scans the current project; `check --changed` is the fast change-scoped architecture gate.
 3. `review` prepares a bounded and redacted diff packet for an AI host; it does not call an LLM.
 4. `verify` runs Guard policy, configured project checks, adapters, runtime diagnostics, and
    contract validation.
@@ -394,7 +411,7 @@ real project shapes.
 | `init`                     | Create project memory and the initial baseline.                                             |
 | `analyze`                  | Refresh facts without changing policy or baseline.                                          |
 | `propose`                  | Generate evidence-based rule and contract proposals.                                        |
-| `check --changed`          | Enforce active policy on changed and untracked files.                                       |
+| `check [--changed]`        | Enforce active policy; `--changed` limits findings to changed and untracked files.          |
 | `audit`                    | Scan the complete current project, including baseline findings.                             |
 | `review`                   | Create a bounded semantic-review packet for an AI host.                                     |
 | `verify`                   | Run the configured completion gate.                                                         |
@@ -404,6 +421,7 @@ real project shapes.
 | `policy explain <id>`      | Explain a policy item, its evidence, and approval history.                                  |
 | `rules` / `contracts`      | Approve or reject proposed policy.                                                          |
 | `baseline`                 | Review or intentionally accept existing findings.                                           |
+| `waiver`                   | Manage owner-attributed, time-bounded exceptions to exact findings.                         |
 
 Use `analyze --refresh` after a structural change. `doctor --fix-cache` removes only the disposable
 discovery cache; it does not change rules, contracts, baseline, or source files.
