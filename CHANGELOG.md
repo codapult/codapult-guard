@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.0](https://github.com/codapult/codapult-guard/compare/v0.6.2...v0.7.0) (2026-09-29)
+
+### Features
+
+* add time-bounded Guard waivers ([4f79593](https://github.com/codapult/codapult-guard/commit/4f79593400939b7ad33a08f71d1e171d09a12701))
+* expose waiver management through CLI and MCP ([e44f18c](https://github.com/codapult/codapult-guard/commit/e44f18cdf0a09e32d7c25f797fc5ece918defe49))
+* strengthen Guard policy diagnostics and waiver controls ([36896b0](https://github.com/codapult/codapult-guard/commit/36896b006d828f846c8af5e5a965e6614f0264a5))
+
+### Bug Fixes
+
+* increase npm wait timeout and interval for better stability ([7067708](https://github.com/codapult/codapult-guard/commit/7067708a4ee0568007d7ea2238c81110046d37f4))
+
 ## [0.6.2](https://github.com/codapult/codapult-guard/compare/v0.6.1...v0.6.2) (2026-09-28)
 
 ### Bug Fixes
