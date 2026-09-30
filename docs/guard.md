@@ -348,6 +348,14 @@ Each update preserves a decision record in `baseline-meta.json`. A written `--re
 for every manual baseline add or remove; initialization is the only operation that may create the
 initial baseline without a manual reason.
 
+### Fingerprint stability
+
+Finding fingerprints intentionally omit line numbers. Formatting, whitespace changes, and moving a
+violation to another line therefore do not recreate the same finding. A fingerprint includes the
+rule or contract identity and the affected file/import identity. Renaming or moving a module can
+therefore produce a new fingerprint; inspect that result and accept it explicitly when the move is
+intentional. Guard does not silently transfer a baseline entry between files.
+
 ### Temporary waivers
 
 Use a waiver for a known, temporary exception to an active rule or contract. Do not use it to

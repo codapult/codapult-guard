@@ -255,6 +255,11 @@ Guard state is stored in `.codapult/guard/`:
 Commit policy and baseline files when the team wants shared guardrails. Treat cache artifacts as
 disposable according to the project’s policy, and never commit secrets.
 
+Baseline fingerprints do not include line numbers, so formatting and line movement do not recreate
+the same finding. They do include the rule and affected file/import identity, so a rename or module
+move can produce a new fingerprint and should be reviewed explicitly before accepting it into the
+baseline.
+
 ### Temporary waivers
 
 Baseline records legacy findings that existed when Guard was introduced. A waiver is different: it

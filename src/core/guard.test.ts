@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -268,6 +276,26 @@ describe('scanGuard', () => {
 
     expect(report.findings).toEqual([]);
     expect(report.suppressed).toBe(1);
+  });
+
+  it('keeps fingerprints stable when formatting changes but not when a file is renamed', () => {
+    const root = createProject({
+      'client.tsx': `'use client';\nimport { db } from '@/lib/db';\n`,
+    });
+    const initial = scanGuard(root, config).findings[0];
+
+    writeFileSync(
+      join(root, 'client.tsx'),
+      `\n\n'use client';\n\nimport { db } from '@/lib/db';\n`,
+      'utf8',
+    );
+    const reformatted = scanGuard(root, config).findings[0];
+    expect(reformatted.fingerprint).toBe(initial.fingerprint);
+
+    renameSync(join(root, 'client.tsx'), join(root, 'renamed-client.tsx'));
+    const renamed = scanGuard(root, config).findings[0];
+    expect(renamed.file).toBe('renamed-client.tsx');
+    expect(renamed.fingerprint).not.toBe(initial.fingerprint);
   });
 
   it('records baseline metadata for later audit', () => {
