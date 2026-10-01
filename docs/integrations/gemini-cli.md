@@ -1,11 +1,47 @@
 # Gemini CLI integration
 
-1. Install `@codapult/guard` in the project and register the Guard MCP server using the Gemini
-   CLI MCP configuration supported by the installed version.
-2. Add the instruction from [generic.md](generic.md) to the repository instruction file used by
-   the CLI.
-3. At the end of a task, invoke Guard context, semantic review, and verification. Run the same
-   verification command in CI so the result does not depend on the local model session.
+This page targets Gemini CLI with project settings and the project `GEMINI.md` context file.
 
-The kit intentionally avoids version-specific hook syntax. Gemini CLI supplies the model and
-host lifecycle; Guard supplies project evidence, contracts, proposals, and deterministic gates.
+## 1. Install Guard
+
+Guard is published in the official MCP Registry as `io.github.codapult/guard`. Search for that identifier in a Registry-aware client and import it when the client supports Registry entries. Gemini CLI can also add the npm/stdio server directly, independently of Registry UI.
+
+Install the package:
+
+```bash
+pnpm add -D @codapult/guard
+```
+
+If this project has not been initialized yet, establish its Guard state:
+
+```bash
+pnpm exec codapult-guard init
+```
+
+Add it to the project scope:
+
+```bash
+gemini mcp add --scope project codapult-guard pnpm exec codapult-guard mcp-server
+```
+
+The project configuration is `.gemini/settings.json`. Verify the connection inside Gemini CLI with `/mcp list` or `/mcp desc`.
+
+## 2. Add the project instruction
+
+Run:
+
+```bash
+pnpm exec codapult-guard install-agent gemini
+```
+
+This creates or updates the managed block in `GEMINI.md`, which Gemini CLI loads as hierarchical project context.
+
+## 3. Completion behavior
+
+Gemini CLI's project settings provide the MCP connection and `GEMINI.md` provides the workflow
+instruction. At the end of a coding task, have the agent call `codapult_guard_next_action`, then
+`codapult_guard_context`, `codapult_guard_review`, and `codapult_guard_verify`. Keep
+`codapult-guard verify --json` in CI; the local agent session is not the final authority for
+merging changes.
+
+References: [Gemini CLI MCP](https://geminicli.com/docs/tools/mcp-server/), [Gemini CLI configuration](https://geminicli.com/docs/reference/configuration/), [GEMINI.md context](https://geminicli.com/docs/cli/gemini-md/).

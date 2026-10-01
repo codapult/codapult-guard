@@ -7,6 +7,7 @@ Recommended host flow:
 
 ```text
 task finished
+  -> codapult_guard_next_action
   -> codapult_guard_context
   -> codapult_guard_review (requirement + diff)
   -> codapult_guard_verify
@@ -41,6 +42,10 @@ codapult-guard install-agent all
 The command updates only the block between `codapult-guard:start` and `codapult-guard:end` and
 preserves unrelated instructions. Supported targets are `generic`, `codex`, `cursor`, `claude`,
 `copilot`, and `gemini`.
+
+Host-specific MCP configuration and completion hooks are documented in the
+[host integration kits](integrations/README.md). Guard does not invoke an LLM or modify source
+files itself.
 
 For CI, run the same verification independently after the agent finishes. Do not treat an agent's
 claim that it fixed a finding as a passing result; use the next Guard report as the source of truth.

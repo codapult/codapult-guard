@@ -623,9 +623,10 @@ For example, Cursor can use `.cursor/mcp.json`:
 {
   "mcpServers": {
     "codapult-guard": {
+      "type": "stdio",
       "command": "pnpm",
       "args": ["exec", "codapult-guard", "mcp-server"],
-      "cwd": "."
+      "cwd": "${workspaceFolder}"
     }
   }
 }
@@ -669,7 +670,7 @@ pnpm exec codapult-guard install-agent all
 
 Supported targets are `generic`, `codex`, `cursor`, `claude`, `copilot`, and `gemini`. The managed
 block is marker-based and updates only its own section. Host-specific MCP registration and
-post-task hook syntax remain the responsibility of that AI platform. See the [integration kits](integrations/README.md).
+completion-hook behavior are documented in the [integration kits](integrations/README.md).
 
 An agent instruction can be as short as:
 

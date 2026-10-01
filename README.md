@@ -337,9 +337,10 @@ Register that command in the MCP client from the project root. For example, Curs
 {
   "mcpServers": {
     "codapult-guard": {
+      "type": "stdio",
       "command": "pnpm",
       "args": ["exec", "codapult-guard", "mcp-server"],
-      "cwd": "."
+      "cwd": "${workspaceFolder}"
     }
   }
 }
