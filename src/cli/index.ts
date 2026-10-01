@@ -32,6 +32,7 @@ import {
   GuardStateStaleError,
   GuardWaiverError,
 } from '../core/guard.js';
+import { GuardAgentInstallError } from '../adapters/agents/agent-integration.js';
 import { guardErrorPayload } from '../core/errors.js';
 
 interface GuardOutputOptions {
@@ -164,11 +165,13 @@ try {
     error instanceof GuardBaselineReasonError ||
     error instanceof GuardStateBusyError ||
     error instanceof GuardStateStaleError ||
-    error instanceof GuardWaiverError
+    error instanceof GuardWaiverError ||
+    error instanceof GuardAgentInstallError
   ) {
     const isBusy = error instanceof GuardStateBusyError;
     const isStale = error instanceof GuardStateStaleError;
     const isInvalidInput = error instanceof GuardBaselineReasonError;
+    const isInstallError = error instanceof GuardAgentInstallError;
     console.error(
       JSON.stringify(
         guardErrorPayload(
@@ -189,7 +192,9 @@ try {
                 ? 'Re-read Guard state and retry the operation.'
                 : isInvalidInput
                   ? 'Provide a written reason for the baseline decision.'
-                  : 'Repair the invalid Guard artifact, then run codapult-guard doctor.',
+                  : isInstallError
+                    ? 'Remove the symbolic link or choose a regular project path, then retry.'
+                    : 'Repair the invalid Guard artifact, then run codapult-guard doctor.',
           },
         ),
         null,

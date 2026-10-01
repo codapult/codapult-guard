@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 export type GuardAgentTarget = 'generic' | 'codex' | 'cursor' | 'claude' | 'copilot' | 'gemini';
@@ -9,20 +9,27 @@ export interface GuardAgentInstallResult {
   action: 'created' | 'updated';
 }
 
+export class GuardAgentInstallError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GuardAgentInstallError';
+  }
+}
+
 const START_MARKER = '<!-- codapult-guard:start -->';
 const END_MARKER = '<!-- codapult-guard:end -->';
 
 const instruction = `${START_MARKER}
 ## Codapult Guard completion gate
 
-After completing a coding task, read the project Guard context, review the requirement and diff,
-then run Guard verification. Use the host's Guard MCP tools when available:
+After completing a coding task, use the host's Guard MCP tools when available:
 
-1. Call \`codapult_guard_context\`.
-2. Call \`codapult_guard_review\` with the requirement and changed diff.
-3. Call \`codapult_guard_verify\`.
-4. If an error is reported, fix it and repeat steps 2–3 up to \`completionGate.maxIterations\`.
-5. Report warnings and unresolved requirements; never hide them or activate proposals silently.
+1. Call \`codapult_guard_next_action\` and follow its bounded next step.
+2. Normally call \`codapult_guard_context\`.
+3. Call \`codapult_guard_review\` with the requirement and changed diff.
+4. Call \`codapult_guard_verify\`.
+5. If an error is reported, fix it and repeat steps 3–4 up to \`completionGate.maxIterations\`.
+6. Report warnings and unresolved requirements; never hide them or activate proposals silently.
 
 Guard does not edit source files or invoke an LLM. The host agent owns the repair loop. CI remains
 the independent final gate.
@@ -45,11 +52,31 @@ function renderContent(target: GuardAgentTarget): string {
   return `${targets[target].prefix ?? ''}${instruction}\n`;
 }
 
+function assertNoSymlinkPath(root: string, relativePath: string): void {
+  let current = resolve(root);
+  const rootStats = lstatSync(current, { throwIfNoEntry: false });
+  if (rootStats?.isSymbolicLink()) {
+    throw new GuardAgentInstallError(
+      `Refusing to update ${relativePath}: project root is a symbolic link.`,
+    );
+  }
+  for (const segment of relativePath.split('/')) {
+    current = resolve(current, segment);
+    const stats = lstatSync(current, { throwIfNoEntry: false });
+    if (stats?.isSymbolicLink()) {
+      throw new GuardAgentInstallError(
+        `Refusing to update ${relativePath}: ${current} is a symbolic link.`,
+      );
+    }
+  }
+}
+
 export function installGuardAgentInstructions(
   root: string,
   target: GuardAgentTarget,
 ): GuardAgentInstallResult {
   const relativePath = targets[target].path;
+  assertNoSymlinkPath(root, relativePath);
   const path = resolve(root, relativePath);
   const nextBlock = instruction;
   const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';

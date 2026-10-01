@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -22,6 +22,7 @@ describe('Guard agent integration', () => {
     expect(first.action).toBe('created');
     expect(second.action).toBe('updated');
     expect(content).toContain('alwaysApply: false');
+    expect(content).toContain('codapult_guard_next_action');
     expect(readFileSync(join(root, '.cursor/rules/codapult-guard.mdc'), 'utf8')).toBe(content);
   });
 
@@ -48,5 +49,15 @@ describe('Guard agent integration', () => {
     expect(existsSync(join(root, 'CLAUDE.md'))).toBe(true);
     expect(existsSync(join(root, '.github/copilot-instructions.md'))).toBe(true);
     expect(existsSync(join(root, 'GEMINI.md'))).toBe(true);
+  });
+
+  it.skipIf(process.platform === 'win32')('refuses to write through a symlinked host path', () => {
+    const root = mkdtempSync(join(tmpdir(), 'guard-agent-symlink-'));
+    const outside = mkdtempSync(join(tmpdir(), 'guard-agent-outside-'));
+    roots.push(root, outside);
+    symlinkSync(outside, join(root, '.cursor'), 'dir');
+
+    expect(() => installGuardAgentInstructions(root, 'cursor')).toThrow('is a symbolic link');
+    expect(existsSync(join(outside, 'rules/codapult-guard.mdc'))).toBe(false);
   });
 });
