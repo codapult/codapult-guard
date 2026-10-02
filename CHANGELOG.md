@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0](https://github.com/codapult/codapult-guard/compare/v0.7.0...v0.8.0) (2026-10-02)
+
+### Features
+
+* add governance provenance audit ([ec88cf7](https://github.com/codapult/codapult-guard/commit/ec88cf7a5058122f8a7f094f91025f7c71eba372))
+* expose protected policy verification ([8b512ff](https://github.com/codapult/codapult-guard/commit/8b512ff4240f88e7d4f4933ad4c7894d5f38d019))
+* verify against protected policy revisions ([6891f49](https://github.com/codapult/codapult-guard/commit/6891f49f87b7faf752ef0998e174ab733ff7ad2e))
+
+### Bug Fixes
+
+* secure agent instruction installation ([219bcf8](https://github.com/codapult/codapult-guard/commit/219bcf869bd6e14f8fa2eeacd3d62b18d4ecead8))
+
 ## [0.7.0](https://github.com/codapult/codapult-guard/compare/v0.6.2...v0.7.0) (2026-09-29)
 
 ### Features

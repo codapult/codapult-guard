@@ -1,6 +1,6 @@
 {
   "name": "@codapult/guard",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "mcpName": "io.github.codapult/guard",
   "description": "Local-first architecture guardrails for JavaScript and TypeScript projects, with first-class support for Next.js SaaS and AI-assisted development",
   "license": "MIT",
