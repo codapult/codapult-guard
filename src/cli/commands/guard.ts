@@ -58,6 +58,7 @@ import { dim, fail, heading, info, success, warn } from '../ui.js';
 import { guardFindingsToSarif, type GuardSarifNotice } from '../../core/output/sarif.js';
 import { analyzeProjectImpact } from '../../core/analysis/impact.js';
 import { listGuardRuns, summarizeGuardRuns } from '../../core/history/runs.js';
+import { auditGuardGovernance, type GuardGovernanceAudit } from '../../core/audit/governance.js';
 
 interface GuardOutputOptions {
   json?: boolean | undefined;
@@ -91,6 +92,10 @@ interface GuardVerifyOptions extends GuardOutputOptions {
   projectChecks?: boolean | undefined;
   policyBase?: string | undefined;
   failOnPolicyChange?: boolean | undefined;
+}
+
+interface GuardGovernanceOptions extends GuardOutputOptions {
+  strict?: boolean | undefined;
 }
 
 interface GuardCheckOptions extends GuardOutputOptions {
@@ -351,6 +356,33 @@ export function guardRunsCommand(options: GuardOutputOptions = {}): void {
   for (const run of result.runs) {
     info(`${run.runId}: ${run.outcome}, gate=${run.gate}, ${run.durationMs} ms`);
   }
+}
+
+export function guardGovernanceCommand(options: GuardGovernanceOptions = {}): void {
+  const root = getRoot();
+  let result: GuardGovernanceAudit;
+  try {
+    result = auditGuardGovernance(root);
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+    return;
+  }
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    heading('Codapult Guard Governance');
+    info(
+      `Approvals: ${result.approvals.approved} approved, ${result.approvals.actors.length} declared actor(s), ${result.approvals.missingActors} missing actor(s).`,
+    );
+    info(`Declared actor/proposal-author overlap: ${result.approvals.actorAuthorOverlap.length}.`);
+    info(
+      `Policy-linked approvals: ${result.reachability.approvedLinkedToRun}/${result.reachability.approvedWithPolicyFingerprint} linked to a retained verification run.`,
+    );
+    for (const warning of result.warnings) warn(warning);
+    if (result.warnings.length === 0) success('No governance completeness warnings.');
+  }
+  process.exitCode = options.strict && result.warnings.length > 0 ? 1 : 0;
 }
 
 export function guardImpactCommand(files: string[], options: GuardOutputOptions = {}): void {

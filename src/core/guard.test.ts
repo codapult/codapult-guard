@@ -55,6 +55,7 @@ import {
   loadGuardProposals,
   recordGuardProposalDecision,
   writeGuardProposals,
+  applyGuardProposalDecision,
   withGuardStateLock,
   fingerprintProjectModel,
   fingerprintGuardConfig,
@@ -852,6 +853,63 @@ describe('guard contracts', () => {
         revision: 2,
       },
     ]);
+  });
+
+  it('binds applied decisions to the resulting policy and retains the proposal author', () => {
+    const root = createProject({});
+    writeGuardConfig(root, { version: 1, rules: [] });
+    const current = loadGuardConfig(root);
+    if (!current) throw new Error('Expected Guard config to be available.');
+    writeGuardProposals(root, {
+      version: 1,
+      generatedAt: 'now',
+      generatedBy: 'agent-a',
+      proposalId: 'proposal-id',
+      contentFingerprint: 'content-hash',
+      revision: 1,
+      rules: [],
+      contracts: [],
+      questions: [],
+    });
+
+    applyGuardProposalDecision(
+      root,
+      current,
+      [{ id: 'new-rule', type: 'rule', decision: 'approved' }],
+      { source: 'cli' },
+    );
+
+    const decision = loadGuardProposals(root)?.decisions?.[0];
+    expect(decision).toMatchObject({
+      proposalAuthor: 'agent-a',
+      policyRevision: 2,
+    });
+    expect(typeof decision?.decisionId).toBe('string');
+    expect(typeof decision?.policyFingerprint).toBe('string');
+  });
+
+  it('does not bind rejected decisions to a resulting policy', () => {
+    const root = createProject({});
+    writeGuardConfig(root, { version: 1, rules: [] });
+    const current = loadGuardConfig(root);
+    if (!current) throw new Error('Expected Guard config to be available.');
+    writeGuardProposals(root, {
+      version: 1,
+      generatedAt: 'now',
+      proposalId: 'proposal-id',
+      rules: [],
+      contracts: [],
+      questions: [],
+    });
+
+    applyGuardProposalDecision(
+      root,
+      current,
+      [{ id: 'rejected-rule', type: 'rule', decision: 'rejected' }],
+      { source: 'cli' },
+    );
+
+    expect(loadGuardProposals(root)?.decisions?.[0]).not.toHaveProperty('policyFingerprint');
   });
 
   it('recovers an interrupted policy transaction before reading state', () => {

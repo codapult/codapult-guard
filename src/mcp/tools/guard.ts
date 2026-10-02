@@ -40,6 +40,7 @@ import { guardErrorPayload } from '../../core/errors.js';
 import { analyzeProjectImpact } from '../../core/analysis/impact.js';
 import { z } from 'zod';
 import { runGuardVerification } from '../../core/verification/verify.js';
+import { auditGuardGovernance } from '../../core/audit/governance.js';
 
 const rootSchema = z.string().trim().min(1).optional().describe('Project path or workspace root.');
 
@@ -658,6 +659,26 @@ export function registerGuardTools(server: McpServer): void {
         },
         result.status === 'fail',
       );
+    },
+  );
+
+  server.registerTool(
+    'codapult_guard_governance',
+    {
+      title: 'Guard Governance Audit',
+      description:
+        'Audit declared proposal and approval provenance, policy bindings, and retained verification reachability. This reports metadata; it does not prove identity or signatures.',
+      inputSchema: { root: rootSchema },
+    },
+    ({ root: requestedRoot }) => {
+      try {
+        return jsonToolResult(auditGuardGovernance(getGuardRoot(requestedRoot)));
+      } catch (error) {
+        return jsonToolResult(
+          { status: 'fail', message: error instanceof Error ? error.message : String(error) },
+          true,
+        );
+      }
     },
   );
 

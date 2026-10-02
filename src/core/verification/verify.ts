@@ -16,6 +16,7 @@ import {
   loadGuardWaivers,
   loadGuardAgentConfig,
   loadGuardConfig,
+  loadGuardProposals,
   scanGuard,
   classifyGuardOutcome,
   validateGuardPolicy,
@@ -81,6 +82,7 @@ function buildRunPolicy(
   snapshot: GuardPolicySnapshot,
   base: string | undefined,
   changedFromBase: boolean,
+  decisionIds: string[] = [],
 ): GuardRunPolicy {
   return {
     ...(snapshot.revision !== undefined ? { revision: snapshot.revision } : {}),
@@ -88,6 +90,7 @@ function buildRunPolicy(
     source: snapshot.source,
     ...(base ? { ref: base } : {}),
     ...(base ? { changedFromBase } : {}),
+    ...(decisionIds.length > 0 ? { decisionIds } : {}),
   };
 }
 
@@ -163,6 +166,7 @@ export function runGuardVerification(
   let policySnapshot: GuardPolicySnapshot;
   let workingTreeSnapshot: GuardPolicySnapshot;
   let policyChanged: boolean;
+  let policyDecisionIds: string[] = [];
   try {
     workingTreeSnapshot = createGuardPolicySnapshot(
       config,
@@ -195,8 +199,23 @@ export function runGuardVerification(
     policySnapshot = baseSnapshot ?? workingTreeSnapshot;
     policyChanged =
       baseSnapshot !== undefined && baseSnapshot.fingerprint !== workingTreeSnapshot.fingerprint;
+    if (policySnapshot.source === 'working-tree') {
+      policyDecisionIds = (loadGuardProposals(root)?.decisions ?? [])
+        .filter((decision) => decision.policyFingerprint === policySnapshot.fingerprint)
+        .map(
+          (decision) =>
+            decision.decisionId ??
+            `${decision.proposalId ?? 'unknown'}:${decision.type}:${decision.id}`,
+        )
+        .sort();
+    }
     if (options.failOnPolicyChange && policyChanged) {
-      const policy = buildRunPolicy(policySnapshot, options.policyBase, policyChanged);
+      const policy = buildRunPolicy(
+        policySnapshot,
+        options.policyBase,
+        policyChanged,
+        policyDecisionIds,
+      );
       const run = finishGuardRun(root, runContext, 'fail', 'policy-change', 'verify', policy);
       return {
         status: 'fail',
@@ -232,7 +251,12 @@ export function runGuardVerification(
       run,
     };
   }
-  const policy = buildRunPolicy(policySnapshot, options.policyBase, policyChanged);
+  const policy = buildRunPolicy(
+    policySnapshot,
+    options.policyBase,
+    policyChanged,
+    policyDecisionIds,
+  );
 
   const agentConfig = policySnapshot.agentConfig;
   const projectChecks = options.projectChecks ?? agentConfig.completionGate.projectChecks;

@@ -105,6 +105,7 @@ export const guardContractsFileSchema = z.object({
 });
 
 export const guardProposalDecisionSchema = z.object({
+  decisionId: z.string().trim().min(1).optional(),
   id: z.string().trim().min(1),
   type: z.enum(['rule', 'contract']),
   decision: z.enum(['approved', 'rejected']),
@@ -113,8 +114,11 @@ export const guardProposalDecisionSchema = z.object({
   proposalFingerprint: z.string().optional(),
   revision: z.number().optional(),
   source: z.enum(['cli', 'mcp', 'external']).optional(),
+  proposalAuthor: z.string().trim().min(1).optional(),
   actor: z.string().optional(),
   commit: z.string().optional(),
+  policyFingerprint: z.string().trim().min(1).optional(),
+  policyRevision: z.number().int().nonnegative().optional(),
 });
 
 export const guardProposalSchema = z.object({

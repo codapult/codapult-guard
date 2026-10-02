@@ -34,6 +34,7 @@ describe('Guard MCP transport', () => {
       'codapult_guard_init',
       'codapult_guard_proposal_decide',
       'codapult_guard_verify',
+      'codapult_guard_governance',
       'codapult_guard_audit',
       'codapult_guard_review',
       'codapult_guard_check',

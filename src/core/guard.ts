@@ -189,6 +189,7 @@ export interface GuardProposalFile {
 }
 
 export interface GuardProposalDecision {
+  decisionId?: string | undefined;
   id: string;
   type: 'rule' | 'contract';
   decision: 'approved' | 'rejected';
@@ -197,8 +198,11 @@ export interface GuardProposalDecision {
   proposalFingerprint?: string | undefined;
   revision?: number | undefined;
   source?: 'cli' | 'mcp' | 'external' | undefined;
+  proposalAuthor?: string | undefined;
   actor?: string | undefined;
   commit?: string | undefined;
+  policyFingerprint?: string | undefined;
+  policyRevision?: number | undefined;
 }
 
 interface GuardPolicyTransaction {
@@ -557,7 +561,9 @@ function atomicWriteFile(path: string, content: string): void {
 
 function writeGuardArtifactUnlocked(root: string, relativePath: string, value: unknown): void {
   mkdirSync(resolve(root, GUARD_DIR), { recursive: true });
-  atomicWriteFile(resolve(root, relativePath), `${JSON.stringify(value, null, 2)}\n`);
+  const path = resolve(root, relativePath);
+  mkdirSync(dirname(path), { recursive: true });
+  atomicWriteFile(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function writeGuardArtifact(root: string, relativePath: string, value: unknown): void {
@@ -1111,7 +1117,7 @@ export function writeGuardProposals(root: string, proposals: GuardProposalFile):
 function buildGuardProposalWithDecisionsUnlocked(
   root: string,
   decisions: Pick<GuardProposalDecision, 'id' | 'type' | 'decision'>[],
-  options: Pick<GuardProposalDecision, 'source'>,
+  options: Pick<GuardProposalDecision, 'source'> & { resultingPolicy?: GuardConfig | undefined },
 ): GuardProposalFile | undefined {
   const proposals = loadGuardProposalsUnlocked(root);
   if (!proposals || decisions.length === 0) return;
@@ -1125,15 +1131,29 @@ function buildGuardProposalWithDecisionsUnlocked(
       return undefined;
     }
   })();
+  const currentRevision = readGuardConfigFilesUnlocked(root)?.revision ?? 0;
+  const policyFingerprint = options.resultingPolicy
+    ? fingerprintGuardPolicy(
+        options.resultingPolicy,
+        loadBaseline(root),
+        readGuardWaiversUnlocked(root).waivers,
+        loadGuardAgentConfig(root),
+      )
+    : undefined;
   const nextDecisions = decisions.map((decision) => ({
     ...decision,
+    decisionId: randomUUID(),
     decidedAt,
     source: options.source,
     ...(process.env.GUARD_APPROVER?.trim() ? { actor: process.env.GUARD_APPROVER.trim() } : {}),
     ...(commit ? { commit } : {}),
+    ...(proposals.generatedBy ? { proposalAuthor: proposals.generatedBy } : {}),
     ...(proposals.proposalId ? { proposalId: proposals.proposalId } : {}),
     ...(proposals.contentFingerprint ? { proposalFingerprint: proposals.contentFingerprint } : {}),
     ...(typeof proposals.revision === 'number' ? { revision: proposals.revision } : {}),
+    ...(decision.decision === 'approved' && policyFingerprint
+      ? { policyFingerprint, policyRevision: currentRevision + 1 }
+      : {}),
   }));
   return {
     ...proposals,
@@ -1144,7 +1164,7 @@ function buildGuardProposalWithDecisionsUnlocked(
 function appendGuardProposalDecisionsUnlocked(
   root: string,
   decisions: Pick<GuardProposalDecision, 'id' | 'type' | 'decision'>[],
-  options: Pick<GuardProposalDecision, 'source'>,
+  options: Pick<GuardProposalDecision, 'source'> & { resultingPolicy?: GuardConfig | undefined },
 ): void {
   const proposals = buildGuardProposalWithDecisionsUnlocked(root, decisions, options);
   if (!proposals) return;
@@ -1168,7 +1188,10 @@ export function applyGuardProposalDecision(
   options: Pick<GuardProposalDecision, 'source'>,
 ): void {
   withGuardStateLock(root, () => {
-    const proposals = buildGuardProposalWithDecisionsUnlocked(root, decisions, options);
+    const proposals = buildGuardProposalWithDecisionsUnlocked(root, decisions, {
+      ...options,
+      resultingPolicy: guardConfig,
+    });
     writeGuardArtifactUnlocked(root, GUARD_POLICY_TRANSACTION_FILE, {
       version: 1,
       createdAt: new Date().toISOString(),

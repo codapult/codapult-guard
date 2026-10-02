@@ -27,6 +27,7 @@ export interface GuardRunPolicy {
   source: 'working-tree' | 'git-ref';
   ref?: string | undefined;
   changedFromBase?: boolean | undefined;
+  decisionIds?: string[] | undefined;
 }
 
 export interface GuardRunManifest {
@@ -99,7 +100,13 @@ function isGuardRunManifest(value: unknown): value is GuardRunManifest {
           (Number.isInteger(manifest.policy.revision) && manifest.policy.revision >= 0)) &&
         (manifest.policy.ref === undefined || typeof manifest.policy.ref === 'string') &&
         (manifest.policy.changedFromBase === undefined ||
-          typeof manifest.policy.changedFromBase === 'boolean')))
+          typeof manifest.policy.changedFromBase === 'boolean') &&
+        (manifest.policy.decisionIds === undefined ||
+          (Array.isArray(manifest.policy.decisionIds) &&
+            new Set(manifest.policy.decisionIds).size === manifest.policy.decisionIds.length &&
+            manifest.policy.decisionIds.every(
+              (decisionId) => typeof decisionId === 'string' && decisionId.trim().length > 0,
+            )))))
   );
 }
 
