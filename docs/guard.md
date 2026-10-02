@@ -315,6 +315,7 @@ command supports it for automation.
 | `codapult-guard review`                          | Produce a bounded diff + project-context packet for semantic AI review.                           |
 | `codapult-guard review --base origin/main`       | Build the review packet from a PR base ref.                                                       |
 | `codapult-guard verify`                          | Run Guard, project checks, adapters, runtime, and contract verification as configured.            |
+| `codapult-guard governance [--json] [--strict]`  | Audit declared proposal/approval provenance and links from decisions to verification runs.        |
 | `codapult-guard rules approve <ids>`             | Activate selected proposed rules.                                                                 |
 | `codapult-guard rules approve --all`             | Activate every proposed rule deliberately.                                                        |
 | `codapult-guard contracts approve <ids>`         | Activate selected proposed contracts.                                                             |
@@ -573,6 +574,23 @@ Use `--fail-on-policy-change` for a dedicated policy gate. Repository hosting co
 CODEOWNERS and protected branches remain responsible for requiring and authorizing the separate
 review; Guard does not impersonate a reviewer or verify provider credentials.
 
+### Governance audit
+
+Use the read-only governance audit to inspect whether approval records retain enough declared
+provenance for later review:
+
+```bash
+codapult-guard governance --json
+codapult-guard governance --strict
+```
+
+The report counts declared proposal authors and approval actors, identifies overlaps, missing
+actors/authors/commits, checks policy fingerprints, and follows retained `decision ID → verification
+run` links. `--strict` exits non-zero when the report contains completeness warnings. The audit
+reports metadata recorded by Guard; it does not prove personal identity, cryptographic signatures,
+a trusted clock, immutable storage, or authorization. Those guarantees belong to Git, CI, branch
+protection, and the review platform.
+
 ## What Guard discovers
 
 Guard is intentionally evidence-driven. It can model a small JavaScript utility, a React app, a
@@ -611,6 +629,7 @@ are:
 | `codapult_guard_check`           | Check active Guard policy and changed files.                                                                   | No                                                                |
 | `codapult_guard_review`          | Prepare a bounded/redacted semantic review packet.                                                             | No                                                                |
 | `codapult_guard_verify`          | Run the completion gate and return structured results.                                                         | Runs configured project commands; does not edit source.           |
+| `codapult_guard_governance`      | Audit declared approval provenance and decision-to-verification reachability.                                  | No                                                                |
 | `codapult_guard_audit`           | Full current scan and contract validation.                                                                     | No                                                                |
 | `codapult_guard_waivers`         | List or manage owner-attributed, time-bounded exceptions to exact finding fingerprints.                        | Writes require confirmation and policy approval.                  |
 | `codapult_guard_impact`          | Explain dependencies, transitive dependents, impact paths, capabilities, contracts, and graph edges for files. | No                                                                |

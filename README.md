@@ -452,6 +452,7 @@ real project shapes.
 | `audit`                    | Scan the complete current project, including baseline findings.                             |
 | `review`                   | Create a bounded semantic-review packet for an AI host.                                     |
 | `verify`                   | Run the configured completion gate.                                                         |
+| `governance`               | Audit declared proposal/approval provenance and decision-to-run reachability.               |
 | `doctor`                   | Diagnose invalid or missing Guard artifacts.                                                |
 | `history` / `history-diff` | Inspect project model, module graph, and architecture-edge evolution.                       |
 | `impact <files...>`        | Explain dependencies, transitive dependents, capabilities, and contracts affected by files. |
@@ -474,8 +475,11 @@ Every `verify` run also writes a local manifest under
 `.codapult/guard/history/runs/<run-id>.json`. It records stage durations, the outcome, and the
 policy gate that decided the result. It also records the effective policy revision and fingerprint;
 when a base ref was supplied, it records the ref and whether the working-tree policy differed.
-It contains no source code or external telemetry. These manifests make a failed run explainable
-without turning Guard into a production tracing system.
+When an approved policy decision caused the current policy, the manifest also retains its decision
+ID, making the relationship traversable from approval to verification. The `governance` command
+audits this metadata and reports missing or overlapping declared actors. It contains no source code
+or external telemetry. These manifests make a failed run explainable without turning Guard into a
+production tracing system or an identity/signature ledger.
 
 ## Security and data handling
 
