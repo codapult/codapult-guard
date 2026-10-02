@@ -20,6 +20,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          # The base commit is required so verify can read policy from the
+          # protected side of a pull request instead of trusting the PR copy.
+          fetch-depth: 0
 
       - name: Install pnpm
         uses: pnpm/action-setup@v5
@@ -36,7 +40,28 @@ jobs:
       # Install @codapult/guard as a pinned dev dependency in the project first.
       # Run `codapult-guard init` once locally and commit the generated Guard memory.
       - name: Verify Guard and project checks
-        run: pnpm exec codapult-guard verify --tools auto --json
+        env:
+          POLICY_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$POLICY_BASE" ]; then
+            pnpm exec codapult-guard verify --tools auto --policy-base "$POLICY_BASE" --json
+          else
+            pnpm exec codapult-guard verify --tools auto --json
+          fi
+
+      # Keep .codapult/guard policy files behind the repository's protected
+      # review path. Guard applies the base policy above; CODEOWNERS or branch
+      # protection decides who may approve a policy change.
+      - name: Report policy files changed
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          policy_files=$(git diff --name-only "$BASE_SHA...HEAD" -- .codapult/guard)
+          if [ -n "$policy_files" ]; then
+            echo "Guard policy files changed; require the configured CODEOWNERS/protected review:"
+            echo "$policy_files"
+          fi
 
       - name: Prepare PR review packet
         if: github.event_name == 'pull_request'

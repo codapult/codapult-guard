@@ -28,4 +28,14 @@ codapult-guard review --requirement docs/acceptance.md
 codapult-guard verify --json
 ```
 
+For pull-request CI, verify against the protected base policy. Fetch the base commit before this
+step and pass its SHA (the bundled `docs/guard-ci.yml` does this automatically):
+
+```bash
+codapult-guard verify --policy-base "$BASE_SHA" --json
+```
+
+Use `--fail-on-policy-change` in a separate policy-review gate when changing Guard policy requires
+an explicit protected approval.
+
 Use the host's post-task hook to invoke the sequence. Run the same command independently in CI.

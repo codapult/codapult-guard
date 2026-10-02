@@ -392,6 +392,37 @@ and Guard rejects the same declared actor when a proposal was generated with `GU
 These variables provide declared provenance only; external branch protection or signed identity
 remains responsible for proving who approved the change.
 
+### Verifying against protected policy
+
+In CI, verify pull requests against the policy from the protected base commit rather than the
+copy carried by the branch:
+
+```bash
+codapult-guard verify --policy-base "$BASE_SHA" --json
+```
+
+Guard then evaluates the changed source with the base commit's rules, contracts, baseline, waivers,
+and completion-gate configuration. The result reports `policy.source`, `policy.ref`,
+`policy.revision`, `policy.fingerprint`, and whether the checked-out policy differs from that
+base. A branch cannot relax its policy or disable the gate and use that relaxed copy for the same
+verification run.
+
+The supplied [`docs/guard-ci.yml`](docs/guard-ci.yml) fetches the full Git history and passes the
+pull request base SHA automatically. Protect `.codapult/guard/` with CODEOWNERS or the equivalent
+review control when policy changes require a separate approval. For example, a repository can add
+`.codapult/guard/* @architecture-owners` to `CODEOWNERS`. Guard reports the policy change; the
+hosting platform enforces reviewer authorization.
+
+To make policy changes fail this invocation explicitly, add:
+
+```bash
+codapult-guard verify --policy-base "$BASE_SHA" --fail-on-policy-change
+```
+
+This is useful for a dedicated policy-review gate. It is intentionally separate from using the
+base policy for source verification, so teams can choose how their protected review workflow
+handles an approved policy update.
+
 See [the extension map](docs/extensions.md) for the supported AI-host, CI/PR, policy-pack, tool
 adapter, approval-governance, and observability integrations.
 
@@ -441,8 +472,10 @@ Run `pnpm exec codapult-guard <command> --help` for command-specific options.
 
 Every `verify` run also writes a local manifest under
 `.codapult/guard/history/runs/<run-id>.json`. It records stage durations, the outcome, and the
-policy gate that decided the result. It contains no source code or external telemetry. These
-manifests make a failed run explainable without turning Guard into a production tracing system.
+policy gate that decided the result. It also records the effective policy revision and fingerprint;
+when a base ref was supplied, it records the ref and whether the working-tree policy differed.
+It contains no source code or external telemetry. These manifests make a failed run explainable
+without turning Guard into a production tracing system.
 
 ## Security and data handling
 

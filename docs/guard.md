@@ -555,6 +555,24 @@ the host CI/review system.
 This separation is intentional: Guard checks that an approval matches the current evidence, while
 GitHub or another protected system determines who is authorized to approve it.
 
+### Policy provenance in CI
+
+`verify` normally reads policy from the working tree. For pull requests, pass the protected base
+commit:
+
+```bash
+codapult-guard verify --policy-base "$BASE_SHA" --json
+```
+
+The base snapshot includes `rules.json`, `contracts.json`, `baseline.json`, `waivers.json`, and
+`agent.json` when present. Guard uses that snapshot for the verdict and records its revision and
+effective fingerprint in the run result and local run manifest. The result also reports whether
+the branch changed the policy relative to the base.
+
+Use `--fail-on-policy-change` for a dedicated policy gate. Repository hosting controls such as
+CODEOWNERS and protected branches remain responsible for requiring and authorizing the separate
+review; Guard does not impersonate a reviewer or verify provider credentials.
+
 ## What Guard discovers
 
 Guard is intentionally evidence-driven. It can model a small JavaScript utility, a React app, a
