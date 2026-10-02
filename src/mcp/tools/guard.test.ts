@@ -216,6 +216,22 @@ describe('registerGuardTools', () => {
     );
   });
 
+  it('passes the protected policy ref through MCP verification', () => {
+    const server = createMockServer();
+    registerGuardTools(server as never);
+    const handler = server.tools.find((tool) => tool.name === 'codapult_guard_verify')!.handler;
+
+    handler({ policy_base: 'origin/main', fail_on_policy_change: true });
+
+    expect(runGuardVerification).toHaveBeenLastCalledWith(
+      '/project',
+      expect.objectContaining({
+        policyBase: 'origin/main',
+        failOnPolicyChange: true,
+      }),
+    );
+  });
+
   it('requires confirmation before initializing Guard through MCP', () => {
     const server = createMockServer();
     registerGuardTools(server as never);

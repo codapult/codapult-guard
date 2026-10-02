@@ -112,6 +112,25 @@ describe('guard commands', () => {
     process.exitCode = undefined;
   });
 
+  it('passes protected policy options through the CLI verification command', async () => {
+    const { guardVerifyCommand } = await import('./guard.js');
+    const { runGuardVerification } = await import('../../core/verification/verify.js');
+
+    guardVerifyCommand({
+      policyBase: 'origin/main',
+      failOnPolicyChange: true,
+    });
+
+    expect(runGuardVerification).toHaveBeenLastCalledWith(
+      '/project',
+      expect.objectContaining({
+        policyBase: 'origin/main',
+        failOnPolicyChange: true,
+      }),
+    );
+    process.exitCode = undefined;
+  });
+
   it('runs a full Guard audit', async () => {
     const { guardAuditCommand } = await import('./guard.js');
     guardAuditCommand();

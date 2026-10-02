@@ -608,6 +608,16 @@ export function registerGuardTools(server: McpServer): void {
           .boolean()
           .optional()
           .describe('Override completionGate.projectChecks for this invocation.'),
+        policy_base: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe('Git ref whose Guard policy should be used for this verification.'),
+        fail_on_policy_change: z
+          .boolean()
+          .optional()
+          .describe('Fail when the checked-out policy differs from policy_base.'),
         iteration: z.number().int().positive().default(1),
       },
     },
@@ -619,6 +629,8 @@ export function registerGuardTools(server: McpServer): void {
       tools,
       strict,
       project_checks,
+      policy_base,
+      fail_on_policy_change,
       iteration,
     }) => {
       const root = getGuardRoot(requestedRoot);
@@ -631,6 +643,8 @@ export function registerGuardTools(server: McpServer): void {
         tools,
         strict,
         projectChecks: project_checks,
+        policyBase: policy_base,
+        failOnPolicyChange: fail_on_policy_change,
       });
       const completionGate = agent.config.completionGate;
       return jsonToolResult(

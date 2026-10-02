@@ -89,6 +89,8 @@ interface GuardVerifyOptions extends GuardOutputOptions {
   tools?: GuardToolMode | undefined;
   strict?: boolean | undefined;
   projectChecks?: boolean | undefined;
+  policyBase?: string | undefined;
+  failOnPolicyChange?: boolean | undefined;
 }
 
 interface GuardCheckOptions extends GuardOutputOptions {
@@ -424,6 +426,8 @@ export function guardVerifyCommand(options: GuardVerifyOptions = {}): void {
     tools: options.tools,
     strict: options.strict,
     projectChecks: options.projectChecks,
+    policyBase: options.policyBase,
+    failOnPolicyChange: options.failOnPolicyChange,
   });
   if (options.json) {
     console.log(JSON.stringify(result, null, 2));
@@ -435,6 +439,12 @@ export function guardVerifyCommand(options: GuardVerifyOptions = {}): void {
     fail('Guard is not initialized. Run `codapult-guard init` first.');
     process.exitCode = 1;
     return;
+  }
+  if (result.policy?.source === 'git-ref') {
+    dim(`policy: ${result.policy.ref ?? 'Git ref'} (${result.policy.fingerprint})`);
+    if (result.policyChanged) {
+      warn('The working-tree policy differs from the base policy; the base policy was used.');
+    }
   }
   for (const [name, check] of Object.entries(result.checks)) {
     if (check.status === 'passed') success(`${name}: passed`);

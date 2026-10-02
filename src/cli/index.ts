@@ -85,6 +85,8 @@ guard
   .option('--no-project-checks')
   .option('--requirement <file>')
   .option('--changed')
+  .option('--policy-base <ref>', 'read policy artifacts from this Git ref')
+  .option('--fail-on-policy-change', 'fail when the working-tree policy differs from the base ref')
   .option('--json')
   .action(guardVerifyCommand);
 guard
