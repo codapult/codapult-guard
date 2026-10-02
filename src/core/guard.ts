@@ -609,17 +609,184 @@ export function fingerprintProjectModel(model: ProjectModel): string {
   return createHash('sha256').update(JSON.stringify(model)).digest('hex');
 }
 
+function stableSerialize(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerialize(item)).join(',')}]`;
+  }
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableSerialize(record[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
 export function fingerprintGuardConfig(guardConfig: GuardConfig): string {
   return createHash('sha256')
     .update(
-      JSON.stringify({
-        rules: guardConfig.rules,
-        contracts: guardConfig.contracts ?? [],
-        budgets: guardConfig.budgets ?? [],
+      stableSerialize({
+        rules: [...guardConfig.rules].sort((left, right) => left.id.localeCompare(right.id)),
+        contracts: [...(guardConfig.contracts ?? [])].sort((left, right) =>
+          left.id.localeCompare(right.id),
+        ),
+        budgets: [...(guardConfig.budgets ?? [])].sort((left, right) =>
+          left.id.localeCompare(right.id),
+        ),
         approval: guardConfig.approval ?? defaultGuardConfig.approval,
       }),
     )
     .digest('hex');
+}
+
+export interface GuardPolicySnapshot {
+  config: GuardConfig;
+  agentConfig: GuardAgentConfig;
+  baseline: Set<string>;
+  waivers: GuardWaiver[];
+  revision?: number | undefined;
+  fingerprint: string;
+  source: 'working-tree' | 'git-ref';
+  ref?: string | undefined;
+}
+
+/**
+ * Fingerprints the effective policy used by a verification run.
+ *
+ * The rules revision alone is not sufficient: baseline and waiver changes also
+ * affect the verdict. Keeping them in this fingerprint makes a run auditable
+ * without pretending that a numeric revision covers every policy artifact.
+ */
+export function fingerprintGuardPolicy(
+  guardConfig: GuardConfig,
+  baseline: Set<string> = new Set<string>(),
+  waivers: GuardWaiver[] = [],
+  agentConfig: GuardAgentConfig = defaultGuardAgentConfig,
+): string {
+  return createHash('sha256')
+    .update(
+      stableSerialize({
+        config: fingerprintGuardConfig(guardConfig),
+        agentConfig,
+        baseline: [...baseline].sort(),
+        waivers: [...waivers].sort((left, right) => left.id.localeCompare(right.id)),
+      }),
+    )
+    .digest('hex');
+}
+
+export function createGuardPolicySnapshot(
+  guardConfig: GuardConfig,
+  baseline: Set<string>,
+  waivers: GuardWaiver[],
+  source: GuardPolicySnapshot['source'] = 'working-tree',
+  ref?: string,
+  agentConfig: GuardAgentConfig = defaultGuardAgentConfig,
+): GuardPolicySnapshot {
+  return {
+    config: guardConfig,
+    agentConfig,
+    baseline,
+    waivers,
+    ...(typeof guardConfig.revision === 'number' ? { revision: guardConfig.revision } : {}),
+    fingerprint: fingerprintGuardPolicy(guardConfig, baseline, waivers, agentConfig),
+    source,
+    ...(ref ? { ref } : {}),
+  };
+}
+
+function readGitFileAtRevision(
+  root: string,
+  revision: string,
+  relativePath: string,
+): string | undefined {
+  try {
+    return execFileSync('git', ['show', `${revision}:${relativePath}`], {
+      cwd: root,
+      stdio: 'pipe',
+      maxBuffer: 4_000_000,
+    }).toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function parseGitJsonAtRevision(root: string, revision: string, relativePath: string): unknown {
+  const text = readGitFileAtRevision(root, revision, relativePath);
+  if (text === undefined) return undefined;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new GuardConfigError(`${relativePath} at ${revision}`);
+  }
+}
+
+/**
+ * Loads policy artifacts from a trusted Git ref instead of the checked-out
+ * working tree. This is intended for CI verification of untrusted branches.
+ */
+export function loadGuardPolicyAtRevision(
+  root: string,
+  revision: string,
+): GuardPolicySnapshot | undefined {
+  if (!/^[\w./@-]+$/.test(revision) || revision.startsWith('-')) {
+    throw new GuardConfigError(`unsafe policy ref: ${revision}`);
+  }
+  const rulesValue = parseGitJsonAtRevision(root, revision, GUARD_RULES_FILE);
+  if (rulesValue === undefined || !isGuardConfig(rulesValue)) {
+    if (rulesValue === undefined) return undefined;
+    throw new GuardConfigError(`${GUARD_RULES_FILE} at ${revision}`);
+  }
+  const contractsValue = parseGitJsonAtRevision(root, revision, GUARD_CONTRACTS_FILE);
+  if (contractsValue !== undefined && !isGuardContractsFile(contractsValue)) {
+    throw new GuardConfigError(`${GUARD_CONTRACTS_FILE} at ${revision}`);
+  }
+  const guardConfig: GuardConfig = {
+    ...rulesValue,
+    contracts: contractsValue ? contractsValue.contracts : (rulesValue.contracts ?? []),
+    budgets: rulesValue.budgets ?? [],
+    approval: rulesValue.approval ?? defaultGuardConfig.approval,
+  };
+  const agentValue = parseGitJsonAtRevision(root, revision, GUARD_AGENT_FILE);
+  const agentConfig =
+    agentValue === undefined
+      ? defaultGuardAgentConfig
+      : // eslint-disable-next-line @typescript-eslint/no-use-before-define
+        isGuardAgentConfig(agentValue)
+        ? agentValue
+        : (() => {
+            throw new GuardConfigError(`${GUARD_AGENT_FILE} at ${revision}`);
+          })();
+  const baselineValue = parseGitJsonAtRevision(root, revision, GUARD_BASELINE_FILE);
+  const baselineEntries: string[] = [];
+  if (baselineValue !== undefined) {
+    if (!Array.isArray(baselineValue)) {
+      throw new GuardConfigError(`${GUARD_BASELINE_FILE} at ${revision}`);
+    }
+    for (const item of baselineValue) {
+      if (typeof item !== 'string') {
+        throw new GuardConfigError(`${GUARD_BASELINE_FILE} at ${revision}`);
+      }
+      baselineEntries.push(item);
+    }
+  }
+  const waiversValue = parseGitJsonAtRevision(root, revision, GUARD_WAIVERS_FILE);
+  const parsedWaivers = guardWaiversFileSchema.safeParse(
+    waiversValue ?? { version: 1, waivers: [], decisions: [] },
+  );
+  if (!parsedWaivers.success) throw new GuardConfigError(`${GUARD_WAIVERS_FILE} at ${revision}`);
+  // The validator is declared with the waiver file model below the policy readers.
+  // eslint-disable-next-line @typescript-eslint/no-use-before-define
+  validateGuardWaiversFile(parsedWaivers.data);
+  return createGuardPolicySnapshot(
+    guardConfig,
+    new Set<string>(baselineEntries),
+    parsedWaivers.data.waivers,
+    'git-ref',
+    revision,
+    agentConfig,
+  );
 }
 
 export function getGuardProposalFreshness(
@@ -1594,6 +1761,26 @@ export function validateGuardBudgets(
 
 export function validateGuardPolicy(root: string, guardConfig: GuardConfig): GuardContractIssue[] {
   const issues: GuardContractIssue[] = [];
+  const validateUniqueIds = (
+    items: { id: string }[],
+    kind: 'rule' | 'contract' | 'budget',
+  ): void => {
+    const seen = new Set<string>();
+    for (const item of items) {
+      if (seen.has(item.id)) {
+        issues.push({
+          contractId: `${kind}:${item.id}`,
+          field: 'definition',
+          value: item.id,
+          message: `${kind} IDs must be unique: ${item.id}`,
+        });
+      }
+      seen.add(item.id);
+    }
+  };
+  validateUniqueIds(guardConfig.rules, 'rule');
+  validateUniqueIds(guardConfig.contracts ?? [], 'contract');
+  validateUniqueIds(guardConfig.budgets ?? [], 'budget');
   for (const rule of guardConfig.rules) {
     for (const file of rule.files ?? []) {
       if (!isProjectPath(root, file)) {

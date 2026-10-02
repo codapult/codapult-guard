@@ -100,6 +100,23 @@ describe('Guard run observability', () => {
     expect(listGuardRuns(root)).toHaveLength(1);
   });
 
+  it('persists the policy provenance used by a run', () => {
+    const root = createRoot();
+    const context = startGuardRun();
+    const policy = {
+      revision: 7,
+      fingerprint: 'policy-fingerprint',
+      source: 'git-ref' as const,
+      ref: 'origin/main',
+      changedFromBase: true,
+    };
+
+    const result = finishGuardRun(root, context, 'pass', 'none', 'verify', policy);
+
+    expect(result.policy).toEqual(policy);
+    expect(listGuardRuns(root)[0]?.policy).toEqual(policy);
+  });
+
   it('bounds persisted run history', () => {
     const root = createRoot();
     for (let index = 0; index <= GUARD_RUN_RETENTION; index += 1) {

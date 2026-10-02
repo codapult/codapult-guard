@@ -21,6 +21,14 @@ export interface GuardRunStage {
   detail?: string | undefined;
 }
 
+export interface GuardRunPolicy {
+  revision?: number | undefined;
+  fingerprint: string;
+  source: 'working-tree' | 'git-ref';
+  ref?: string | undefined;
+  changedFromBase?: boolean | undefined;
+}
+
 export interface GuardRunManifest {
   version: 1;
   runId: string;
@@ -32,6 +40,7 @@ export interface GuardRunManifest {
   gate: string;
   stages: Record<string, GuardRunStage>;
   commit?: string | undefined;
+  policy?: GuardRunPolicy | undefined;
 }
 
 export interface GuardRunContext {
@@ -79,7 +88,18 @@ function isGuardRunManifest(value: unknown): value is GuardRunManifest {
       manifest.outcome === 'not-configured') &&
     typeof manifest.gate === 'string' &&
     manifest.stages !== null &&
-    typeof manifest.stages === 'object'
+    typeof manifest.stages === 'object' &&
+    (manifest.policy === undefined ||
+      (manifest.policy !== null &&
+        typeof manifest.policy === 'object' &&
+        typeof manifest.policy.fingerprint === 'string' &&
+        manifest.policy.fingerprint.length > 0 &&
+        (manifest.policy.source === 'working-tree' || manifest.policy.source === 'git-ref') &&
+        (manifest.policy.revision === undefined ||
+          (Number.isInteger(manifest.policy.revision) && manifest.policy.revision >= 0)) &&
+        (manifest.policy.ref === undefined || typeof manifest.policy.ref === 'string') &&
+        (manifest.policy.changedFromBase === undefined ||
+          typeof manifest.policy.changedFromBase === 'boolean')))
   );
 }
 
@@ -183,6 +203,7 @@ export function finishGuardRun(
   outcome: GuardRunManifest['outcome'],
   gate: string,
   command = 'verify',
+  policy?: GuardRunPolicy,
 ): GuardRunManifest {
   let commit: string | undefined;
   try {
@@ -203,6 +224,7 @@ export function finishGuardRun(
     gate,
     stages: context.stages,
     ...(commit ? { commit } : {}),
+    ...(policy ? { policy } : {}),
   };
   try {
     writeGuardRun(root, manifest);

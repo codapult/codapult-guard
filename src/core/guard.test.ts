@@ -57,6 +57,9 @@ import {
   writeGuardProposals,
   withGuardStateLock,
   fingerprintProjectModel,
+  fingerprintGuardConfig,
+  fingerprintGuardPolicy,
+  createGuardPolicySnapshot,
   getGuardProposalFreshness,
   getPendingGuardProposals,
   buildGuardReviewPacket,
@@ -296,6 +299,58 @@ describe('scanGuard', () => {
     const renamed = scanGuard(root, config).findings[0];
     expect(renamed.file).toBe('renamed-client.tsx');
     expect(renamed.fingerprint).not.toBe(initial.fingerprint);
+  });
+
+  it('includes baseline and waivers in the effective policy fingerprint', () => {
+    const first = fingerprintGuardPolicy(config, new Set(['legacy']), []);
+    const second = fingerprintGuardPolicy(config, new Set(['new-legacy']), []);
+    expect(second).not.toBe(first);
+
+    const snapshot = createGuardPolicySnapshot(config, new Set(['legacy']), []);
+    expect(snapshot).toMatchObject({
+      source: 'working-tree',
+      fingerprint: first,
+    });
+  });
+
+  it('keeps policy fingerprints stable when JSON object key order changes', () => {
+    const reordered = {
+      ...config,
+      rules: config.rules.map((rule) => ({
+        patterns: rule.patterns,
+        kind: rule.kind,
+        severity: rule.severity,
+        description: rule.description,
+        id: rule.id,
+      })),
+    } satisfies GuardConfig;
+
+    expect(fingerprintGuardConfig(reordered)).toBe(fingerprintGuardConfig(config));
+  });
+
+  it('keeps policy fingerprints stable when policy item order changes', () => {
+    const reordered = {
+      ...config,
+      rules: [...config.rules].reverse(),
+      contracts: [...(config.contracts ?? [])].reverse(),
+      budgets: [...(config.budgets ?? [])].reverse(),
+    };
+
+    expect(fingerprintGuardConfig(reordered)).toBe(fingerprintGuardConfig(config));
+  });
+
+  it('rejects duplicate policy IDs before verification', () => {
+    const issues = validateGuardPolicy('/project', {
+      ...config,
+      rules: [config.rules[0], { ...config.rules[0] }],
+    });
+
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        contractId: 'rule:client-no-db',
+        field: 'definition',
+      }),
+    );
   });
 
   it('records baseline metadata for later audit', () => {

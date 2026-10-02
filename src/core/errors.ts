@@ -3,6 +3,8 @@ export type GuardErrorCode =
   | 'GUARD_CONFIG_INVALID'
   | 'GUARD_STATE_BUSY'
   | 'GUARD_STATE_STALE'
+  | 'GUARD_POLICY_BASE_INVALID'
+  | 'GUARD_POLICY_CHANGED'
   | 'GUARD_INVALID_INPUT';
 
 export interface GuardErrorPayload {

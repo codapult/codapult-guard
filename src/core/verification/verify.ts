@@ -11,6 +11,9 @@ import {
 } from '../../adapters/project-checks.js';
 import {
   loadBaseline,
+  loadGuardPolicyAtRevision,
+  createGuardPolicySnapshot,
+  loadGuardWaivers,
   loadGuardAgentConfig,
   loadGuardConfig,
   scanGuard,
@@ -19,6 +22,7 @@ import {
   type GuardToolMode,
   type GuardContractIssue,
   type GuardReport,
+  type GuardPolicySnapshot,
 } from '../guard.js';
 import { analyzeProjectImpact, type GuardImpactAnalysis } from '../analysis/impact.js';
 import { discoverProject } from '../discovery/discovery.js';
@@ -27,6 +31,7 @@ import {
   recordGuardRunStage,
   startGuardRun,
   type GuardRunManifest,
+  type GuardRunPolicy,
 } from '../history/runs.js';
 
 export type GuardVerificationCheck = ProjectCheck;
@@ -39,12 +44,19 @@ export interface GuardVerificationOptions {
   tools?: GuardToolMode | undefined;
   strict?: boolean | undefined;
   projectChecks?: boolean | undefined;
+  policyBase?: string | undefined;
+  failOnPolicyChange?: boolean | undefined;
 }
 
 export interface GuardVerificationResult {
   status: 'ok' | 'fail' | 'not-configured';
   outcome: 'pass' | 'fail' | 'warning' | 'needs-review' | 'not-configured';
-  errorCode?: 'GUARD_NOT_CONFIGURED' | 'GUARD_CONFIG_INVALID' | undefined;
+  errorCode?:
+    | 'GUARD_NOT_CONFIGURED'
+    | 'GUARD_CONFIG_INVALID'
+    | 'GUARD_POLICY_BASE_INVALID'
+    | 'GUARD_POLICY_CHANGED'
+    | undefined;
   recoverable?: boolean | undefined;
   tools?: GuardToolMode | undefined;
   checks: ProjectCheckResults;
@@ -61,6 +73,22 @@ export interface GuardVerificationResult {
     message: string;
   };
   run: GuardRunManifest;
+  policy?: GuardRunPolicy | undefined;
+  policyChanged?: boolean | undefined;
+}
+
+function buildRunPolicy(
+  snapshot: GuardPolicySnapshot,
+  base: string | undefined,
+  changedFromBase: boolean,
+): GuardRunPolicy {
+  return {
+    ...(snapshot.revision !== undefined ? { revision: snapshot.revision } : {}),
+    fingerprint: snapshot.fingerprint,
+    source: snapshot.source,
+    ...(base ? { ref: base } : {}),
+    ...(base ? { changedFromBase } : {}),
+  };
 }
 
 export function runGuardVerification(
@@ -78,6 +106,23 @@ export function runGuardVerification(
   const runtimeStartedAt = Date.now();
   const runtime = inspectProjectRuntime(root);
   recordGuardRunStage(runContext, 'runtime', 'ok', runtimeStartedAt);
+  if (options.failOnPolicyChange && !options.policyBase) {
+    const run = finishGuardRun(root, runContext, 'fail', 'policy-base');
+    return {
+      status: 'fail',
+      outcome: 'fail',
+      errorCode: 'GUARD_POLICY_BASE_INVALID',
+      recoverable: true,
+      checks: {},
+      workspaceChecks: {},
+      adapters: {},
+      runtime,
+      configError: '`failOnPolicyChange` requires `policyBase`.',
+      contractIssues: [],
+      requirement,
+      run,
+    };
+  }
   let config;
   try {
     config = loadGuardConfig(root);
@@ -115,7 +160,81 @@ export function runGuardVerification(
     };
   }
 
-  const agentConfig = loadGuardAgentConfig(root);
+  let policySnapshot: GuardPolicySnapshot;
+  let workingTreeSnapshot: GuardPolicySnapshot;
+  let policyChanged: boolean;
+  try {
+    workingTreeSnapshot = createGuardPolicySnapshot(
+      config,
+      loadBaseline(root),
+      loadGuardWaivers(root),
+      'working-tree',
+      undefined,
+      loadGuardAgentConfig(root),
+    );
+    const baseSnapshot = options.policyBase
+      ? loadGuardPolicyAtRevision(root, options.policyBase)
+      : undefined;
+    if (options.policyBase && !baseSnapshot) {
+      const run = finishGuardRun(root, runContext, 'fail', 'policy-base');
+      return {
+        status: 'fail',
+        outcome: 'fail',
+        errorCode: 'GUARD_POLICY_BASE_INVALID',
+        recoverable: true,
+        checks: {},
+        workspaceChecks: {},
+        adapters: {},
+        runtime,
+        configError: `Guard policy was not found at Git ref: ${options.policyBase}`,
+        contractIssues: [],
+        requirement,
+        run,
+      };
+    }
+    policySnapshot = baseSnapshot ?? workingTreeSnapshot;
+    policyChanged =
+      baseSnapshot !== undefined && baseSnapshot.fingerprint !== workingTreeSnapshot.fingerprint;
+    if (options.failOnPolicyChange && policyChanged) {
+      const policy = buildRunPolicy(policySnapshot, options.policyBase, policyChanged);
+      const run = finishGuardRun(root, runContext, 'fail', 'policy-change', 'verify', policy);
+      return {
+        status: 'fail',
+        outcome: 'fail',
+        errorCode: 'GUARD_POLICY_CHANGED',
+        recoverable: true,
+        checks: {},
+        workspaceChecks: {},
+        adapters: {},
+        runtime,
+        configError: 'Guard policy changed relative to the supplied Git base ref.',
+        contractIssues: [],
+        requirement,
+        run,
+        policy,
+        policyChanged,
+      };
+    }
+  } catch (error) {
+    const run = finishGuardRun(root, runContext, 'fail', 'policy-base');
+    return {
+      status: 'fail',
+      outcome: 'fail',
+      errorCode: 'GUARD_POLICY_BASE_INVALID',
+      recoverable: true,
+      checks: {},
+      workspaceChecks: {},
+      adapters: {},
+      runtime,
+      configError: error instanceof Error ? error.message : String(error),
+      contractIssues: [],
+      requirement,
+      run,
+    };
+  }
+  const policy = buildRunPolicy(policySnapshot, options.policyBase, policyChanged);
+
+  const agentConfig = policySnapshot.agentConfig;
   const projectChecks = options.projectChecks ?? agentConfig.completionGate.projectChecks;
   const checks = projectChecks ? (options.checks ?? agentConfig.completionGate.checks) : [];
   const checksStartedAt = Date.now();
@@ -133,7 +252,7 @@ export function runGuardVerification(
     options.changedOnly === false
       ? workspaceModel.modules.map((module) => module.path)
       : workspaceModel.git.changedFiles,
-    config.contracts ?? [],
+    policySnapshot.config.contracts ?? [],
   );
   const workspaceChecks = runWorkspaceProjectChecks(
     root,
@@ -163,12 +282,13 @@ export function runGuardVerification(
   );
 
   const architectureStartedAt = Date.now();
-  const architecture = scanGuard(root, config, {
+  const architecture = scanGuard(root, policySnapshot.config, {
     changedOnly: options.changedOnly,
-    baseline: loadBaseline(root),
+    baseline: policySnapshot.baseline,
     includeArchitectureInsights: true,
+    waivers: policySnapshot.waivers,
   });
-  const contractIssues = validateGuardPolicy(root, config);
+  const contractIssues = validateGuardPolicy(root, policySnapshot.config);
   recordGuardRunStage(runContext, 'architecture-policy', 'ok', architectureStartedAt);
   const commandFailed = Object.values(results).some((result) => result.status === 'failed');
   const workspaceCommandFailed = Object.values(workspaceChecks).some((packageResults) =>
@@ -224,7 +344,7 @@ export function runGuardVerification(
             : !runtime.compatible && projectChecks
               ? 'runtime'
               : 'none';
-  const run = finishGuardRun(root, runContext, outcome, gate);
+  const run = finishGuardRun(root, runContext, outcome, gate, 'verify', policy);
   return {
     status: failed ? 'fail' : 'ok',
     outcome,
@@ -238,5 +358,7 @@ export function runGuardVerification(
     contractIssues,
     requirement,
     run,
+    policy,
+    ...(policy.changedFromBase !== undefined ? { policyChanged: policy.changedFromBase } : {}),
   };
 }
