@@ -57,43 +57,6 @@ The core is universal. The strongest first-class scenarios are Next.js SaaS and 
 development, including server/client boundaries, routes, persistence, authentication, billing,
 background jobs, environment configuration, and AI integrations.
 
-## Part of the Codapult ecosystem
-
-Guard is an independent open-source project from [Codapult](https://codapult.dev). It does not
-require Codapult and can be installed in any JavaScript or TypeScript repository.
-
-The relationship is complementary:
-
-| Project               | Role                                                                                     |
-| --------------------- | ---------------------------------------------------------------------------------------- |
-| **`@codapult/guard`** | Universal architecture guardrails, project memory, contracts, MCP, and AI-agent context. |
-| **`@codapult/cli`**   | Codapult SaaS project CLI that includes Guard through a thin adapter.                    |
-| **Codapult**          | Full-source Next.js SaaS foundation with conventions Guard can discover and protect.     |
-
-Use standalone Guard for any compatible project. Use the Codapult CLI when working on a Codapult
-SaaS project and you want project management, database, plugins, deployment, MCP, and Guard in one
-CLI.
-
-```text
-        Existing project
-              │
-              ▼
-       deterministic discovery
-     AST · files · imports · Git
-              │
-              ▼
-        project architecture
-  capabilities · graph · impact paths
-              │
-              ▼
-       approved project policy
-  rules · contracts · conventions · baseline
-              │
-              ▼
-          change verification
-   check · review packet · verify · CI
-```
-
 ## Why Guard exists
 
 AI agents can produce syntactically valid code that still violates the architecture of a real
@@ -518,6 +481,12 @@ pnpm release:check
 - [CI consumer workflow](docs/guard-ci.yml)
 - [Fixture matrix](docs/guard-fixtures.md)
 - [Release process](docs/releasing.md)
+
+## More from Codapult
+
+Starting a SaaS from scratch? [Codapult](https://codapult.dev) is a production-ready Next.js SaaS
+foundation built for AI-assisted development — with MCP context, built-in AI, modular
+architecture, and the source code under your control.
 
 ## Project status
 
