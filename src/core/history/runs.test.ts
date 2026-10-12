@@ -85,6 +85,30 @@ describe('Guard run observability', () => {
     expect(listGuardRuns(root)).toEqual([]);
   });
 
+  it('rejects malformed stages and impossible timestamps', () => {
+    const root = createRoot();
+    const directory = join(root, GUARD_RUNS_DIR);
+    mkdirSync(directory, { recursive: true });
+    const base = manifest('guard-invalid', 'pass');
+    writeFileSync(
+      join(directory, 'invalid-stage.json'),
+      JSON.stringify({ ...base, stages: [] }),
+      'utf8',
+    );
+    writeFileSync(
+      join(directory, 'invalid-time.json'),
+      JSON.stringify({
+        ...base,
+        runId: 'guard-invalid-time',
+        startedAt: '2026-01-01T00:00:02.000Z',
+        completedAt: '2026-01-01T00:00:01.000Z',
+      }),
+      'utf8',
+    );
+
+    expect(listGuardRuns(root)).toEqual([]);
+  });
+
   it('creates a completed manifest with stage timings', () => {
     const root = createRoot();
     const context = startGuardRun();

@@ -104,36 +104,68 @@ export const guardContractsFileSchema = z.object({
   contracts: z.array(guardContractSchema),
 });
 
-export const guardProposalDecisionSchema = z.object({
-  decisionId: z.string().trim().min(1).optional(),
-  id: z.string().trim().min(1),
-  type: z.enum(['rule', 'contract']),
-  decision: z.enum(['approved', 'rejected']),
-  decidedAt: z.string(),
-  proposalId: z.string().optional(),
-  proposalFingerprint: z.string().optional(),
-  revision: z.number().optional(),
-  source: z.enum(['cli', 'mcp', 'external']).optional(),
-  proposalAuthor: z.string().trim().min(1).optional(),
-  actor: z.string().optional(),
-  commit: z.string().optional(),
-  policyFingerprint: z.string().trim().min(1).optional(),
-  policyRevision: z.number().int().nonnegative().optional(),
-});
+export const guardProposalDecisionSchema = z
+  .object({
+    decisionId: z.string().trim().min(1).optional(),
+    id: z.string().trim().min(1),
+    type: z.enum(['rule', 'contract']),
+    decision: z.enum(['approved', 'rejected']),
+    decidedAt: z.string(),
+    proposalId: z.string().optional(),
+    proposalFingerprint: z.string().optional(),
+    revision: z.number().optional(),
+    source: z.enum(['cli', 'mcp', 'external']).optional(),
+    proposalAuthor: z.string().trim().min(1).optional(),
+    actor: z.string().trim().min(1).optional(),
+    commit: z.string().trim().min(1).optional(),
+    policyFingerprint: z.string().trim().min(1).optional(),
+    policyRevision: z.number().int().nonnegative().optional(),
+  })
+  .superRefine((decision, context) => {
+    if (decision.policyFingerprint !== undefined && decision.decision !== 'approved') {
+      context.addIssue({
+        code: 'custom',
+        message: 'policyFingerprint is only valid for approved decisions.',
+        path: ['policyFingerprint'],
+      });
+    }
+    if (decision.policyRevision !== undefined && decision.policyFingerprint === undefined) {
+      context.addIssue({
+        code: 'custom',
+        message: 'policyRevision requires policyFingerprint.',
+        path: ['policyRevision'],
+      });
+    }
+  });
 
-export const guardProposalSchema = z.object({
-  version: z.literal(1),
-  generatedAt: z.string(),
-  generatedBy: z.string().trim().min(1).optional(),
-  proposalId: z.string().optional(),
-  projectFingerprint: z.string().optional(),
-  revision: z.number().int().positive().optional(),
-  contentFingerprint: z.string().optional(),
-  rules: z.array(guardRuleSchema),
-  contracts: z.array(guardContractSchema),
-  questions: z.array(z.string()),
-  decisions: z.array(guardProposalDecisionSchema).optional(),
-});
+export const guardProposalSchema = z
+  .object({
+    version: z.literal(1),
+    generatedAt: z.string(),
+    generatedBy: z.string().trim().min(1).optional(),
+    proposalId: z.string().optional(),
+    projectFingerprint: z.string().optional(),
+    revision: z.number().int().positive().optional(),
+    contentFingerprint: z.string().optional(),
+    rules: z.array(guardRuleSchema),
+    contracts: z.array(guardContractSchema),
+    questions: z.array(z.string()),
+    decisions: z.array(guardProposalDecisionSchema).optional(),
+  })
+  .superRefine((proposal, context) => {
+    const decisionIds = new Set<string>();
+    for (const [index, decision] of (proposal.decisions ?? []).entries()) {
+      if (decision.decisionId === undefined) continue;
+      if (decisionIds.has(decision.decisionId)) {
+        context.addIssue({
+          code: 'custom',
+          message: 'decisionId values must be unique.',
+          path: ['decisions', index, 'decisionId'],
+        });
+      }
+      decisionIds.add(decision.decisionId);
+    }
+  });
 
 export const guardAgentConfigSchema = z.object({
   version: z.literal(1),

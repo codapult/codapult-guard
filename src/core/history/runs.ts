@@ -70,6 +70,24 @@ export class GuardRunManifestError extends Error {
 function isGuardRunManifest(value: unknown): value is GuardRunManifest {
   if (value === null || typeof value !== 'object') return false;
   const manifest = value as Partial<GuardRunManifest>;
+  const stages = manifest.stages;
+  const validStages =
+    stages !== null &&
+    typeof stages === 'object' &&
+    !Array.isArray(stages) &&
+    Object.values(stages).every((stage) => {
+      if (stage === null || typeof stage !== 'object') return false;
+      const candidate = stage as Partial<GuardRunStage>;
+      return (
+        typeof candidate.durationMs === 'number' &&
+        Number.isFinite(candidate.durationMs) &&
+        candidate.durationMs >= 0 &&
+        (candidate.status === 'ok' ||
+          candidate.status === 'fail' ||
+          candidate.status === 'skipped') &&
+        (candidate.detail === undefined || typeof candidate.detail === 'string')
+      );
+    });
   return (
     manifest.version === 1 &&
     typeof manifest.runId === 'string' &&
@@ -79,6 +97,7 @@ function isGuardRunManifest(value: unknown): value is GuardRunManifest {
     Number.isFinite(Date.parse(manifest.startedAt)) &&
     typeof manifest.completedAt === 'string' &&
     Number.isFinite(Date.parse(manifest.completedAt)) &&
+    Date.parse(manifest.completedAt) >= Date.parse(manifest.startedAt) &&
     typeof manifest.durationMs === 'number' &&
     Number.isFinite(manifest.durationMs) &&
     manifest.durationMs >= 0 &&
@@ -88,8 +107,7 @@ function isGuardRunManifest(value: unknown): value is GuardRunManifest {
       manifest.outcome === 'needs-review' ||
       manifest.outcome === 'not-configured') &&
     typeof manifest.gate === 'string' &&
-    manifest.stages !== null &&
-    typeof manifest.stages === 'object' &&
+    validStages &&
     (manifest.policy === undefined ||
       (manifest.policy !== null &&
         typeof manifest.policy === 'object' &&
@@ -102,7 +120,8 @@ function isGuardRunManifest(value: unknown): value is GuardRunManifest {
         (manifest.policy.changedFromBase === undefined ||
           typeof manifest.policy.changedFromBase === 'boolean') &&
         (manifest.policy.decisionIds === undefined ||
-          (Array.isArray(manifest.policy.decisionIds) &&
+          (manifest.policy.source === 'working-tree' &&
+            Array.isArray(manifest.policy.decisionIds) &&
             new Set(manifest.policy.decisionIds).size === manifest.policy.decisionIds.length &&
             manifest.policy.decisionIds.every(
               (decisionId) => typeof decisionId === 'string' && decisionId.trim().length > 0,

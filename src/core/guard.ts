@@ -657,6 +657,12 @@ export interface GuardPolicySnapshot {
   ref?: string | undefined;
 }
 
+export interface GuardWorkingTreePolicyState {
+  config: GuardConfig;
+  snapshot: GuardPolicySnapshot;
+  proposals?: GuardProposalFile | undefined;
+}
+
 /**
  * Fingerprints the effective policy used by a verification run.
  *
@@ -981,6 +987,32 @@ function readGuardWaiversUnlocked(root: string): GuardWaiversFile {
 export function loadGuardWaivers(root: string): GuardWaiver[] {
   if (!existsSync(resolve(root, GUARD_DIR))) return readGuardWaiversUnlocked(root).waivers;
   return withGuardStateLock(root, () => readGuardWaiversUnlocked(root).waivers);
+}
+
+function readGuardWorkingTreePolicyUnlocked(root: string): GuardWorkingTreePolicyState | undefined {
+  recoverGuardPolicyTransaction(root);
+  const guardConfig = readGuardConfigFilesUnlocked(root);
+  if (!guardConfig) return undefined;
+  const baseline = loadBaseline(root);
+  const waivers = readGuardWaiversUnlocked(root).waivers;
+  const agentConfig = loadGuardAgentConfig(root);
+  return {
+    config: guardConfig,
+    snapshot: createGuardPolicySnapshot(
+      guardConfig,
+      baseline,
+      waivers,
+      'working-tree',
+      undefined,
+      agentConfig,
+    ),
+    proposals: loadGuardProposalsUnlocked(root),
+  };
+}
+
+export function loadGuardWorkingTreePolicy(root: string): GuardWorkingTreePolicyState | undefined {
+  if (!existsSync(resolve(root, GUARD_DIR))) return readGuardWorkingTreePolicyUnlocked(root);
+  return withGuardStateLock(root, () => readGuardWorkingTreePolicyUnlocked(root));
 }
 
 export function writeGuardWaivers(root: string): void {

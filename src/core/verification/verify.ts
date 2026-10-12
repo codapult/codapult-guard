@@ -10,13 +10,8 @@ import {
   type ProjectRuntimeDiagnostics,
 } from '../../adapters/project-checks.js';
 import {
-  loadBaseline,
   loadGuardPolicyAtRevision,
-  createGuardPolicySnapshot,
-  loadGuardWaivers,
-  loadGuardAgentConfig,
-  loadGuardConfig,
-  loadGuardProposals,
+  loadGuardWorkingTreePolicy,
   scanGuard,
   classifyGuardOutcome,
   validateGuardPolicy,
@@ -126,9 +121,9 @@ export function runGuardVerification(
       run,
     };
   }
-  let config;
+  let workingTreeState;
   try {
-    config = loadGuardConfig(root);
+    workingTreeState = loadGuardWorkingTreePolicy(root);
   } catch (error) {
     const run = finishGuardRun(root, runContext, 'fail', 'configuration');
     return {
@@ -146,7 +141,7 @@ export function runGuardVerification(
       run,
     };
   }
-  if (!config) {
+  if (!workingTreeState) {
     const run = finishGuardRun(root, runContext, 'not-configured', 'configuration');
     return {
       status: 'not-configured',
@@ -168,14 +163,7 @@ export function runGuardVerification(
   let policyChanged: boolean;
   let policyDecisionIds: string[] = [];
   try {
-    workingTreeSnapshot = createGuardPolicySnapshot(
-      config,
-      loadBaseline(root),
-      loadGuardWaivers(root),
-      'working-tree',
-      undefined,
-      loadGuardAgentConfig(root),
-    );
+    workingTreeSnapshot = workingTreeState.snapshot;
     const baseSnapshot = options.policyBase
       ? loadGuardPolicyAtRevision(root, options.policyBase)
       : undefined;
@@ -200,7 +188,7 @@ export function runGuardVerification(
     policyChanged =
       baseSnapshot !== undefined && baseSnapshot.fingerprint !== workingTreeSnapshot.fingerprint;
     if (policySnapshot.source === 'working-tree') {
-      policyDecisionIds = (loadGuardProposals(root)?.decisions ?? [])
+      policyDecisionIds = (workingTreeState.proposals?.decisions ?? [])
         .filter((decision) => decision.policyFingerprint === policySnapshot.fingerprint)
         .map(
           (decision) =>

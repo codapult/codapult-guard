@@ -95,7 +95,7 @@ describe('Guard governance audit', () => {
       reachability: {
         approvedWithPolicyFingerprint: 1,
         approvedLinkedToRun: 1,
-        approvedWithoutRun: 0,
+        approvedWithoutRun: 1,
       },
     });
     expect(result.warnings).toEqual(
@@ -162,5 +162,43 @@ describe('Guard governance audit', () => {
     expect(result.warnings).toContain(
       'Some approved decisions have no retained verification run linked by decision ID.',
     );
+  });
+
+  it('reports approvals without policy metadata as unreachable', () => {
+    const root = mkdtempSync(join(tmpdir(), 'guard-governance-metadata-'));
+    roots.push(root);
+    mkdirSync(join(root, '.codapult/guard'), { recursive: true });
+    writeFileSync(
+      join(root, '.codapult/guard/rules.json'),
+      JSON.stringify({ version: 1, rules: [] }),
+    );
+    writeFileSync(
+      join(root, '.codapult/guard/proposals.json'),
+      JSON.stringify({
+        version: 1,
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        rules: [],
+        contracts: [],
+        questions: [],
+        decisions: [
+          {
+            decisionId: 'decision-without-policy',
+            id: 'rule-1',
+            type: 'rule',
+            decision: 'approved',
+            decidedAt: '2026-01-01T00:00:01.000Z',
+            actor: 'reviewer',
+          },
+        ],
+      }),
+    );
+
+    const result = auditGuardGovernance(root);
+
+    expect(result.reachability).toMatchObject({
+      approvedWithPolicyFingerprint: 0,
+      approvedLinkedToRun: 0,
+      approvedWithoutRun: 1,
+    });
   });
 });

@@ -239,7 +239,7 @@ function auditGuardGovernanceUnlocked(root: string): GuardGovernanceAudit {
     reachability: {
       approvedWithPolicyFingerprint,
       approvedLinkedToRun,
-      approvedWithoutRun: approvedWithPolicyFingerprint - approvedLinkedToRun,
+      approvedWithoutRun: approved.length - approvedLinkedToRun,
       runsWithPolicy: runs.filter((run) => run.policy !== undefined).length,
       runsWithoutPolicy: runs.filter((run) => run.policy === undefined).length,
     },
