@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.0](https://github.com/codapult/codapult-guard/compare/v0.8.1...v0.9.0) (2026-10-15)
+
+### Features
+
+* expose guarded policy and MCP context ([69d840d](https://github.com/codapult/codapult-guard/commit/69d840d920c56a8106e6f21f0bd04254f6af1b54))
+* **mcp:** separate context state clearly ([f8a42e8](https://github.com/codapult/codapult-guard/commit/f8a42e8ec0be4955885777bbc45f145abf7c35ba))
+
+### Bug Fixes
+
+* **core:** harden guard state and policy artifacts ([0ea45ca](https://github.com/codapult/codapult-guard/commit/0ea45ca392c6916a3cff13257a184b27fcadd2f6))
+
 ## [0.8.1](https://github.com/codapult/codapult-guard/compare/v0.8.0...v0.8.1) (2026-10-12)
 
 ### Bug Fixes
