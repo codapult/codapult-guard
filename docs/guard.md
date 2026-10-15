@@ -621,7 +621,7 @@ are:
 
 | MCP tool                         | Purpose                                                                                                        | Writes by default?                                                |
 | -------------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `codapult_guard_context`         | Read current project facts, policy, architecture, and completion config.                                       | No                                                                |
+| `codapult_guard_context`         | Read explicitly separated observations, proposals, active policy, and verification state.                      | No                                                                |
 | `codapult_guard_analyze`         | Refresh persisted facts and snapshots without changing policy or baseline.                                     | Requires `confirm: true`.                                         |
 | `codapult_guard_propose`         | Generate evidence-based proposals.                                                                             | No; persistence requires `persist: true` and `confirm: true`.     |
 | `codapult_guard_init`            | Initialize Guard.                                                                                              | Requires `confirm: true`; force also requires confirmation.       |
@@ -638,6 +638,22 @@ are:
 
 Every tool accepts an optional `root`. If omitted, the MCP process working directory is used. The
 host should pass a project root when its MCP process is not started there.
+
+`codapult_guard_context` keeps four states separate:
+
+- `observations`: facts discovered from the current project. They have `status: "observed-only"`
+  and are not enforced merely because a pattern is common.
+- `proposals`: rules and contracts suggested from evidence. Only pending items appear in
+  `pendingRules` and `pendingContracts`; they have `status: "pending-approval"` and
+  `requiresApproval: true`. Decided proposal history is not presented as pending policy.
+- `policy`: active rules and contracts, plus baseline and waiver state. Only this policy is used
+  for deterministic enforcement.
+- `verification`: the status of an actual check. Context reads state and returns
+  `status: "not-run"` with `findings: null`; call `codapult_guard_check` or
+  `codapult_guard_verify` for findings.
+
+This distinction prevents an observed convention from being mistaken for an approved rule or a
+context response from being mistaken for a passing verification.
 
 ### Registering the MCP server
 

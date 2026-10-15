@@ -63,7 +63,16 @@ describe('Guard MCP end-to-end operations', () => {
       name: 'codapult_guard_context',
       arguments: { refresh: false },
     });
-    expect(parseText(contextResult)).toMatchObject({ configured: true, project: { version: 1 } });
+    expect(parseText(contextResult)).toMatchObject({
+      configured: true,
+      observations: {
+        status: 'observed-only',
+        project: { version: 1 },
+      },
+      proposals: { requiresApproval: false },
+      policy: { status: 'active' },
+      verification: { status: 'not-run', findings: null },
+    });
 
     const reviewResult = await client.callTool({
       name: 'codapult_guard_review',

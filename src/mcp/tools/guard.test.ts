@@ -33,6 +33,7 @@ vi.mock('../../core/guard.js', () => ({
     },
   })),
   loadBaseline: vi.fn(() => new Set()),
+  loadGuardWaivers: vi.fn(() => []),
   loadGuardArtifact: vi.fn(() => ({ persisted: true })),
   loadGuardConfig: vi.fn(() => ({ version: 1, rules: [], contracts: [] })),
   loadProjectModel: vi.fn(() => ({ version: 1, persisted: true })),
@@ -70,8 +71,10 @@ const {
   loadProjectModel,
   buildGuardReviewPacket,
   loadGuardProposals,
+  getPendingGuardProposals,
   getGuardProposalFreshness,
   loadGuardConfig,
+  loadGuardWaivers,
 } = await import('../../core/guard.js');
 const { runGuardVerification } = await import('../../core/verification/verify.js');
 const { registerGuardTools } = await import('./guard.js');
@@ -79,6 +82,17 @@ const { registerGuardTools } = await import('./guard.js');
 interface ToolRegistration {
   name: string;
   handler: (args: Record<string, unknown>) => { content: { type: string; text: string }[] };
+}
+
+interface ContextResponse {
+  observations: { status: string };
+  proposals: {
+    status: string;
+    requiresApproval: boolean;
+    pendingRules: { id: string; status: string }[];
+  };
+  policy: { rules: unknown[] };
+  verification: { status: string; findings: unknown[] | null };
 }
 
 function createMockServer(): { registerTool: ReturnType<typeof vi.fn>; tools: ToolRegistration[] } {
@@ -91,7 +105,10 @@ function createMockServer(): { registerTool: ReturnType<typeof vi.fn>; tools: To
   return { registerTool, tools };
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(getPendingGuardProposals).mockReturnValue([]);
+});
 
 describe('registerGuardTools', () => {
   it('registers all Guard MCP tools', () => {
@@ -125,7 +142,121 @@ describe('registerGuardTools', () => {
 
     expect(discoverProjectWithMetrics).toHaveBeenCalledWith('/project', { persistCache: true });
     expect(loadProjectModel).not.toHaveBeenCalled();
-    expect(JSON.parse(result.content[0].text)).toMatchObject({ tools: 'auto' });
+    expect(JSON.parse(result.content[0].text)).toMatchObject({
+      tools: 'auto',
+      observations: { status: 'observed-only' },
+      proposals: {
+        status: 'none',
+        requiresApproval: false,
+        pendingRules: [],
+        pendingContracts: [],
+      },
+      policy: {
+        status: 'active',
+        rules: [],
+        contracts: [],
+        baseline: { status: 'active', count: 0 },
+        waivers: [],
+      },
+      verification: {
+        status: 'not-run',
+        findings: null,
+        next: 'codapult_guard_check',
+      },
+    });
+  });
+
+  it('marks recurring observations as unapproved until a proposal is explicitly approved', () => {
+    vi.mocked(loadGuardProposals).mockReturnValue({
+      version: 1,
+      generatedAt: 'now',
+      proposalId: 'proposal-id',
+      rules: [
+        {
+          id: 'observed-rule',
+          description: 'Observed rule',
+          severity: 'warning',
+          kind: 'forbidden-import',
+          patterns: ['legacy-db'],
+          status: 'proposed',
+        },
+      ],
+      contracts: [],
+      questions: ['Which module is canonical?'],
+    });
+    vi.mocked(getGuardProposalFreshness).mockReturnValue('current');
+    vi.mocked(getPendingGuardProposals).mockReturnValue([{ id: 'observed-rule', type: 'rule' }]);
+    const server = createMockServer();
+    registerGuardTools(server as never);
+    const handler = server.tools.find((tool) => tool.name === 'codapult_guard_context')!.handler;
+
+    const context = JSON.parse(handler({ refresh: true }).content[0].text) as ContextResponse;
+
+    expect(context.observations.status).toBe('observed-only');
+    expect(context.proposals).toMatchObject({
+      status: 'pending-approval',
+      requiresApproval: true,
+      pendingRules: [{ id: 'observed-rule', status: 'proposed' }],
+    });
+    expect(context.policy.rules).toEqual([]);
+    expect(context.verification).toMatchObject({
+      status: 'not-run',
+      findings: null,
+    });
+  });
+
+  it('does not present decided proposal history as pending policy', () => {
+    vi.mocked(loadGuardProposals).mockReturnValue({
+      version: 1,
+      generatedAt: 'now',
+      proposalId: 'proposal-id',
+      rules: [
+        {
+          id: 'decided-rule',
+          description: 'Decided rule',
+          severity: 'error',
+          kind: 'forbidden-import',
+          patterns: ['legacy-db'],
+          status: 'proposed',
+        },
+      ],
+      contracts: [],
+      questions: [],
+    });
+    vi.mocked(getGuardProposalFreshness).mockReturnValue('current');
+    vi.mocked(getPendingGuardProposals).mockReturnValue([]);
+    const server = createMockServer();
+    registerGuardTools(server as never);
+    const handler = server.tools.find((tool) => tool.name === 'codapult_guard_context')!.handler;
+
+    const context = JSON.parse(handler({ refresh: true }).content[0].text) as ContextResponse;
+
+    expect(context.proposals).toMatchObject({
+      status: 'decided',
+      requiresApproval: false,
+      pendingRules: [],
+    });
+  });
+
+  it('returns a structured error when waiver state is malformed', () => {
+    vi.mocked(loadGuardWaivers).mockImplementation(() => {
+      throw new Error('Invalid .codapult/guard/waivers.json');
+    });
+    const server = createMockServer();
+    registerGuardTools(server as never);
+    const handler = server.tools.find((tool) => tool.name === 'codapult_guard_context')!.handler;
+
+    const result = handler({ refresh: true });
+    const payload = JSON.parse(result.content[0].text) as {
+      errorCode?: string;
+      hint?: string;
+    };
+
+    expect(result).toHaveProperty('isError', true);
+    expect(payload).toMatchObject({
+      errorCode: 'GUARD_CONFIG_INVALID',
+      hint: 'Repair waivers.json, then run codapult-guard doctor.',
+    });
   });
 
   it('does not ask for policy review after the current proposal was decided', () => {

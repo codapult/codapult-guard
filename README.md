@@ -325,6 +325,12 @@ task finished
   → repeat until pass or bounded iteration limit
 ```
 
+`codapult_guard_context` keeps the project state explicit for the host: `observations` are
+discovered facts only, `proposals.pendingRules` and `proposals.pendingContracts` are unapproved
+policy suggestions, `policy` contains only active rules/contracts plus baseline and waiver state,
+and `verification` reports whether a check has actually run. A context response with
+`verification.status: "not-run"` and `findings: null` is not a passing check.
+
 For Cursor, Claude Code, Codex, Gemini CLI, GitHub Copilot, and generic hosts, see
 [`docs/integrations/`](docs/integrations/).
 
