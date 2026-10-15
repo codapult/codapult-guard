@@ -1,5 +1,6 @@
 import {
   existsSync,
+  symlinkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -65,6 +66,7 @@ import {
   getPendingGuardProposals,
   buildGuardReviewPacket,
   classifyGuardOutcome,
+  getGuardPolicyMutationPolicy,
 } from './guard.js';
 
 const config: GuardConfig = {
@@ -97,6 +99,50 @@ function createProject(files: Record<string, string>): string {
 }
 
 describe('scanGuard', () => {
+  it('rejects Guard state directories that escape the project through symlinks', () => {
+    const root = createProject({});
+    const outside = mkdtempSync(join(tmpdir(), 'codapult-guard-outside-'));
+    roots.push(outside);
+    symlinkSync(outside, join(root, dirname(GUARD_DIR)));
+
+    expect(() => withGuardStateLock(root, () => undefined)).toThrow('must not be a symbolic link');
+  });
+
+  it('declares external control for policy mutations in protected mode', () => {
+    const policy = getGuardPolicyMutationPolicy({
+      version: 1,
+      rules: [],
+      approval: {
+        mode: 'protected',
+        allowMcpApproval: false,
+        requireDistinctActor: true,
+      },
+    });
+
+    expect(policy).toMatchObject({
+      status: 'declared',
+      humanOnlyEnforcedByGuard: false,
+      approvalMode: 'protected',
+      requireDistinctActor: true,
+    });
+    expect(policy.operations).toContainEqual(
+      expect.objectContaining({
+        id: 'waiver.add',
+        guardBlocksMcp: true,
+        reasonRequired: true,
+        externalApprovalRequired: true,
+        externalControl: 'host-or-ci',
+      }),
+    );
+    expect(policy.operations).toContainEqual(
+      expect.objectContaining({
+        id: 'baseline.accept',
+        reasonRequired: true,
+        externalApprovalRequired: true,
+      }),
+    );
+  });
+
   it('reports forbidden server imports from client components', () => {
     const root = createProject({
       'client.tsx': `'use client';\nimport { db } from '@/lib/db';\n`,
@@ -625,6 +671,18 @@ describe('guard contracts', () => {
     expect(() => loadBaseline(root)).toThrow('Guard configuration is invalid');
   });
 
+  it('rejects non-string baseline entries and symlinked JSON artifacts', () => {
+    const root = createProject({});
+    mkdirSync(join(root, GUARD_DIR), { recursive: true });
+    writeFileSync(join(root, GUARD_BASELINE_FILE), JSON.stringify(['valid', 42]));
+    expect(() => loadBaseline(root)).toThrow('Guard configuration is invalid');
+
+    writeFileSync(join(root, 'outside.json'), JSON.stringify({}));
+    rmSync(join(root, GUARD_BASELINE_FILE));
+    symlinkSync(join(root, 'outside.json'), join(root, GUARD_BASELINE_FILE));
+    expect(() => loadBaseline(root)).toThrow('Guard configuration is invalid');
+  });
+
   it('protects an existing baseline from accidental reinitialization', () => {
     const root = createProject({
       'package.json': JSON.stringify({ name: 'fixture', scripts: {} }),
@@ -1058,14 +1116,14 @@ describe('guard contracts', () => {
     expect(loadGuardArtifact(root, GUARD_PROJECT_FILE)).toBeUndefined();
   });
 
-  it('rejects malformed config and preserves only valid baseline fingerprints', () => {
+  it('rejects malformed config and baseline fingerprints', () => {
     const root = createProject({});
     mkdirSync(join(root, GUARD_DIR), { recursive: true });
     writeFileSync(join(root, GUARD_DIR, 'rules.json'), '{"version":1,"rules":[null]}');
     writeFileSync(join(root, GUARD_DIR, 'baseline.json'), JSON.stringify(['ok', 42, null]));
 
     expect(() => loadGuardConfig(root)).toThrow('Guard configuration is invalid');
-    expect(loadBaseline(root)).toEqual(new Set(['ok']));
+    expect(() => loadBaseline(root)).toThrow('Guard configuration is invalid');
   });
 
   it('writes and reads Guard artifacts and reports missing contract paths', () => {

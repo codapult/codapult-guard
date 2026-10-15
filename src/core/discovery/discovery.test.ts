@@ -395,6 +395,19 @@ export const key = process.env['API_KEY'];
     expect(refreshedCache.version).toBe(3);
   });
 
+  it('does not persist discovery cache through a symlinked Guard directory', () => {
+    const root = mkdtempSync(join(tmpdir(), 'guard-cache-linked-'));
+    const outside = mkdtempSync(join(tmpdir(), 'guard-cache-outside-'));
+    roots.push(root, outside);
+    symlinkSync(outside, join(root, '.codapult'));
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'cache-linked' }));
+    writeFileSync(join(root, 'index.ts'), 'export const value = 1;\n');
+
+    discoverProject(root, { persistCache: true });
+
+    expect(existsSync(join(outside, 'guard/cache.json'))).toBe(false);
+  });
+
   it('returns bounded analysis metrics without changing the project model shape', () => {
     const root = mkdtempSync(join(tmpdir(), 'guard-metrics-'));
     roots.push(root);

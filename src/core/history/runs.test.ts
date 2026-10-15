@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -81,6 +81,18 @@ describe('Guard run observability', () => {
       JSON.stringify({ version: 1, outcome: 'pass', gate: 'none' }),
       'utf8',
     );
+
+    expect(listGuardRuns(root)).toEqual([]);
+  });
+
+  it('does not read run manifests through symlinks', () => {
+    const root = createRoot();
+    const outside = createRoot();
+    const outsidePath = join(outside, 'outside.json');
+    writeFileSync(outsidePath, JSON.stringify(manifest('guard-outside', 'pass')), 'utf8');
+    const directory = join(root, GUARD_RUNS_DIR);
+    mkdirSync(directory, { recursive: true });
+    symlinkSync(outsidePath, join(directory, 'linked.json'));
 
     expect(listGuardRuns(root)).toEqual([]);
   });

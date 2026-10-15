@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { GUARD_HISTORY_DIR } from '../guard.js';
 import type { ProjectModel } from '../discovery/discovery.js';
@@ -51,9 +51,9 @@ function layerEdges(model: ProjectModel): string[] {
 function readSnapshot(root: string, revision: string): ProjectModel | undefined {
   if (!/^[A-Za-z0-9._-]+$/.test(revision)) return undefined;
   try {
-    return JSON.parse(
-      readFileSync(resolve(root, GUARD_HISTORY_DIR, `${revision}.json`), 'utf8'),
-    ) as ProjectModel;
+    const path = resolve(root, GUARD_HISTORY_DIR, `${revision}.json`);
+    if (!lstatSync(path).isFile()) return undefined;
+    return JSON.parse(readFileSync(path, 'utf8')) as ProjectModel;
   } catch {
     return undefined;
   }
@@ -62,8 +62,20 @@ function readSnapshot(root: string, revision: string): ProjectModel | undefined 
 export function listGuardSnapshots(root: string): GuardSnapshotSummary[] {
   const directory = resolve(root, GUARD_HISTORY_DIR);
   if (!existsSync(directory)) return [];
+  try {
+    if (lstatSync(directory).isSymbolicLink() || !lstatSync(directory).isDirectory()) return [];
+  } catch {
+    return [];
+  }
   return readdirSync(directory)
     .filter((file) => file.endsWith('.json'))
+    .filter((file) => {
+      try {
+        return lstatSync(resolve(directory, file)).isFile();
+      } catch {
+        return false;
+      }
+    })
     .sort()
     .flatMap((file) => {
       const revision = file.slice(0, -5);

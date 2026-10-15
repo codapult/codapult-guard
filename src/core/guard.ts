@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -168,10 +169,128 @@ export interface GuardConfig {
   waiverPolicy?: GuardWaiverPolicy | undefined;
 }
 
+export function getGuardPolicyMutationPolicy(
+  guardConfig: GuardConfig | undefined,
+): GuardPolicyMutationPolicy {
+  const approval: GuardApprovalPolicy = guardConfig?.approval ?? {
+    mode: 'local',
+    allowMcpApproval: true,
+    requireDistinctActor: false,
+  };
+  const protectedMode = approval.mode === 'protected';
+  const mcpApprovalBlocked = protectedMode && !approval.allowMcpApproval;
+  const descriptor = (
+    id: GuardPolicyMutationId,
+    surfaces: GuardPolicyMutationDescriptor['surfaces'],
+    options: Pick<GuardPolicyMutationDescriptor, 'guardConfirmation' | 'reasonRequired'> &
+      Partial<Pick<GuardPolicyMutationDescriptor, 'guardBlocksMcp'>>,
+  ): GuardPolicyMutationDescriptor => ({
+    id,
+    surfaces,
+    changesPolicy: true,
+    ...options,
+    ...(options.guardBlocksMcp !== undefined ? { guardBlocksMcp: options.guardBlocksMcp } : {}),
+    externalApprovalRequired: true,
+    externalControl: 'host-or-ci',
+  });
+
+  return {
+    version: 1,
+    status: 'declared',
+    humanOnlyEnforcedByGuard: false,
+    message:
+      'Guard identifies policy mutations and applies its configured checks; a host or CI system must enforce human/external approval.',
+    approvalMode: approval.mode,
+    requireDistinctActor: approval.requireDistinctActor,
+    operations: [
+      descriptor('init.force', ['cli', 'mcp'], {
+        guardConfirmation: true,
+        reasonRequired: false,
+        guardBlocksMcp: mcpApprovalBlocked,
+      }),
+      descriptor('proposal.approve', ['mcp'], {
+        guardConfirmation: true,
+        reasonRequired: false,
+        guardBlocksMcp: mcpApprovalBlocked,
+      }),
+      descriptor('proposal.reject', ['mcp'], {
+        guardConfirmation: true,
+        reasonRequired: false,
+        guardBlocksMcp: false,
+      }),
+      descriptor('rules.approve', ['cli'], { guardConfirmation: false, reasonRequired: false }),
+      descriptor('contracts.approve', ['cli'], {
+        guardConfirmation: false,
+        reasonRequired: false,
+      }),
+      descriptor('contracts.reject', ['cli'], {
+        guardConfirmation: false,
+        reasonRequired: false,
+      }),
+      descriptor('baseline.accept', ['cli'], { guardConfirmation: false, reasonRequired: true }),
+      descriptor('baseline.remove', ['cli'], { guardConfirmation: false, reasonRequired: true }),
+      descriptor('waiver.add', ['cli', 'mcp'], {
+        guardConfirmation: true,
+        reasonRequired: true,
+        guardBlocksMcp: mcpApprovalBlocked,
+      }),
+      descriptor('waiver.renew', ['cli', 'mcp'], {
+        guardConfirmation: true,
+        reasonRequired: true,
+        guardBlocksMcp: mcpApprovalBlocked,
+      }),
+      descriptor('waiver.remove', ['cli', 'mcp'], {
+        guardConfirmation: true,
+        reasonRequired: true,
+        guardBlocksMcp: mcpApprovalBlocked,
+      }),
+      descriptor('policy-file.edit', ['file'], {
+        guardConfirmation: false,
+        reasonRequired: false,
+      }),
+    ],
+  };
+}
+
 export interface GuardApprovalPolicy {
   mode: GuardApprovalMode;
   allowMcpApproval: boolean;
   requireDistinctActor: boolean;
+}
+
+export type GuardPolicyMutationId =
+  | 'init.force'
+  | 'proposal.approve'
+  | 'proposal.reject'
+  | 'rules.approve'
+  | 'contracts.approve'
+  | 'contracts.reject'
+  | 'baseline.accept'
+  | 'baseline.remove'
+  | 'waiver.add'
+  | 'waiver.renew'
+  | 'waiver.remove'
+  | 'policy-file.edit';
+
+export interface GuardPolicyMutationDescriptor {
+  id: GuardPolicyMutationId;
+  surfaces: ('cli' | 'mcp' | 'file')[];
+  changesPolicy: true;
+  guardConfirmation: boolean;
+  reasonRequired: boolean;
+  guardBlocksMcp?: boolean | undefined;
+  externalApprovalRequired: true;
+  externalControl: 'host-or-ci';
+}
+
+export interface GuardPolicyMutationPolicy {
+  version: 1;
+  status: 'declared';
+  humanOnlyEnforcedByGuard: false;
+  message: string;
+  approvalMode: GuardApprovalMode;
+  requireDistinctActor: boolean;
+  operations: GuardPolicyMutationDescriptor[];
 }
 
 export interface GuardProposalFile {
@@ -438,12 +557,28 @@ function safeGeneration(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Za-z0-9._-]+$/.test(value);
 }
 
+function assertGuardStateDirectory(root: string): void {
+  const stateParent = resolve(root, dirname(GUARD_DIR));
+  const stateDirectory = resolve(root, GUARD_DIR);
+  for (const path of [stateParent, stateDirectory]) {
+    if (!existsSync(path)) continue;
+    const stats = lstatSync(path);
+    if (stats.isSymbolicLink()) {
+      throw new GuardConfigError(`${path} must not be a symbolic link.`);
+    }
+    if (!stats.isDirectory()) {
+      throw new GuardConfigError(`${path} must be a directory.`);
+    }
+  }
+}
+
 export function withGuardStateLock<T>(
   root: string,
   callback: () => T,
   options: GuardStateLockOptions = {},
 ): T {
   const normalizedRoot = resolve(root);
+  assertGuardStateDirectory(normalizedRoot);
   const activeDepth = activeStateLocks.get(normalizedRoot);
   if (activeDepth !== undefined) {
     activeStateLocks.set(normalizedRoot, activeDepth + 1);
@@ -515,6 +650,13 @@ function isGuardConfig(value: unknown): value is GuardConfig {
 }
 
 function readJson(filePath: string): unknown {
+  let stats;
+  try {
+    stats = lstatSync(filePath);
+  } catch {
+    return undefined;
+  }
+  if (stats.isSymbolicLink()) throw new GuardConfigError(filePath);
   try {
     return JSON.parse(readFileSync(filePath, 'utf8')) as unknown;
   } catch {
@@ -931,8 +1073,15 @@ export function loadBaseline(root: string): Set<string> {
   const path = resolve(root, GUARD_BASELINE_FILE);
   if (!existsSync(path)) return new Set();
   const value = readJson(path);
-  if (!Array.isArray(value)) throw new GuardConfigError(GUARD_BASELINE_FILE);
-  return new Set(value.filter((item): item is string => typeof item === 'string'));
+  if (!Array.isArray(value)) {
+    throw new GuardConfigError(GUARD_BASELINE_FILE);
+  }
+  const entries = value as unknown[];
+  const stringEntries = entries.filter((item): item is string => typeof item === 'string');
+  if (stringEntries.length !== entries.length) {
+    throw new GuardConfigError(GUARD_BASELINE_FILE);
+  }
+  return new Set<string>(stringEntries);
 }
 
 interface GuardWaiversFile {

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -55,5 +55,18 @@ describe('Guard history', () => {
       addedCapabilities: ['api'],
       removedCapabilities: ['ui'],
     });
+  });
+
+  it('does not read project snapshots through symlinks', () => {
+    const root = mkdtempSync(join(tmpdir(), 'guard-history-linked-'));
+    const outside = mkdtempSync(join(tmpdir(), 'guard-history-outside-'));
+    roots.push(root, outside);
+    const directory = join(root, GUARD_HISTORY_DIR);
+    const outsidePath = join(outside, 'outside.json');
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(outsidePath, JSON.stringify(model(['outside.ts'], {}, ['ui'])));
+    symlinkSync(outsidePath, join(directory, 'linked.json'));
+
+    expect(listGuardSnapshots(root)).toEqual([]);
   });
 });

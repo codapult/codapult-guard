@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import {
+  existsSync,
   mkdirSync,
+  lstatSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -11,6 +13,7 @@ import {
 } from 'node:fs';
 import { resolve } from 'node:path';
 import { config } from '../config.js';
+import { withGuardStateLock } from '../guard.js';
 
 export const GUARD_RUNS_DIR = `.${config.appName}/guard/history/runs`;
 export const GUARD_RUN_RETENTION = 200;
@@ -155,11 +158,14 @@ export function recordGuardRunStage(
 function pruneGuardRuns(root: string): void {
   const directory = resolve(root, GUARD_RUNS_DIR);
   try {
+    if (lstatSync(directory).isSymbolicLink() || !lstatSync(directory).isDirectory()) return;
     const files = readdirSync(directory)
       .filter((file) => file.endsWith('.json'))
       .map((file) => ({
         file,
-        modifiedAt: statSync(resolve(directory, file)).mtimeMs,
+        modifiedAt: lstatSync(resolve(directory, file)).isSymbolicLink()
+          ? 0
+          : statSync(resolve(directory, file)).mtimeMs,
       }))
       .sort((left, right) => right.modifiedAt - left.modifiedAt);
     for (const entry of files.slice(GUARD_RUN_RETENTION)) {
@@ -176,13 +182,19 @@ function pruneGuardRuns(root: string): void {
 
 export function writeGuardRun(root: string, manifest: GuardRunManifest): void {
   if (!isGuardRunManifest(manifest)) throw new GuardRunManifestError();
-  const directory = resolve(root, GUARD_RUNS_DIR);
-  mkdirSync(directory, { recursive: true });
-  const path = resolve(directory, `${manifest.runId}.json`);
-  const temporaryPath = `${path}.tmp-${process.pid}-${manifest.runId}`;
-  writeFileSync(temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
-  renameSync(temporaryPath, path);
-  pruneGuardRuns(root);
+  withGuardStateLock(root, () => {
+    const directory = resolve(root, GUARD_RUNS_DIR);
+    if (existsSync(directory)) {
+      const stats = lstatSync(directory);
+      if (stats.isSymbolicLink() || !stats.isDirectory()) throw new GuardRunManifestError();
+    }
+    mkdirSync(directory, { recursive: true });
+    const path = resolve(directory, `${manifest.runId}.json`);
+    const temporaryPath = `${path}.tmp-${process.pid}-${manifest.runId}`;
+    writeFileSync(temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+    renameSync(temporaryPath, path);
+    pruneGuardRuns(root);
+  });
 }
 
 /** Reads locally persisted run manifests without reaching a remote service. */
@@ -191,8 +203,17 @@ export function listGuardRuns(root: string, limit = 20): GuardRunManifest[] {
   const boundedLimit = Math.min(limit, 1_000);
   const directory = resolve(root, GUARD_RUNS_DIR);
   try {
+    const directoryStats = lstatSync(directory);
+    if (directoryStats.isSymbolicLink() || !directoryStats.isDirectory()) return [];
     return readdirSync(directory)
       .filter((file) => file.endsWith('.json'))
+      .filter((file) => {
+        try {
+          return lstatSync(resolve(directory, file)).isFile();
+        } catch {
+          return false;
+        }
+      })
       .map((file) => {
         try {
           const value: unknown = JSON.parse(readFileSync(resolve(directory, file), 'utf8'));

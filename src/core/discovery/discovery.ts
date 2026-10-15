@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -196,6 +197,21 @@ const DISCOVERY_CACHE_VERSION = 3;
 
 function discoveryCachePath(root: string): string {
   return resolve(root, `.${config.appName}/guard/cache.json`);
+}
+
+function canPersistDiscoveryCache(root: string): boolean {
+  const parent = resolve(root, `.${config.appName}`);
+  const directory = dirname(discoveryCachePath(root));
+  for (const path of [parent, directory]) {
+    if (!existsSync(path)) continue;
+    try {
+      const stats = lstatSync(path);
+      if (stats.isSymbolicLink() || !stats.isDirectory()) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 
 export function clearDiscoveryCache(root: string): void {
@@ -1305,7 +1321,10 @@ function discoverProjectOnce(
   }
   discoveryCache.set(cacheKey, { signature, model });
   discoveryReuse.set(cacheKey, reusedModules);
-  if (options.persistCache ?? existsSync(resolve(root, `.${config.appName}/guard`))) {
+  if (
+    canPersistDiscoveryCache(root) &&
+    (options.persistCache ?? existsSync(resolve(root, `.${config.appName}/guard`)))
+  ) {
     try {
       mkdirSync(resolve(root, `.${config.appName}/guard`), { recursive: true });
       const cachePath = discoveryCachePath(root);
