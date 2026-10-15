@@ -34,6 +34,7 @@ import {
   getGuardProposalFreshness,
   scanGuard,
   classifyGuardOutcome,
+  getGuardPolicyMutationPolicy,
   validateGuardPolicy,
   writeProjectState,
   type GuardToolMode,
@@ -885,6 +886,29 @@ export function guardPolicyExplainCommand(id: string, options: GuardOutputOption
     if ((definition?.evidence?.length ?? 0) > 0)
       dim(`Evidence: ${definition?.evidence?.join(', ')}`);
     if (result.decisions.length > 0) dim(`Decisions: ${result.decisions.length}`);
+  }
+  process.exitCode = 0;
+}
+
+export function guardPolicyMutationsCommand(options: GuardOutputOptions = {}): void {
+  const root = getRoot();
+  const loaded = loadConfigSafely(root, options);
+  if (loaded.invalid) return;
+  const policy = getGuardPolicyMutationPolicy(loaded.config);
+  if (options.json) {
+    console.log(JSON.stringify(policy, null, 2));
+  } else {
+    heading('Guard Policy Mutations');
+    info(policy.message);
+    for (const operation of policy.operations) {
+      info(
+        `${operation.id}: ${operation.surfaces.join(', ')}; ${
+          operation.guardBlocksMcp === true
+            ? 'MCP blocked in protected mode'
+            : 'external control required'
+        }`,
+      );
+    }
   }
   process.exitCode = 0;
 }

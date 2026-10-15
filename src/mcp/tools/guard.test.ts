@@ -53,6 +53,15 @@ vi.mock('../../core/guard.js', () => ({
   validateGuardBudgets: vi.fn(() => []),
   validateGuardPolicy: vi.fn(() => []),
   classifyGuardOutcome: vi.fn(() => 'pass'),
+  getGuardPolicyMutationPolicy: vi.fn(() => ({
+    version: 1,
+    status: 'declared',
+    humanOnlyEnforcedByGuard: false,
+    message: 'external control required',
+    approvalMode: 'local',
+    requireDistinctActor: false,
+    operations: [],
+  })),
 }));
 
 vi.mock('../../core/verification/verify.js', () => ({
@@ -108,6 +117,7 @@ function createMockServer(): { registerTool: ReturnType<typeof vi.fn>; tools: To
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(getPendingGuardProposals).mockReturnValue([]);
+  vi.mocked(loadGuardWaivers).mockReturnValue([]);
 });
 
 describe('registerGuardTools', () => {
@@ -144,6 +154,10 @@ describe('registerGuardTools', () => {
     expect(loadProjectModel).not.toHaveBeenCalled();
     expect(JSON.parse(result.content[0].text)).toMatchObject({
       tools: 'auto',
+      mutationPolicy: {
+        status: 'declared',
+        humanOnlyEnforcedByGuard: false,
+      },
       observations: { status: 'observed-only' },
       proposals: {
         status: 'none',
@@ -374,6 +388,24 @@ describe('registerGuardTools', () => {
     expect(JSON.parse(result.content[0].text)).toMatchObject({ status: 'needs-confirmation' });
   });
 
+  it('does not allow MCP to force initialization in protected mode', () => {
+    vi.mocked(loadGuardConfig).mockReturnValue({
+      version: 1,
+      rules: [],
+      approval: { mode: 'protected', allowMcpApproval: false, requireDistinctActor: true },
+    });
+
+    const server = createMockServer();
+    registerGuardTools(server as never);
+    const handler = server.tools.find((tool) => tool.name === 'codapult_guard_init')!.handler;
+    const result = handler({ confirm: true, force: true });
+
+    expect(JSON.parse(result.content[0].text)).toMatchObject({
+      status: 'approval-required',
+      source: 'mcp',
+    });
+  });
+
   it('does not allow MCP to approve policy in protected mode', () => {
     vi.mocked(loadGuardConfig).mockReturnValue({
       version: 1,
@@ -407,6 +439,28 @@ describe('registerGuardTools', () => {
       (tool) => tool.name === 'codapult_guard_proposal_decide',
     )!.handler;
     const result = handler({ ids: ['rule'], decision: 'approved', confirm: true });
+
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ status: 'approval-required' });
+  });
+
+  it('does not allow MCP to add a waiver in protected mode', () => {
+    vi.mocked(loadGuardConfig).mockReturnValue({
+      version: 1,
+      rules: [],
+      approval: { mode: 'protected', allowMcpApproval: false, requireDistinctActor: true },
+    });
+
+    const server = createMockServer();
+    registerGuardTools(server as never);
+    const handler = server.tools.find((tool) => tool.name === 'codapult_guard_waivers')!.handler;
+    const result = handler({
+      action: 'add',
+      fingerprint: 'finding-fingerprint',
+      owner: 'architecture-team',
+      reason: 'Temporary compatibility exception.',
+      expires_at: '2027-01-01T00:00:00.000+00:00',
+      confirm: true,
+    });
 
     expect(JSON.parse(result.content[0].text)).toMatchObject({ status: 'approval-required' });
   });

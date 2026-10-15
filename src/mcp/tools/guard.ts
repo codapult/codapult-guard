@@ -33,16 +33,16 @@ import {
   updateGuardWaivers,
   validateGuardPolicy,
   classifyGuardOutcome,
+  getGuardPolicyMutationPolicy,
   type GuardConfig,
-  type GuardProposalFile,
   type GuardWaiver,
 } from '../../core/guard.js';
-import type { ProjectModel } from '../../core/discovery/discovery.js';
 import { guardErrorPayload } from '../../core/errors.js';
 import { analyzeProjectImpact } from '../../core/analysis/impact.js';
 import { z } from 'zod';
 import { runGuardVerification } from '../../core/verification/verify.js';
 import { auditGuardGovernance } from '../../core/audit/governance.js';
+import { buildGuardContextState } from '../context.js';
 
 const rootSchema = z.string().trim().min(1).optional().describe('Project path or workspace root.');
 
@@ -65,127 +65,6 @@ interface GuardBaselineLoadResult {
 interface GuardWaiversLoadResult {
   waivers?: GuardWaiver[] | undefined;
   error?: JsonToolResult | undefined;
-}
-
-type GuardDiscoveryMetrics = ReturnType<typeof discoverProjectWithMetrics>['metrics'];
-
-interface GuardContextObservations {
-  status: 'observed-only';
-  project: ProjectModel;
-  architecture: Record<string, unknown>;
-  conventions: Record<string, unknown>;
-  discovery: GuardDiscoveryMetrics | undefined;
-}
-
-interface GuardContextProposals {
-  status: 'not-configured' | 'none' | 'pending-approval' | 'stale' | 'decided';
-  requiresApproval: boolean;
-  freshness: 'current' | 'stale' | 'unknown' | 'none';
-  proposalId?: string | undefined;
-  generatedBy?: string | undefined;
-  pendingRules: GuardConfig['rules'];
-  pendingContracts: NonNullable<GuardConfig['contracts']>;
-  questions: string[];
-  pending: ReturnType<typeof getPendingGuardProposals>;
-}
-
-interface GuardContextPolicy {
-  status: 'not-configured' | 'active';
-  rules: GuardConfig['rules'];
-  contracts: NonNullable<GuardConfig['contracts']>;
-  baseline: {
-    status: 'not-configured' | 'active';
-    count: number;
-  };
-  waivers: GuardWaiver[];
-}
-
-interface GuardContextVerification {
-  status: 'not-run';
-  findings: null;
-  message: string;
-  next: 'codapult_guard_init' | 'codapult_guard_check';
-}
-
-interface GuardContextState {
-  observations: GuardContextObservations;
-  proposals: GuardContextProposals;
-  policy: GuardContextPolicy;
-  verification: GuardContextVerification;
-}
-
-function buildGuardContextState(
-  project: ProjectModel,
-  discovery: GuardDiscoveryMetrics | undefined,
-  architecture: Record<string, unknown>,
-  conventions: Record<string, unknown>,
-  config: GuardConfig | undefined,
-  proposals: GuardProposalFile | undefined,
-  baseline: Set<string>,
-  waivers: GuardWaiver[],
-): GuardContextState {
-  const pending = getPendingGuardProposals(proposals);
-  const freshness = proposals ? getGuardProposalFreshness(project, proposals) : 'none';
-  const pendingRuleIds = new Set(
-    pending.filter((item) => item.type === 'rule').map((item) => item.id),
-  );
-  const pendingContractIds = new Set(
-    pending.filter((item) => item.type === 'contract').map((item) => item.id),
-  );
-  const pendingRules =
-    proposals?.rules.filter((rule) => rule.status === 'proposed' && pendingRuleIds.has(rule.id)) ??
-    [];
-  const pendingContracts =
-    proposals?.contracts.filter(
-      (contract) => contract.status === 'proposed' && pendingContractIds.has(contract.id),
-    ) ?? [];
-  const proposalStatus =
-    config === undefined
-      ? 'not-configured'
-      : proposals === undefined
-        ? 'none'
-        : freshness === 'stale'
-          ? 'stale'
-          : pending.length > 0
-            ? 'pending-approval'
-            : 'decided';
-
-  return {
-    observations: {
-      status: 'observed-only',
-      project,
-      architecture,
-      conventions,
-      discovery,
-    },
-    proposals: {
-      status: proposalStatus,
-      requiresApproval: pending.length > 0 || freshness === 'stale',
-      freshness,
-      ...(proposals?.proposalId ? { proposalId: proposals.proposalId } : {}),
-      ...(proposals?.generatedBy ? { generatedBy: proposals.generatedBy } : {}),
-      pendingRules,
-      pendingContracts,
-      questions: proposals?.questions ?? [],
-      pending,
-    },
-    policy: {
-      status: config === undefined ? 'not-configured' : 'active',
-      rules: config?.rules.filter((rule) => rule.status === 'active') ?? [],
-      contracts: config?.contracts?.filter((contract) => contract.status === 'active') ?? [],
-      baseline: {
-        status: config === undefined ? 'not-configured' : 'active',
-        count: baseline.size,
-      },
-      waivers,
-    },
-    verification: {
-      status: 'not-run',
-      findings: null,
-      message: 'Context contains facts and policy state; it does not run verification.',
-      next: config === undefined ? 'codapult_guard_init' : 'codapult_guard_check',
-    },
-  };
 }
 
 function asGuardContextRecord(value: unknown): Record<string, unknown> {
@@ -558,6 +437,7 @@ export function registerGuardTools(server: McpServer): void {
                 tools: agentConfig.tools,
                 tooling: agentConfig.tooling,
                 completionGate: agentConfig.completionGate,
+                mutationPolicy: getGuardPolicyMutationPolicy(config),
                 ...state,
               },
               null,
@@ -642,6 +522,24 @@ export function registerGuardTools(server: McpServer): void {
     ({ root: requestedRoot, confirm, force, wait_ms, no_wait }) => {
       const root = getGuardRoot(requestedRoot);
       if (!confirm) return jsonToolResult({ status: 'needs-confirmation', root, force });
+      const loadedConfig = loadConfigSafely(root);
+      if (loadedConfig.error) return loadedConfig.error;
+      if (
+        force &&
+        loadedConfig.config?.approval?.mode === 'protected' &&
+        !loadedConfig.config.approval.allowMcpApproval
+      ) {
+        return jsonToolResult(
+          {
+            status: 'approval-required',
+            message:
+              'Protected Guard policy requires forced initialization outside the MCP agent surface.',
+            source: 'mcp',
+            force,
+          },
+          true,
+        );
+      }
       try {
         const result = initializeGuard(root, { force, waitMs: wait_ms, noWait: no_wait });
         return jsonToolResult({ status: 'ok', root, report: result.report });

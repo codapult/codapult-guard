@@ -35,7 +35,13 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            # Do not execute lifecycle scripts supplied by untrusted PR content.
+            pnpm install --frozen-lockfile --ignore-scripts
+          else
+            pnpm install --frozen-lockfile
+          fi
 
       # Install @codapult/guard as a pinned dev dependency in the project first.
       # Run `codapult-guard init` once locally and commit the generated Guard memory.
@@ -43,10 +49,17 @@ jobs:
         env:
           POLICY_BASE: ${{ github.event.pull_request.base.sha }}
         run: |
-          if [ -n "$POLICY_BASE" ]; then
-            pnpm exec codapult-guard verify --tools auto --policy-base "$POLICY_BASE" --json
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            # PR source code and package scripts are untrusted. Keep this gate
+            # deterministic; trusted pushes can run the project's own checks.
+            check_args=(--no-project-checks --tools off)
           else
-            pnpm exec codapult-guard verify --tools auto --json
+            check_args=(--tools auto)
+          fi
+          if [ -n "$POLICY_BASE" ]; then
+            pnpm exec codapult-guard verify "${check_args[@]}" --policy-base "$POLICY_BASE" --json
+          else
+            pnpm exec codapult-guard verify "${check_args[@]}" --json
           fi
 
       # Keep .codapult/guard policy files behind the repository's protected

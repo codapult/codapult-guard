@@ -141,6 +141,9 @@ Guard stores its project memory under `.codapult/guard/`:
     └── rules.json
 ```
 
+Guard refuses to create or update state when `.codapult` or `.codapult/guard` is a symbolic link.
+This keeps generated state inside the selected project root.
+
 | File                 | Purpose                                                                                                                   |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `project.json`       | Persisted discovered project model: files, modules, dependencies, routes, capabilities, patterns, Git data, and insights. |
@@ -245,16 +248,16 @@ Guard keeps one project policy, and each policy item can be scoped to the bounda
 The normal verification path does not change source code or approved policy. The operations below
 have explicit state-changing behavior:
 
-| Operation                            | Reads                             | Writes                                       | Policy effect                      |
-| ------------------------------------ | --------------------------------- | -------------------------------------------- | ---------------------------------- |
-| `check`, `audit`, `review`, `impact` | Project and Guard state           | Output only                                  | None                               |
-| `verify`                             | Project and Guard state           | Local run manifest; runs configured commands | None                               |
-| `analyze`                            | Project source and Git state      | Derived facts and snapshot                   | Does not change baseline or policy |
-| `init`                               | Project source and Git state      | Initial Guard state                          | Creates the initial baseline       |
-| `propose`                            | Project source and policy         | Optional proposal file                       | Proposals are not active policy    |
-| `rules/contracts approve\|reject`    | Policy and proposal state         | Policy and decision history                  | Activates or rejects proposals     |
-| `baseline accept\|remove`            | Current findings and baseline     | Baseline and decision history                | Changes legacy-debt suppression    |
-| `waiver add\|renew\|remove`          | Current findings and waiver state | Waivers and decision history                 | Changes a temporary exception      |
+| Operation                                     | Reads                             | Writes                                       | Policy effect                                   |
+| --------------------------------------------- | --------------------------------- | -------------------------------------------- | ----------------------------------------------- |
+| `check`, `audit`, `review`, `impact`          | Project and Guard state           | Output only                                  | None                                            |
+| `verify`                                      | Project and Guard state           | Local run manifest; runs configured commands | None                                            |
+| `analyze`                                     | Project source and Git state      | Derived facts and snapshot                   | Does not change baseline or policy              |
+| `init`                                        | Project source and Git state      | Initial Guard state                          | Creates the initial baseline                    |
+| `propose`                                     | Project source and policy         | Optional proposal file                       | Proposals are not active policy                 |
+| `rules approve` / `contracts approve\|reject` | Policy and proposal state         | Policy and decision history                  | Activates rules; activates or rejects contracts |
+| `baseline accept\|remove`                     | Current findings and baseline     | Baseline and decision history                | Changes legacy-debt suppression                 |
+| `waiver add\|renew\|remove`                   | Current findings and waiver state | Waivers and decision history                 | Changes a temporary exception                   |
 
 `check` and MCP `codapult_guard_check` scan the full current project unless changed-only mode is
 requested. `check --changed`, `verify --changed`, and MCP `changed_only: true` scope deterministic
@@ -556,6 +559,10 @@ the host CI/review system.
 This separation is intentional: Guard checks that an approval matches the current evidence, while
 GitHub or another protected system determines who is authorized to approve it.
 
+See [Policy mutation control](policy-mutations.md) for the machine-readable mutation contract and
+the host/CI command boundary that prevents an agent from granting itself a waiver or replacing a
+baseline.
+
 ### Policy provenance in CI
 
 `verify` normally reads policy from the working tree. For pull requests, pass the protected base
@@ -758,7 +765,9 @@ SARIF output for GitHub Code Scanning or another SARIF consumer:
 pnpm exec codapult-guard check --changed --sarif > guard-results.sarif
 ```
 
-The repository includes a copyable consumer workflow at [`docs/guard-ci.yml`](guard-ci.yml). It uploads SARIF
+The repository includes a copyable consumer workflow at [`docs/guard-ci.yml`](guard-ci.yml). On pull
+requests it installs dependencies without lifecycle scripts and runs the deterministic Guard gate
+without executing PR-owned project scripts; trusted pushes can run configured project checks. It uploads SARIF
 with `github/codeql-action/upload-sarif` and also runs the unified verification gate. Projects
 using protected or forked pull requests should review their `security-events: write` permissions
 and artifact policy.

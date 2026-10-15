@@ -148,9 +148,12 @@ Guard stores policy at the project level, while each policy item can target a na
 | Waiver      | One active finding fingerprint, with owner, reason, and expiry         |
 
 Routine checks do not change source code, rules, contracts, baseline, or waivers. Commands that
-change policy are explicit: `init`, `rules/contracts approve|reject`, `baseline accept|remove`, and
+change policy are explicit: `init`, `rules approve`, `contracts approve|reject`, `baseline accept|remove`, and
 `waiver add|renew|remove`. `analyze` refreshes derived project facts, while `verify` may run the
 project's configured commands and records a local run manifest; neither changes approved policy.
+
+For the complete mutation contract and host/CI controls, see
+[Policy mutation control](docs/policy-mutations.md).
 
 ## What Guard discovers
 
@@ -404,7 +407,9 @@ cp node_modules/@codapult/guard/docs/guard-ci.yml .github/workflows/guard.yml
 ```
 
 Or copy it from [`docs/guard-ci.yml`](docs/guard-ci.yml). It runs project verification and exports
-Guard findings as SARIF for GitHub code scanning.
+Guard findings as SARIF for GitHub code scanning. Pull requests install dependencies without
+lifecycle scripts and use deterministic Guard checks without executing PR-owned scripts; trusted
+pushes may run the configured project checks.
 
 The package repository separately runs its own unit, typecheck, build, and packaging checks in
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml), while the fixture workflow tests Guard on
@@ -426,7 +431,7 @@ real project shapes.
 | `history` / `history-diff` | Inspect project model, module graph, and architecture-edge evolution.                       |
 | `impact <files...>`        | Explain dependencies, transitive dependents, capabilities, and contracts affected by files. |
 | `policy explain <id>`      | Explain a policy item, its evidence, and approval history.                                  |
-| `rules` / `contracts`      | Approve or reject proposed policy.                                                          |
+| `rules` / `contracts`      | Approve rules; approve or reject contracts.                                                 |
 | `baseline`                 | Review or intentionally accept existing findings.                                           |
 | `waiver`                   | Manage owner-attributed, time-bounded exceptions to exact findings.                         |
 

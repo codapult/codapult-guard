@@ -6,6 +6,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initializeGuard, writeGuardConfig } from '../core/guard.js';
+import { registerGuardResources } from './resources.js';
 import { registerGuardTools } from './tools/guard.js';
 
 const clients: Client[] = [];
@@ -48,6 +49,7 @@ describe('Guard MCP end-to-end operations', () => {
 
     const server = new McpServer({ name: 'guard-e2e', version: '1.0.0' });
     registerGuardTools(server);
+    registerGuardResources(server);
     const client = new Client({ name: 'guard-e2e-client', version: '1.0.0' });
     clients.push(client);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -64,6 +66,20 @@ describe('Guard MCP end-to-end operations', () => {
       arguments: { refresh: false },
     });
     expect(parseText(contextResult)).toMatchObject({
+      configured: true,
+      observations: {
+        status: 'observed-only',
+        project: { version: 1 },
+      },
+      proposals: { requiresApproval: false },
+      policy: { status: 'active' },
+      verification: { status: 'not-run', findings: null },
+    });
+
+    const contextResource = await client.readResource({ uri: 'codapult://guard/context' });
+    const contextContent = contextResource.contents[0];
+    if (!('text' in contextContent)) throw new Error('Guard context resource returned a blob');
+    expect(JSON.parse(contextContent.text)).toMatchObject({
       configured: true,
       observations: {
         status: 'observed-only',

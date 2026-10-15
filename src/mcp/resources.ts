@@ -6,6 +6,8 @@ import {
   findGuardRoot,
   GUARD_ARCHITECTURE_FILE,
   GUARD_CONVENTIONS_FILE,
+  getGuardPolicyMutationPolicy,
+  loadBaseline,
   loadGuardAgentConfig,
   loadGuardArtifact,
   loadGuardConfig,
@@ -14,6 +16,7 @@ import {
   GuardStateBusyError,
   GuardStateStaleError,
 } from '../core/guard.js';
+import { buildGuardContextState } from './context.js';
 import { guardErrorPayload } from '../core/errors.js';
 import { DiscoveryStaleError } from '../core/discovery/discovery.js';
 import { listGuardRuns, summarizeGuardRuns } from '../core/history/runs.js';
@@ -104,17 +107,26 @@ export function registerGuardResources(server: McpServer): void {
       try {
         const project = discoverProject(root);
         const config = loadGuardConfig(root);
+        const architecture = (loadGuardArtifact(root, GUARD_ARCHITECTURE_FILE) ??
+          buildArchitectureMemory(project)) as Record<string, unknown>;
+        const conventions = (loadGuardArtifact(root, GUARD_CONVENTIONS_FILE) ??
+          buildConventionsMemory(project)) as Record<string, unknown>;
+        const state = buildGuardContextState(
+          project,
+          undefined,
+          architecture,
+          conventions,
+          config,
+          loadGuardProposals(root),
+          loadBaseline(root),
+          loadGuardWaivers(root),
+        );
         return jsonResource('codapult://guard/context', {
           version: 1,
           root,
           configured: config !== undefined,
-          project,
-          architecture:
-            loadGuardArtifact(root, GUARD_ARCHITECTURE_FILE) ?? buildArchitectureMemory(project),
-          conventions:
-            loadGuardArtifact(root, GUARD_CONVENTIONS_FILE) ?? buildConventionsMemory(project),
-          rules: config?.rules ?? [],
-          contracts: config?.contracts ?? [],
+          mutationPolicy: getGuardPolicyMutationPolicy(config),
+          ...state,
           agent: loadGuardAgentConfig(root),
         });
       } catch (error) {

@@ -17,6 +17,7 @@ import {
   guardInstallAgentCommand,
   guardGovernanceCommand,
   guardPolicyExplainCommand,
+  guardPolicyMutationsCommand,
   guardProposeCommand,
   guardReviewCommand,
   guardRunsCommand,
@@ -102,6 +103,7 @@ const rules = guard.command('rules');
 rules.command('approve [ids]').option('--all').action(guardRulesApproveCommand);
 const policy = guard.command('policy');
 policy.command('explain <id>').option('--json').action(guardPolicyExplainCommand);
+policy.command('mutations').option('--json').action(guardPolicyMutationsCommand);
 const contracts = guard.command('contracts');
 contracts.command('approve [ids]').option('--all').action(guardContractsApproveCommand);
 contracts.command('reject [ids]').option('--all').action(guardContractsRejectCommand);
