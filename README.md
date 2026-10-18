@@ -455,6 +455,13 @@ audits this metadata and reports missing or overlapping declared actors. It cont
 or external telemetry. These manifests make a failed run explainable without turning Guard into a
 production tracing system or an identity/signature ledger.
 
+The manifest also contains a `verification-receipt` object. It is a compact, machine-readable
+record of the commit, policy base and fingerprint, decision IDs, check statuses, finding counts,
+contract issues, waiver state, and Guard version. It intentionally excludes command output and
+source code. The receipt describes what Guard decided; it is not a cryptographic signature or proof
+of CI identity. When a policy base is supplied, it separates the base diff from dirty working-tree
+files so local verification cannot silently present an incomplete change set.
+
 ## Security and data handling
 
 - Deterministic discovery and checks run locally.

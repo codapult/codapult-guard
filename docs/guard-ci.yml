@@ -23,6 +23,7 @@ jobs:
         with:
           # The base commit is required so verify can read policy from the
           # protected side of a pull request instead of trusting the PR copy.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Install pnpm
@@ -57,10 +58,58 @@ jobs:
             check_args=(--tools auto)
           fi
           if [ -n "$POLICY_BASE" ]; then
-            pnpm exec codapult-guard verify "${check_args[@]}" --policy-base "$POLICY_BASE" --json
+            pnpm exec codapult-guard verify "${check_args[@]}" --policy-base "$POLICY_BASE" --fail-on-policy-change --json > guard-verification.json
           else
-            pnpm exec codapult-guard verify "${check_args[@]}" --json
+            pnpm exec codapult-guard verify "${check_args[@]}" --json > guard-verification.json
           fi
+
+      - name: Add Guard result to the workflow summary
+        if: always() && hashFiles('guard-verification.json') != ''
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          const result = JSON.parse(readFileSync('guard-verification.json', 'utf8'));
+          const receipt = result.run?.receipt;
+          const lines = [
+            '## Codapult Guard',
+            '',
+            `- Result: **${result.outcome ?? 'unknown'}**`,
+            `- Gate: \`${result.run?.gate ?? 'unknown'}\``,
+            `- Run: \`${result.run?.runId ?? 'unknown'}\``,
+          ];
+          if (receipt) {
+            const incompleteChecks = Object.entries(receipt.checks ?? {})
+              .filter(([, check]) => check.status !== 'passed')
+              .map(([name, check]) => `${name}=${check.status}`);
+            const skippedStages = Object.entries(receipt.stages ?? {})
+              .filter(([, status]) => status === 'skipped')
+              .map(([name]) => name);
+            lines.push(
+              `- Commit: \`${receipt.subject.commit ?? 'unavailable'}\``,
+              `- Policy fingerprint: \`${receipt.policy?.fingerprint ?? 'unavailable'}\``,
+              `- Changed files: ${receipt.subject.changedFiles.length}`,
+              `- Findings: ${receipt.findings.total} (${receipt.findings.errors} errors, ${receipt.findings.warnings} warnings)`,
+              `- Contract issues: ${receipt.contractIssues.length}`,
+              `- Guard version: \`${receipt.tool.version}\``,
+            );
+            if (incompleteChecks.length > 0) {
+              lines.push(`- Incomplete checks: ${incompleteChecks.join(', ')}`);
+            }
+            if (skippedStages.length > 0) {
+              lines.push(`- Skipped stages: ${skippedStages.join(', ')}`);
+            }
+            if (receipt.subject.baseRef) lines.push(`- Policy base: \`${receipt.subject.baseRef}\``);
+          }
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join('\n')}\n`);
+          NODE
+
+      - name: Upload verification receipt
+        if: always() && hashFiles('guard-verification.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: codapult-guard-verification
+          path: guard-verification.json
+          if-no-files-found: ignore
 
       # Keep .codapult/guard policy files behind the repository's protected
       # review path. Guard applies the base policy above; CODEOWNERS or branch

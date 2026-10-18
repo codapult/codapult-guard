@@ -153,6 +153,56 @@ describe('Guard run observability', () => {
     expect(listGuardRuns(root)[0]?.policy).toEqual(policy);
   });
 
+  it('persists a machine-readable verification receipt without command output', () => {
+    const root = createRoot();
+    const context = startGuardRun();
+    const result = finishGuardRun(root, context, 'pass', 'none', 'verify', undefined, {
+      version: 1,
+      kind: 'verification-receipt',
+      subject: { changedFiles: ['src/index.ts'], workingTreeDirty: true },
+      stages: { verification: 'ok' },
+      checks: {
+        typecheck: { status: 'passed', exitCode: 0, durationMs: 12 },
+      },
+      findings: {
+        total: 1,
+        errors: 0,
+        warnings: 1,
+        waived: 0,
+        waiverWarnings: 0,
+        expiredWaivers: 0,
+        fingerprints: ['finding-fingerprint'],
+        ruleIds: ['rule-id'],
+      },
+      contractIssues: [],
+      decisionIds: [],
+      tool: { name: '@codapult/guard', version: '0.9.0' },
+    });
+
+    expect(result.receipt).toMatchObject({
+      kind: 'verification-receipt',
+      runId: result.runId,
+      subject: { changedFiles: ['src/index.ts'] },
+      checks: { typecheck: { status: 'passed' } },
+      tool: { version: '0.9.0' },
+    });
+    expect(listGuardRuns(root)[0]?.receipt).toEqual(result.receipt);
+  });
+
+  it('rejects a receipt that disagrees with its enclosing run manifest', () => {
+    const root = createRoot();
+    const context = startGuardRun();
+    const result = finishGuardRun(root, context, 'pass', 'none');
+    const path = join(root, GUARD_RUNS_DIR, `${result.runId}.json`);
+    const tampered = {
+      ...result,
+      receipt: { ...result.receipt, outcome: 'fail' as const },
+    };
+    writeFileSync(path, `${JSON.stringify(tampered)}\n`, 'utf8');
+
+    expect(listGuardRuns(root)).toEqual([]);
+  });
+
   it('bounds persisted run history', () => {
     const root = createRoot();
     for (let index = 0; index <= GUARD_RUN_RETENTION; index += 1) {

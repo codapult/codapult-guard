@@ -33,6 +33,49 @@ export interface GuardRunPolicy {
   decisionIds?: string[] | undefined;
 }
 
+export interface GuardVerificationReceiptCheck {
+  status: 'passed' | 'failed' | 'not-configured';
+  exitCode: number;
+  durationMs: number;
+}
+
+export interface GuardVerificationReceipt {
+  version: 1;
+  kind: 'verification-receipt';
+  runId: string;
+  generatedAt: string;
+  outcome: GuardRunManifest['outcome'];
+  gate: string;
+  subject: {
+    commit?: string | undefined;
+    baseRef?: string | undefined;
+    baseCommit?: string | undefined;
+    changedFiles: string[];
+    baseChangedFiles?: string[] | undefined;
+    workingTreeFiles?: string[] | undefined;
+    workingTreeDirty: boolean;
+  };
+  policy?: GuardRunPolicy | undefined;
+  stages: Record<string, 'ok' | 'fail' | 'skipped'>;
+  checks: Record<string, GuardVerificationReceiptCheck>;
+  findings: {
+    total: number;
+    errors: number;
+    warnings: number;
+    waived: number;
+    waiverWarnings: number;
+    expiredWaivers: number;
+    fingerprints: string[];
+    ruleIds: string[];
+  };
+  contractIssues: string[];
+  decisionIds: string[];
+  tool: {
+    name: string;
+    version: string;
+  };
+}
+
 export interface GuardRunManifest {
   version: 1;
   runId: string;
@@ -45,6 +88,7 @@ export interface GuardRunManifest {
   stages: Record<string, GuardRunStage>;
   commit?: string | undefined;
   policy?: GuardRunPolicy | undefined;
+  receipt?: GuardVerificationReceipt | undefined;
 }
 
 export interface GuardRunContext {
@@ -74,6 +118,88 @@ function isGuardRunManifest(value: unknown): value is GuardRunManifest {
   if (value === null || typeof value !== 'object') return false;
   const manifest = value as Partial<GuardRunManifest>;
   const stages = manifest.stages;
+  const receipt = manifest.receipt;
+  const validReceipt =
+    receipt === undefined ||
+    (receipt !== null &&
+      typeof receipt === 'object' &&
+      receipt.version === 1 &&
+      receipt.kind === 'verification-receipt' &&
+      typeof receipt.runId === 'string' &&
+      receipt.runId === manifest.runId &&
+      typeof receipt.generatedAt === 'string' &&
+      Number.isFinite(Date.parse(receipt.generatedAt)) &&
+      (receipt.outcome === 'pass' ||
+        receipt.outcome === 'fail' ||
+        receipt.outcome === 'warning' ||
+        receipt.outcome === 'needs-review' ||
+        receipt.outcome === 'not-configured') &&
+      typeof receipt.gate === 'string' &&
+      receipt.subject !== null &&
+      typeof receipt.subject === 'object' &&
+      Array.isArray(receipt.subject.changedFiles) &&
+      receipt.subject.changedFiles.every((file) => typeof file === 'string') &&
+      (receipt.subject.baseChangedFiles === undefined ||
+        (Array.isArray(receipt.subject.baseChangedFiles) &&
+          receipt.subject.baseChangedFiles.every((file) => typeof file === 'string'))) &&
+      (receipt.subject.workingTreeFiles === undefined ||
+        (Array.isArray(receipt.subject.workingTreeFiles) &&
+          receipt.subject.workingTreeFiles.every((file) => typeof file === 'string'))) &&
+      typeof receipt.subject.workingTreeDirty === 'boolean' &&
+      (receipt.subject.commit === undefined || typeof receipt.subject.commit === 'string') &&
+      (receipt.subject.baseRef === undefined || typeof receipt.subject.baseRef === 'string') &&
+      (receipt.subject.baseCommit === undefined ||
+        typeof receipt.subject.baseCommit === 'string') &&
+      receipt.stages !== null &&
+      typeof receipt.stages === 'object' &&
+      !Array.isArray(receipt.stages) &&
+      Object.values(receipt.stages).every(
+        (status) => status === 'ok' || status === 'fail' || status === 'skipped',
+      ) &&
+      receipt.checks !== null &&
+      typeof receipt.checks === 'object' &&
+      !Array.isArray(receipt.checks) &&
+      Object.values(receipt.checks).every((check) => {
+        if (check === null || typeof check !== 'object') return false;
+        const candidate = check as Partial<GuardVerificationReceiptCheck>;
+        return (
+          (candidate.status === 'passed' ||
+            candidate.status === 'failed' ||
+            candidate.status === 'not-configured') &&
+          Number.isInteger(candidate.exitCode) &&
+          typeof candidate.durationMs === 'number' &&
+          Number.isFinite(candidate.durationMs) &&
+          candidate.durationMs >= 0
+        );
+      }) &&
+      receipt.findings !== null &&
+      typeof receipt.findings === 'object' &&
+      ['total', 'errors', 'warnings', 'waived', 'waiverWarnings', 'expiredWaivers'].every((key) => {
+        const countValue = receipt.findings[key as keyof typeof receipt.findings];
+        return typeof countValue === 'number' && Number.isInteger(countValue) && countValue >= 0;
+      }) &&
+      Array.isArray(receipt.findings.fingerprints) &&
+      receipt.findings.fingerprints.every((fingerprint) => typeof fingerprint === 'string') &&
+      Array.isArray(receipt.findings.ruleIds) &&
+      receipt.findings.ruleIds.every((ruleId) => typeof ruleId === 'string') &&
+      Array.isArray(receipt.contractIssues) &&
+      receipt.contractIssues.every((issue) => typeof issue === 'string') &&
+      Array.isArray(receipt.decisionIds) &&
+      new Set(receipt.decisionIds).size === receipt.decisionIds.length &&
+      receipt.decisionIds.every((decisionId) => typeof decisionId === 'string') &&
+      receipt.tool !== null &&
+      typeof receipt.tool === 'object' &&
+      typeof receipt.tool.name === 'string' &&
+      typeof receipt.tool.version === 'string');
+  const receiptMatchesManifest =
+    receipt === undefined ||
+    (receipt.outcome === manifest.outcome &&
+      receipt.gate === manifest.gate &&
+      (manifest.commit === undefined || receipt.subject.commit === manifest.commit) &&
+      (manifest.policy === undefined ||
+        (receipt.policy?.fingerprint === manifest.policy.fingerprint &&
+          receipt.policy.source === manifest.policy.source &&
+          receipt.policy.revision === manifest.policy.revision)));
   const validStages =
     stages !== null &&
     typeof stages === 'object' &&
@@ -111,6 +237,8 @@ function isGuardRunManifest(value: unknown): value is GuardRunManifest {
       manifest.outcome === 'not-configured') &&
     typeof manifest.gate === 'string' &&
     validStages &&
+    validReceipt &&
+    receiptMatchesManifest &&
     (manifest.policy === undefined ||
       (manifest.policy !== null &&
         typeof manifest.policy === 'object' &&
@@ -251,6 +379,11 @@ export function finishGuardRun(
   gate: string,
   command = 'verify',
   policy?: GuardRunPolicy,
+  receipt?: Omit<
+    GuardVerificationReceipt,
+    'runId' | 'generatedAt' | 'outcome' | 'gate' | 'subject'
+  > &
+    Pick<GuardVerificationReceipt, 'subject'>,
 ): GuardRunManifest {
   let commit: string | undefined;
   try {
@@ -260,18 +393,50 @@ export function finishGuardRun(
   } catch {
     commit = undefined;
   }
+  const completedAt = new Date().toISOString();
+  const completedReceipt: GuardVerificationReceipt = {
+    version: 1,
+    kind: 'verification-receipt',
+    runId: context.runId,
+    generatedAt: completedAt,
+    outcome,
+    gate,
+    subject: {
+      ...receipt?.subject,
+      ...(commit ? { commit } : {}),
+      changedFiles: receipt?.subject.changedFiles ?? [],
+      workingTreeDirty: receipt?.subject.workingTreeDirty ?? false,
+    },
+    ...(policy ? { policy } : {}),
+    stages: receipt?.stages ?? {},
+    checks: receipt?.checks ?? {},
+    findings: receipt?.findings ?? {
+      total: 0,
+      errors: 0,
+      warnings: 0,
+      waived: 0,
+      waiverWarnings: 0,
+      expiredWaivers: 0,
+      fingerprints: [],
+      ruleIds: [],
+    },
+    contractIssues: receipt?.contractIssues ?? [],
+    decisionIds: receipt?.decisionIds ?? policy?.decisionIds ?? [],
+    tool: receipt?.tool ?? { name: '@codapult/guard', version: 'unknown' },
+  };
   const manifest: GuardRunManifest = {
     version: 1,
     runId: context.runId,
     command,
     startedAt: context.startedAt,
-    completedAt: new Date().toISOString(),
+    completedAt,
     durationMs: Math.max(0, Date.now() - context.startedAtMs),
     outcome,
     gate,
     stages: context.stages,
     ...(commit ? { commit } : {}),
     ...(policy ? { policy } : {}),
+    receipt: completedReceipt,
   };
   try {
     writeGuardRun(root, manifest);

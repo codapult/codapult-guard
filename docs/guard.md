@@ -757,7 +757,11 @@ pnpm exec codapult-guard check --changed --json
 `verify --json` includes a `run` object with a unique run ID, stage durations, outcome, and the
 policy gate that determined the result. The same manifest is saved under
 `.codapult/guard/history/runs/`. Guard keeps this diagnostic record local and does not send traces
-or source code to a remote service.
+or source code to a remote service. The manifest includes a compact `verification-receipt` with the
+checked commit, policy fingerprint/base, decision IDs, check statuses, finding and waiver counts,
+contract issue IDs, and Guard version. It is an explainability artifact, not a signed proof of CI
+identity. With `--policy-base`, the receipt also distinguishes `baseChangedFiles` from
+`workingTreeFiles`; this makes a dirty local checkout visible in the machine-readable result.
 
 SARIF output for GitHub Code Scanning or another SARIF consumer:
 
