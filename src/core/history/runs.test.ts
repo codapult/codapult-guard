@@ -203,6 +203,24 @@ describe('Guard run observability', () => {
     expect(listGuardRuns(root)).toEqual([]);
   });
 
+  it('rejects receipt policy provenance that is not mirrored by the manifest', () => {
+    const root = createRoot();
+    const context = startGuardRun();
+    const policy = {
+      fingerprint: 'policy-fingerprint',
+      source: 'working-tree' as const,
+    };
+    const result = finishGuardRun(root, context, 'pass', 'none', 'verify', policy);
+    const path = join(root, GUARD_RUNS_DIR, `${result.runId}.json`);
+    const tampered = {
+      ...result,
+      receipt: { ...result.receipt, policy: { ...policy, fingerprint: 'other-fingerprint' } },
+    };
+    writeFileSync(path, `${JSON.stringify(tampered)}\n`, 'utf8');
+
+    expect(listGuardRuns(root)).toEqual([]);
+  });
+
   it('bounds persisted run history', () => {
     const root = createRoot();
     for (let index = 0; index <= GUARD_RUN_RETENTION; index += 1) {

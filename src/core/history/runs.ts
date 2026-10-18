@@ -114,6 +114,27 @@ export class GuardRunManifestError extends Error {
   }
 }
 
+function isGuardRunPolicy(value: unknown): value is GuardRunPolicy {
+  if (value === null || typeof value !== 'object') return false;
+  const policy = value as Partial<GuardRunPolicy>;
+  return (
+    typeof policy.fingerprint === 'string' &&
+    policy.fingerprint.length > 0 &&
+    (policy.source === 'working-tree' || policy.source === 'git-ref') &&
+    (policy.revision === undefined ||
+      (Number.isInteger(policy.revision) && policy.revision >= 0)) &&
+    (policy.ref === undefined || typeof policy.ref === 'string') &&
+    (policy.changedFromBase === undefined || typeof policy.changedFromBase === 'boolean') &&
+    (policy.decisionIds === undefined ||
+      (Array.isArray(policy.decisionIds) &&
+        new Set(policy.decisionIds).size === policy.decisionIds.length &&
+        policy.decisionIds.every(
+          (decisionId) => typeof decisionId === 'string' && decisionId.trim().length > 0,
+        ) &&
+        (policy.source === 'working-tree' || policy.decisionIds.length === 0)))
+  );
+}
+
 function isGuardRunManifest(value: unknown): value is GuardRunManifest {
   if (value === null || typeof value !== 'object') return false;
   const manifest = value as Partial<GuardRunManifest>;
@@ -150,6 +171,7 @@ function isGuardRunManifest(value: unknown): value is GuardRunManifest {
       (receipt.subject.baseRef === undefined || typeof receipt.subject.baseRef === 'string') &&
       (receipt.subject.baseCommit === undefined ||
         typeof receipt.subject.baseCommit === 'string') &&
+      (receipt.policy === undefined || isGuardRunPolicy(receipt.policy)) &&
       receipt.stages !== null &&
       typeof receipt.stages === 'object' &&
       !Array.isArray(receipt.stages) &&
@@ -195,11 +217,14 @@ function isGuardRunManifest(value: unknown): value is GuardRunManifest {
     receipt === undefined ||
     (receipt.outcome === manifest.outcome &&
       receipt.gate === manifest.gate &&
-      (manifest.commit === undefined || receipt.subject.commit === manifest.commit) &&
-      (manifest.policy === undefined ||
-        (receipt.policy?.fingerprint === manifest.policy.fingerprint &&
+      (manifest.commit === undefined
+        ? receipt.subject.commit === undefined
+        : receipt.subject.commit === manifest.commit) &&
+      (manifest.policy === undefined
+        ? receipt.policy === undefined
+        : receipt.policy?.fingerprint === manifest.policy.fingerprint &&
           receipt.policy.source === manifest.policy.source &&
-          receipt.policy.revision === manifest.policy.revision)));
+          receipt.policy.revision === manifest.policy.revision));
   const validStages =
     stages !== null &&
     typeof stages === 'object' &&
@@ -239,24 +264,7 @@ function isGuardRunManifest(value: unknown): value is GuardRunManifest {
     validStages &&
     validReceipt &&
     receiptMatchesManifest &&
-    (manifest.policy === undefined ||
-      (manifest.policy !== null &&
-        typeof manifest.policy === 'object' &&
-        typeof manifest.policy.fingerprint === 'string' &&
-        manifest.policy.fingerprint.length > 0 &&
-        (manifest.policy.source === 'working-tree' || manifest.policy.source === 'git-ref') &&
-        (manifest.policy.revision === undefined ||
-          (Number.isInteger(manifest.policy.revision) && manifest.policy.revision >= 0)) &&
-        (manifest.policy.ref === undefined || typeof manifest.policy.ref === 'string') &&
-        (manifest.policy.changedFromBase === undefined ||
-          typeof manifest.policy.changedFromBase === 'boolean') &&
-        (manifest.policy.decisionIds === undefined ||
-          (manifest.policy.source === 'working-tree' &&
-            Array.isArray(manifest.policy.decisionIds) &&
-            new Set(manifest.policy.decisionIds).size === manifest.policy.decisionIds.length &&
-            manifest.policy.decisionIds.every(
-              (decisionId) => typeof decisionId === 'string' && decisionId.trim().length > 0,
-            )))))
+    (manifest.policy === undefined || isGuardRunPolicy(manifest.policy))
   );
 }
 
