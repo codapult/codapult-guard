@@ -4,7 +4,7 @@
   "mcpName": "io.github.codapult/guard",
   "description": "Local-first architecture guardrails for JavaScript and TypeScript projects, with first-class support for Next.js SaaS and AI-assisted development",
   "license": "MIT",
-  "packageManager": "pnpm@12.4.2+sha512.08adc6613180275c7c9edada39dcf08c9c61ad4e7eaf330a4f3461f102b0f907423454d117f98e72d47fef0616070644d7bffc973a6a57f5090a6d7c368b07c9",
+  "packageManager": "pnpm@12.14.0+sha512.c18ba6d87993d3d164cb5e8948f32b2c06ee854487e06cd8d86781342fb3e5bb4634367034711e86802baa9c37bea906ce1929ad08d70884c97d801df13389a6",
   "engines": {
     "node": ">=20.19.0"
   },
@@ -104,7 +104,7 @@
     "semver": "^7.8.5",
     "ts-morph": "^28.0.0",
     "typescript": "npm:@typescript/typescript6@^6.0.2",
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@js-toolkit/config-utils": "^1.0.1",
@@ -114,13 +114,13 @@
     "@release-it/conventional-changelog": "^12.0.2",
     "@types/node": "^26.6.5",
     "@typescript/native": "npm:typescript@^7.0.2",
-    "@vitest/coverage-v8": "^5.0.3",
-    "eslint": "^10.12.0",
+    "@vitest/coverage-v8": "^5.0.5",
+    "eslint": "^10.13.0",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-prettier": "^5.5.6",
+    "eslint-plugin-prettier": "^5.5.7",
     "prettier": "^3.9.10",
     "release-it": "^21.1.1",
-    "typescript-eslint": "^8.71.1",
-    "vitest": "^5.0.3"
+    "typescript-eslint": "^8.71.2",
+    "vitest": "^5.0.5"
   }
 }
