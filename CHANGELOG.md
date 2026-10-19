@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.0](https://github.com/codapult/codapult-guard/compare/v0.9.0...v0.10.0) (2026-10-19)
+
+### Features
+
+* harden verification provenance ([1232669](https://github.com/codapult/codapult-guard/commit/1232669c5bbbf88007d66357da5ab9c020249744))
+
+### Bug Fixes
+
+* validate receipt policy provenance ([25598f5](https://github.com/codapult/codapult-guard/commit/25598f593815f36b75963bca859a240d994866df))
+
 ## [0.9.0](https://github.com/codapult/codapult-guard/compare/v0.8.1...v0.9.0) (2026-10-15)
 
 ### Features
