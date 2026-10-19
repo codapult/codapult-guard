@@ -506,12 +506,6 @@ Starting a SaaS from scratch? [Codapult](https://codapult.dev) is a production-r
 foundation built for AI-assisted development — with MCP context, built-in AI, modular
 architecture, and the source code under your control.
 
-## Project status
-
-`@codapult/guard` starts at `0.1.0` as a public alpha. The deterministic core is usable, tested,
-and intended for real projects, while policy schema and integration surfaces may still evolve
-before `1.0.0`.
-
 ## License
 
 MIT. See [LICENSE](LICENSE).
