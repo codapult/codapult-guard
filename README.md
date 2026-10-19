@@ -9,11 +9,14 @@
 
 ## Architecture guardrails for AI coding agents
 
-`@codapult/guard` is a local-first, model-agnostic architecture guard for JavaScript and
-TypeScript projects.
+`@codapult/guard` is local-first, model-agnostic **architecture guardrail software for AI coding
+agents**. Use it to detect architectural drift, enforce approved software architecture rules, and
+check code changes in JavaScript and TypeScript projects.
 
-It learns what already exists, records the project’s architectural memory, and can protect future
-changes from introducing regressions covered by the project’s approved policy.
+Guard learns how your codebase is structured, records project architecture as reviewable memory, and
+checks future changes against the rules your team approves. It connects AI coding agents to those
+rules and returns deterministic evidence when a change introduces a covered architecture
+regression. Run the same project-specific checks locally and in CI.
 
 ### See the value in one change
 

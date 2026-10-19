@@ -1,4 +1,8 @@
-# AI integration kits
+# AI Coding Agent Integrations
+
+Connect Codapult Guard architecture guardrails to Claude Code, Codex, Cursor, Gemini CLI, GitHub
+Copilot, or another MCP-compatible AI coding agent. These guides cover project instructions, MCP
+setup, and independent verification in CI.
 
 The examples use a project-local pnpm installation. Guard requires Node.js `>=20.19.0`; with
 npm, replace `pnpm add -D @codapult/guard` with `npm install --save-dev @codapult/guard` and

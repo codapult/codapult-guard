@@ -1,9 +1,10 @@
-# Codapult Guard
+# Codapult Guard: Architecture Guardrails for AI Coding Agents
 
-Codapult Guard is a local-first architecture guardrail and project-context system for JavaScript
-and TypeScript repositories. It observes the architecture that already exists, records project
-memory, checks changes against approved project policy, and prepares bounded context for an AI
-reviewer.
+Codapult Guard is local-first architecture guardrail software for AI coding agents and JavaScript
+or TypeScript repositories. It detects architectural drift by observing the existing software
+architecture, recording project memory, and checking code changes against team-approved rules and
+contracts. It also provides bounded project context for AI code review and deterministic checks for
+local development and CI.
 
 Guard is not a replacement for ESLint, TypeScript, a test runner, SAST, or a PR review service.
 It is universal at the core and especially useful for Next.js SaaS projects, where server/client
