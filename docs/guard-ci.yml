@@ -19,18 +19,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           # The base commit is required so verify can read policy from the
           # protected side of a pull request instead of trusting the PR copy.
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
+      - name: Verify Guard runtime dependencies against base
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if ! git diff --quiet "$BASE_SHA...HEAD" -- \
+            package.json pnpm-lock.yaml package-lock.json npm-shrinkwrap.json yarn.lock bun.lock bun.lockb \
+            pnpm-workspace.yaml .npmrc .pnpmfile.cjs pnpmfile.cjs .yarnrc .yarnrc.yml .pnp.cjs .pnp.loader.mjs \
+            '**/package.json' '**/pnpm-lock.yaml' '**/package-lock.json' '**/npm-shrinkwrap.json' \
+            '**/yarn.lock' '**/bun.lock' '**/bun.lockb' '**/pnpm-workspace.yaml' \
+            '**/.npmrc' '**/.pnpmfile.cjs' '**/pnpmfile.cjs' '**/.yarnrc' '**/.yarnrc.yml' \
+            '**/.pnp.cjs' '**/.pnp.loader.mjs'; then
+            echo "Guard runtime dependency inputs changed; review and merge those changes separately before running Guard."
+            exit 1
+          fi
+
       - name: Install pnpm
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: pnpm
@@ -53,7 +69,7 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             # PR source code and package scripts are untrusted. Keep this gate
             # deterministic; trusted pushes can run the project's own checks.
-            check_args=(--no-project-checks --tools off)
+            check_args=(--no-project-checks --tools off --fail-on-protected-changes)
           else
             check_args=(--tools auto)
           fi
@@ -70,6 +86,10 @@ jobs:
           import { appendFileSync, readFileSync } from 'node:fs';
           const result = JSON.parse(readFileSync('guard-verification.json', 'utf8'));
           const receipt = result.run?.receipt;
+          const code = (value) => `\`${String(value).replace(/[\u0000-\u001f\u007f`]/g, ' ')}\``;
+          const plain = (value) => String(value)
+            .replace(/[\u0000-\u001f\u007f]/g, ' ')
+            .replace(/[\\`*_{}\[\]()#+.!|>~-]/g, '\\$&');
           const lines = [
             '## Codapult Guard',
             '',
@@ -91,7 +111,17 @@ jobs:
               `- Findings: ${receipt.findings.total} (${receipt.findings.errors} errors, ${receipt.findings.warnings} warnings)`,
               `- Contract issues: ${receipt.contractIssues.length}`,
               `- Guard version: \`${receipt.tool.version}\``,
+              `- Required stages: ${(receipt.requiredStages ?? []).join(', ') || 'none configured'}`,
             );
+            if (receipt.verificationScope) {
+              lines.push(`- Verification scope: ${receipt.verificationScope.complete && receipt.verificationScope.stable ? 'complete and stable' : 'incomplete or changed'} (${receipt.verificationScope.files.length} files, SHA-256 ${code(receipt.verificationScope.fingerprint)})`);
+            }
+            if (receipt.effectiveInvocation) {
+              lines.push(`- Effective invocation: ${code([receipt.effectiveInvocation.command, ...receipt.effectiveInvocation.args].join(' '))}`);
+            }
+            if ((receipt.incompleteStages ?? []).length > 0) {
+              lines.push(`- Incomplete required stages: ${receipt.incompleteStages.join(', ')}`);
+            }
             if (incompleteChecks.length > 0) {
               lines.push(`- Incomplete checks: ${incompleteChecks.join(', ')}`);
             }
@@ -99,13 +129,34 @@ jobs:
               lines.push(`- Skipped stages: ${skippedStages.join(', ')}`);
             }
             if (receipt.subject.baseRef) lines.push(`- Policy base: \`${receipt.subject.baseRef}\``);
+            if (receipt.ciIntegrity) {
+              lines.push(`- CI integrity: **${receipt.ciIntegrity.status}**`);
+              for (const workflow of receipt.ciIntegrity.workflows) {
+                lines.push(`- Workflow: ${code(workflow.path)} job ${code(workflow.job)} (${workflow.status}, base SHA ${code(workflow.baseDigest ?? 'unavailable')}, PR SHA ${code(workflow.digest ?? 'unavailable')})`);
+                if (workflow.actions.length > 0) lines.push(`  - Actions: ${workflow.actions.map(code).join(', ')}`);
+                for (const change of workflow.actionChanges ?? []) {
+                  lines.push(`  - Action refs changed: ${code(change.name)} (${code(change.base.join(', ') || 'none')} → ${code(change.current.join(', ') || 'none')})`);
+                }
+                for (const issue of workflow.issues) lines.push(`  - ${issue.code}: ${plain(issue.message)}`);
+              }
+            }
+          }
+          const protectedChanges = result.policySurface?.changedPaths ?? [];
+          const suppressions = result.policySurface?.suppressionMarkers ?? [];
+          if (protectedChanges.length > 0 || suppressions.length > 0) {
+            lines.push('', '### Verification-sensitive changes', ...protectedChanges.map((path) => `- ${code(path)}`));
+            for (const change of result.policySurface?.changes ?? []) {
+              lines.push(`- ${change.kind} (${change.severity}): ${code(change.path)} matched ${code(change.pattern)}`);
+            }
+            lines.push(...suppressions.map((marker) => `- Inline suppression added: ${code(marker)}`));
+            lines.push('- Workflow integrity and required-check enforcement must be configured in repository settings.');
           }
           appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join('\n')}\n`);
           NODE
 
       - name: Upload verification receipt
         if: always() && hashFiles('guard-verification.json') != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: codapult-guard-verification
           path: guard-verification.json
@@ -131,7 +182,7 @@ jobs:
 
       - name: Upload PR review packet
         if: always() && github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: codapult-guard-review
           path: guard-review.json
@@ -144,6 +195,6 @@ jobs:
 
       - name: Upload Guard findings
         if: always() && hashFiles('guard-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           sarif_file: guard-results.sarif

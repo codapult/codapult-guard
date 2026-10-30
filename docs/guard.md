@@ -582,6 +582,63 @@ Use `--fail-on-policy-change` for a dedicated policy gate. Repository hosting co
 CODEOWNERS and protected branches remain responsible for requiring and authorizing the separate
 review; Guard does not impersonate a reviewer or verify provider credentials.
 
+Guard also compares verification-sensitive paths against the base. Built-in paths include CI
+workflows, CODEOWNERS, package manifests and lockfiles, and common formatter, linter, typecheck,
+and test configuration. Add project-specific globs to `protectedPaths` in the base revision's
+`.codapult/guard/rules.json`. The `--fail-on-protected-changes` option requires `--policy-base`
+and fails if a listed non-workflow path changes, or if a changed contracted workflow fails its
+CI integrity checks. JSON output lists the matched paths and reports whether a workflow changed.
+
+For an explicit and classified policy surface, configure `policySurface.paths` in that same base
+policy. Each entry has a repository-relative `pattern`, a `kind` (`ci-workflow`, `guard-policy`, `ownership`,
+`dependency-input`, `tool-config`, `ignore-config`, `suppression-source`, or `custom`), and a
+`severity` (`error` or `warning`). Error entries block when `--fail-on-protected-changes` is set;
+warning entries are reported without blocking. The legacy `protectedPaths` list remains supported
+and maps to blocking custom entries. Built-in sensitive paths cannot be downgraded by project
+configuration. Entries and match details are included in the JSON result and receipt.
+
+The same option reports added `eslint-disable`, `@ts-ignore`, `@ts-nocheck`, `@ts-expect-error`,
+`biome-ignore`, and `prettier-ignore` markers in the PR diff. Guard identifies markers but leaves
+their semantics to the relevant tool. Changes to or removal of the workflow itself still require
+host-enforced required checks and protected review; a workflow cannot guarantee its own integrity.
+The supplied workflow template also rejects PR changes to package manifests, common npm/pnpm/Yarn/Bun
+lockfiles, package-manager configuration, and workspace install inputs before setting up pnpm or installing
+dependencies. Handle those changes in a separate reviewed PR. This does not replace protecting the
+workflow in repository settings.
+
+### Required stages and CI integrity
+
+`agent.json` can list required stages in `completionGate.requiredStages`. Supported values are
+`runtime`, `project-checks`, `adapters`, `architecture-policy`, `policy-surface`, `ci-integrity`, and
+`verification-scope`. The compatibility default requires only `architecture-policy`; skipped required
+stages produce `incomplete`, a nonzero CLI exit, and a list in the receipt. Using a base policy
+automatically requires the policy-surface comparison. Declaring a GitHub Actions integrity
+contract automatically requires the CI audit. Verification scope is always required: Guard hashes
+discovered project files and changed paths before running checks, then verifies that the scope
+remained stable through the run.
+
+For GitHub Actions, `rules.json` may declare exact workflow paths, a required job, required command
+fragments, expected dependencies, permission ceilings, and whether external actions must use full
+commit SHA pins. Guard reads this contract and the base workflow from the base policy revision for
+PR verification. It compares action refs with that base and classifies additions, removals, or SHA
+changes as `policy-weakened` for separate review, even if the new ref is pinned. It classifies
+missing protections as `policy-weakened` and unreadable or invalid workflow data as `incomplete`.
+It does not evaluate arbitrary GitHub expressions or verify repository settings, so branch
+protection or rulesets must still require the status check from the expected source.
+The audit rejects `pull_request_target` on a contracted verification workflow because Guard cannot
+prove that it never executes untrusted PR content with that event's elevated context.
+Local actions cannot use immutable commit SHA references. If the workflow contract disables
+`requireFullShaActions` to permit them, add each local action's source directory to `protectedPaths`
+in the base policy so a PR cannot change the code being invoked.
+The receipt records the effective Guard invocation and project check commands/arguments, with
+credential-like values redacted.
+
+The receipt's `verificationScope` contains SHA-256 hashes and paths for files discovered by Guard,
+plus changed and deleted paths. Its fingerprint binds the inventory to the effective policy and
+Guard version. If a path cannot be hashed or the inventory changes during verification, the
+`verification-scope` stage is incomplete and the overall result cannot pass. The receipt includes
+hashes and paths but no source contents; it is not signed and does not prove who ran Guard.
+
 ### Governance audit
 
 Use the read-only governance audit to inspect whether approval records retain enough declared
@@ -760,8 +817,8 @@ policy gate that determined the result. The same manifest is saved under
 `.codapult/guard/history/runs/`. Guard keeps this diagnostic record local and does not send traces
 or source code to a remote service. The manifest includes a compact `verification-receipt` with the
 checked commit, policy fingerprint/base, decision IDs, check statuses, finding and waiver counts,
-contract issue IDs, and Guard version. It is an explainability artifact, not a signed proof of CI
-identity. With `--policy-base`, the receipt also distinguishes `baseChangedFiles` from
+contract issue IDs, Guard version, and a SHA-256 inventory of verification inputs. It is an
+explainability artifact, not a signed proof of CI identity. With `--policy-base`, the receipt also distinguishes `baseChangedFiles` from
 `workingTreeFiles`; this makes a dirty local checkout visible in the machine-readable result.
 
 SARIF output for GitHub Code Scanning or another SARIF consumer:

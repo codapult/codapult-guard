@@ -388,6 +388,131 @@ review control when policy changes require a separate approval. For example, a r
 `.codapult/guard/* @architecture-owners` to `CODEOWNERS`. Guard reports the policy change; the
 hosting platform enforces reviewer authorization.
 
+Guard also reports changes to verification-sensitive files using built-in paths for CI workflows,
+package scripts and lockfiles, and common formatter, linter, typecheck, and test configurations.
+Projects can extend this list in the base revision's `.codapult/guard/rules.json`:
+
+```json
+{
+  "version": 1,
+  "rules": [],
+  "protectedPaths": [".husky/**", "config/security-checks/**"]
+}
+```
+
+For classified entries and warning-only paths, use the explicit `policySurface.paths` form in that
+same base policy:
+
+```json
+{
+  "version": 1,
+  "rules": [],
+  "policySurface": {
+    "paths": [
+      { "pattern": "config/security-checks/**", "kind": "custom", "severity": "error" },
+      { "pattern": "**/.custom-ignore", "kind": "ignore-config", "severity": "warning" }
+    ]
+  }
+}
+```
+
+Supported kinds are `ci-workflow`, `guard-policy`, `ownership`, `dependency-input`, `tool-config`, `ignore-config`,
+`suppression-source`, and `custom`. `error` entries fail when `--fail-on-protected-changes` is
+enabled; `warning` entries are reported without blocking. Built-in verification-sensitive paths
+remain blocking. Both forms are read from the base policy during PR verification, so the PR cannot
+remove its own path coverage.
+
+In pull request CI, add `--fail-on-protected-changes` alongside `--policy-base`. This fails the
+Guard invocation when a listed path changes without a matching CI integrity contract, or when a
+contracted workflow fails its checks. It emits all matched paths in JSON output. Protect
+the Guard workflow itself and require its status check in repository settings: a workflow edited
+or removed by a PR cannot independently enforce its own integrity. Guard reports workflow edits,
+but GitHub branch protection is what makes the check mandatory. The sample workflow rejects PR
+changes to package manifests, common npm/pnpm/Yarn/Bun lockfiles, package-manager config, and
+workspace install inputs before
+selecting pnpm or installing dependencies. Review those changes in a separate PR. This preflight is
+defense in depth: repository rules must still protect the workflow and require the Guard check.
+
+Guard reports added `eslint-disable`, `@ts-ignore`, `@ts-nocheck`, `@ts-expect-error`, and
+`biome-ignore`, and `prettier-ignore` markers in the PR diff. It reports the file and marker
+without interpreting the tool-specific reason or whether the suppression is justified. Other
+tools can be covered by protecting their configuration/source paths and running them in a trusted
+CI workflow. The matched paths, markers, and scan completeness are recorded in the verification
+result and receipt.
+
+### Required verification stages
+
+`agent.json` declares which stages must complete for verification to pass:
+
+```json
+{
+  "version": 1,
+  "tools": "auto",
+  "tooling": {},
+  "completionGate": {
+    "enabled": true,
+    "maxIterations": 3,
+    "projectChecks": true,
+    "checks": ["lint", "typecheck", "test", "build"],
+    "requiredStages": ["architecture-policy", "project-checks", "runtime"]
+  }
+}
+```
+
+Supported stages are `runtime`, `project-checks`, `adapters`, `architecture-policy`,
+`policy-surface`, `ci-integrity`, and `verification-scope`. The compatibility default requires `architecture-policy`;
+projects opt into additional requirements. If a required stage is skipped or cannot be confirmed,
+the result is `incomplete`, the CLI exits nonzero, and the receipt names the incomplete stages.
+When base policy is used, `policy-surface` is required automatically. A configured CI integrity
+contract makes `ci-integrity` required automatically. `verification-scope` is always required:
+Guard hashes its discovered project inputs before checks and confirms that the scope stayed stable
+through the run.
+
+### GitHub Actions integrity contract
+
+Declare the exact workflow and required job in the base revision's `rules.json`:
+
+```json
+{
+  "version": 1,
+  "rules": [],
+  "githubActions": {
+    "workflows": [
+      {
+        "path": ".github/workflows/guard.yml",
+        "job": "guard",
+        "requiredRunIncludes": [
+          "pnpm exec codapult-guard verify",
+          "--policy-base",
+          "--fail-on-policy-change",
+          "--fail-on-protected-changes"
+        ],
+        "maxPermissions": { "contents": "read", "security-events": "write" }
+      }
+    ]
+  }
+}
+```
+
+Guard parses the declared workflow and checks its pull request trigger, configured filters, required
+job, required command fragments in the Guard invocation, conditional execution, `continue-on-error`,
+declared job dependencies, explicit permission ceilings, and full commit SHA pins for external
+actions. Local actions cannot meet immutable SHA pinning; if a workflow uses one, set
+`requireFullShaActions` to `false` and list its source under `protectedPaths` in the base policy.
+Guard compares each action ref with the contracted workflow at the base revision; additions,
+removals, and SHA changes are reported as `policy-weakened` for separate review even when the new
+ref is itself SHA-pinned. Missing protections are reported as `policy-weakened`; malformed or
+unreadable workflow data is `incomplete`. The result and receipt include base/current workflow
+digests, action refs and their changes, and issues. Guard does not
+evaluate arbitrary GitHub expressions or prove that repository settings require the check; branch
+protection or rulesets must still require the expected check source.
+The audit rejects `pull_request_target` on a contracted verification workflow because Guard cannot
+prove that it never executes untrusted PR content with that event's elevated context.
+
+The receipt records the effective Guard invocation and each project check's command and arguments.
+Credential-like values are redacted from command evidence; treat receipts as review artifacts, not
+as a substitute for trusted CI logs.
+
 To make policy changes fail this invocation explicitly, add:
 
 ```bash
@@ -460,10 +585,13 @@ production tracing system or an identity/signature ledger.
 
 The manifest also contains a `verification-receipt` object. It is a compact, machine-readable
 record of the commit, policy base and fingerprint, decision IDs, check statuses, finding counts,
-contract issues, waiver state, and Guard version. It intentionally excludes command output and
-source code. The receipt describes what Guard decided; it is not a cryptographic signature or proof
-of CI identity. When a policy base is supplied, it separates the base diff from dirty working-tree
-files so local verification cannot silently present an incomplete change set.
+contract issues, waiver state, and Guard version. Its `verificationScope` contains SHA-256 hashes
+and paths for files discovered by Guard plus changed and deleted paths; the fingerprint binds that
+inventory to the effective policy and Guard version. The `verification-scope` stage is incomplete
+if Guard cannot hash the full scope or if the inputs changed during the run. The receipt excludes
+source contents and command output. It describes what Guard decided; it is not a cryptographic
+signature or proof of CI identity. When a policy base is supplied, it separates the base diff from
+dirty working-tree files so local verification cannot silently present an incomplete change set.
 
 ## Security and data handling
 
