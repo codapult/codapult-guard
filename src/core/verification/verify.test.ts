@@ -1,19 +1,27 @@
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { GUARD_DIR } from '../guard.js';
 import { runGuardVerification } from './verify.js';
 
 const roots: string[] = [];
 
-function createGitPolicyRoot(): { root: string; base: string } {
+function createGitPolicyRoot(
+  files: Record<string, string> = {},
+  rules: unknown = { version: 1, rules: [] },
+): { root: string; base: string } {
   const root = mkdtempSync(join(tmpdir(), 'guard-verify-policy-git-'));
   roots.push(root);
   mkdirSync(join(root, GUARD_DIR), { recursive: true });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: {} }));
-  writeFileSync(join(root, GUARD_DIR, 'rules.json'), JSON.stringify({ version: 1, rules: [] }));
+  writeFileSync(join(root, GUARD_DIR, 'rules.json'), JSON.stringify(rules));
+  for (const [path, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), content);
+  }
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['config', 'user.email', 'guard@example.test'], { cwd: root });
   execFileSync('git', ['config', 'user.name', 'Guard Test'], { cwd: root });
@@ -119,6 +127,40 @@ describe('runGuardVerification', () => {
     });
   });
 
+  it('returns incomplete when a policy-required project-check stage was skipped', () => {
+    const { root } = createGitPolicyRoot(
+      {},
+      {
+        version: 1,
+        rules: [],
+        completionGate: { requiredStages: ['project-checks'] },
+      },
+    );
+    writeFileSync(
+      join(root, GUARD_DIR, 'agent.json'),
+      JSON.stringify({
+        version: 1,
+        tools: 'auto',
+        tooling: {},
+        completionGate: {
+          enabled: true,
+          maxIterations: 3,
+          projectChecks: true,
+          checks: ['lint', 'typecheck', 'test', 'build'],
+          requiredStages: ['project-checks'],
+        },
+      }),
+    );
+
+    const result = runGuardVerification(root, { projectChecks: false, tools: 'off' });
+
+    expect(result.outcome).toBe('incomplete');
+    expect(result.status).toBe('incomplete');
+    expect(result.requiredStages).toContain('project-checks');
+    expect(result.incompleteStages).toContain('project-checks');
+    expect(result.run.receipt?.stages['project-checks']).toBe('skipped');
+  });
+
   it('runs all configured project checks by default', () => {
     const root = mkdtempSync(join(tmpdir(), 'guard-verify-defaults-'));
     roots.push(root);
@@ -175,7 +217,161 @@ describe('runGuardVerification', () => {
         workingTreeDirty: true,
         changedFiles: ['working-tree.ts'],
       },
+      verificationScope: {
+        algorithm: 'sha256',
+        complete: true,
+        stable: true,
+      },
     });
+    expect(result.requiredStages).toContain('verification-scope');
+    const scopeFile = result.run.receipt?.verificationScope?.files.find(
+      (file) => file.path === 'working-tree.ts',
+    );
+    expect(scopeFile).toEqual({
+      path: 'working-tree.ts',
+      status: 'present',
+      sha256: createHash('sha256').update('export const value = 1;\n').digest('hex'),
+    });
+    expect(result.run.receipt?.verificationScope?.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(result.run.receipt?.tool.version).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
+  it('binds a deleted tracked file to its last committed bytes', () => {
+    const content = 'export const retired = true;\n';
+    const { root, base } = createGitPolicyRoot({ 'deleted.ts': content });
+    rmSync(join(root, 'deleted.ts'));
+
+    const result = runGuardVerification(root, {
+      policyBase: base,
+      projectChecks: false,
+      tools: 'off',
+    });
+
+    expect(result.run.receipt?.verificationScope?.files).toContainEqual({
+      path: 'deleted.ts',
+      status: 'deleted',
+      sha256: createHash('sha256').update(content).digest('hex'),
+    });
+    expect(result.run.receipt?.verificationScope).toMatchObject({ complete: true, stable: true });
+  });
+
+  it('marks the verification incomplete if a check changes a scoped file', () => {
+    const { root } = createGitPolicyRoot({ 'subject.ts': 'export const value = 1;\n' });
+    const script =
+      "node -e \"require('node:fs').writeFileSync('subject.ts', 'export const value = 2;\\\\n')\"";
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: { test: script } }));
+
+    const result = runGuardVerification(root, { checks: ['test'], tools: 'off' });
+
+    expect(result.outcome).toBe('incomplete');
+    expect(result.run.receipt?.outcome).toBe('incomplete');
+    expect(result.run.receipt?.verificationScope).toMatchObject({ complete: true, stable: false });
+    expect(result.run.receipt?.incompleteStages).toContain('verification-scope');
+    expect(result.run.receipt?.checks.test).toMatchObject({
+      status: 'passed',
+      execution: 'attempted',
+    });
+  });
+
+  it('reports added suppressions and protected-path changes from the trusted base', () => {
+    const { root, base } = createGitPolicyRoot(
+      {
+        'new-source.ts': 'export const value = 1;\n',
+        '.gitignore': 'build/\n',
+        'agent.config': 'strict=true\n',
+      },
+      {
+        version: 1,
+        rules: [],
+        policySurface: {
+          paths: [{ pattern: 'agent.config', kind: 'custom', severity: 'error' }],
+        },
+      },
+    );
+    writeFileSync(
+      join(root, 'new-source.ts'),
+      '// eslint-disable-next-line\nexport const value = 1;\n',
+    );
+    writeFileSync(join(root, '.gitignore'), 'build/\ncoverage/\n');
+    writeFileSync(join(root, '.ignore'), 'generated/\n');
+    writeFileSync(join(root, 'agent.config'), 'strict=false\n');
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ scripts: { test: 'echo changed' } }),
+    );
+    writeFileSync(join(root, GUARD_DIR, 'rules.json'), JSON.stringify({ version: 1, rules: [] }));
+
+    const result = runGuardVerification(root, {
+      policyBase: base,
+      failOnProtectedChanges: true,
+      projectChecks: false,
+      tools: 'off',
+    });
+
+    expect(result.errorCode).toBe('GUARD_PROTECTED_PATH_CHANGED');
+    expect(result.policySurface).toMatchObject({
+      complete: true,
+      suppressionMarkers: ['new-source.ts:eslint-disable'],
+    });
+    expect(result.policySurface?.changedPaths).toContain('package.json');
+    expect(result.policySurface?.changedPaths).toContain('.ignore');
+    expect(result.policySurface?.changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: '.gitignore', kind: 'ignore-config', severity: 'error' }),
+        expect.objectContaining({ path: '.ignore', kind: 'ignore-config', severity: 'error' }),
+        expect.objectContaining({ path: 'agent.config', kind: 'custom', severity: 'error' }),
+      ]),
+    );
+    expect(result.run.receipt).toMatchObject({
+      policySurface: { complete: true, suppressionMarkers: ['new-source.ts:eslint-disable'] },
+    });
+  });
+
+  it('uses the base policy to audit and report a weakened CI workflow', () => {
+    const workflowPath = '.github/workflows/guard.yml';
+    const workflow = [
+      'name: Guard',
+      'on: pull_request',
+      'permissions:',
+      '  contents: read',
+      'jobs:',
+      '  guard:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - run: pnpm exec codapult-guard verify --policy-base "$BASE_SHA"',
+      '',
+    ].join('\n');
+    const rules = {
+      version: 1,
+      rules: [],
+      githubActions: {
+        workflows: [
+          {
+            path: workflowPath,
+            job: 'guard',
+            requiredRunIncludes: ['pnpm exec codapult-guard verify', '--policy-base'],
+          },
+        ],
+      },
+    };
+    const { root, base } = createGitPolicyRoot({ [workflowPath]: workflow }, rules);
+    writeFileSync(join(root, workflowPath), workflow.replace(' --policy-base "$BASE_SHA"', ''));
+
+    const result = runGuardVerification(root, {
+      policyBase: base,
+      projectChecks: false,
+      tools: 'off',
+    });
+
+    expect(result.status).toBe('policy-weakened');
+    expect(result.ciIntegrity?.status).toBe('policy-weakened');
+    expect(result.ciIntegrity?.workflows[0]?.path).toBe(workflowPath);
+    expect(result.ciIntegrity?.workflows[0]?.status).toBe('policy-weakened');
+    expect(result.ciIntegrity?.workflows[0]?.issues.map((issue) => issue.code)).toContain(
+      'command-missing',
+    );
+    expect(result.run.receipt?.ciIntegrity).toEqual(result.ciIntegrity);
+    expect(result.run.receipt?.policy?.source).toBe('git-ref');
   });
 
   it.each([
@@ -278,12 +474,15 @@ describe('runGuardVerification', () => {
     });
 
     expect(result.outcome).toBe('fail');
-    expect(result.run.receipt).toMatchObject({
-      outcome: 'fail',
-      gate: 'project-checks',
-      checks: { test: { status: 'failed' } },
-      stages: { 'project-checks': 'fail' },
-    });
+    const receipt = result.run.receipt;
+    expect(receipt?.outcome).toBe('fail');
+    expect(receipt?.gate).toBe('project-checks');
+    expect(receipt?.checks.test).toMatchObject({ status: 'failed', execution: 'attempted' });
+    expect(receipt?.checks.test.command).toContain('test');
+    expect(Array.isArray(receipt?.checks.test.args)).toBe(true);
+    expect(receipt?.tool).toMatchObject({ name: '@codapult/guard' });
+    expect(receipt?.tool.version).toMatch(/^\d+\.\d+\.\d+/);
+    expect(receipt?.stages['project-checks']).toBe('fail');
   });
 
   it('fails when a relevant waiver has expired', () => {

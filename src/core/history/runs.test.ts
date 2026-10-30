@@ -160,7 +160,15 @@ describe('Guard run observability', () => {
       version: 1,
       kind: 'verification-receipt',
       subject: { changedFiles: ['src/index.ts'], workingTreeDirty: true },
-      stages: { verification: 'ok' },
+      verificationScope: {
+        algorithm: 'sha256',
+        fingerprint: 'a'.repeat(64),
+        complete: true,
+        stable: true,
+        files: [{ path: 'src/index.ts', status: 'present', sha256: 'b'.repeat(64) }],
+      },
+      stages: { verification: 'ok', 'verification-scope': 'ok' },
+      requiredStages: ['verification-scope'],
       checks: {
         typecheck: { status: 'passed', exitCode: 0, durationMs: 12 },
       },
@@ -184,9 +192,62 @@ describe('Guard run observability', () => {
       runId: result.runId,
       subject: { changedFiles: ['src/index.ts'] },
       checks: { typecheck: { status: 'passed' } },
+      verificationScope: {
+        algorithm: 'sha256',
+        fingerprint: 'a'.repeat(64),
+        complete: true,
+        stable: true,
+      },
+      requiredStages: ['verification-scope'],
       tool: { version: '0.9.0' },
     });
     expect(listGuardRuns(root)[0]?.receipt).toEqual(result.receipt);
+  });
+
+  it('rejects a receipt with a malformed verification-scope digest', () => {
+    const root = createRoot();
+    const context = startGuardRun();
+    const result = finishGuardRun(root, context, 'pass', 'none', 'verify', undefined, {
+      version: 1,
+      kind: 'verification-receipt',
+      subject: { changedFiles: [], workingTreeDirty: false },
+      verificationScope: {
+        algorithm: 'sha256',
+        fingerprint: 'a'.repeat(64),
+        complete: true,
+        stable: true,
+        files: [{ path: 'src/index.ts', status: 'present', sha256: 'b'.repeat(64) }],
+      },
+      stages: { 'verification-scope': 'ok' },
+      checks: {},
+      findings: {
+        total: 0,
+        errors: 0,
+        warnings: 0,
+        waived: 0,
+        waiverWarnings: 0,
+        expiredWaivers: 0,
+        fingerprints: [],
+        ruleIds: [],
+      },
+      contractIssues: [],
+      decisionIds: [],
+      tool: { name: '@codapult/guard', version: '1.0.0' },
+    });
+    const path = join(root, GUARD_RUNS_DIR, `${result.runId}.json`);
+    const tampered = {
+      ...result,
+      receipt: {
+        ...result.receipt,
+        verificationScope: {
+          ...result.receipt?.verificationScope,
+          files: [{ path: 'src/index.ts', status: 'present', sha256: 'invalid' }],
+        },
+      },
+    };
+    writeFileSync(path, `${JSON.stringify(tampered)}\n`, 'utf8');
+
+    expect(listGuardRuns(root)).toEqual([]);
   });
 
   it('rejects a receipt that disagrees with its enclosing run manifest', () => {

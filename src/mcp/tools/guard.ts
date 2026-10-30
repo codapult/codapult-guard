@@ -688,6 +688,10 @@ export function registerGuardTools(server: McpServer): void {
           .boolean()
           .optional()
           .describe('Fail when the checked-out policy differs from policy_base.'),
+        fail_on_protected_changes: z
+          .boolean()
+          .optional()
+          .describe('Fail when verification-sensitive files or inline suppressions change.'),
         iteration: z.number().int().positive().default(1),
       },
     },
@@ -701,6 +705,7 @@ export function registerGuardTools(server: McpServer): void {
       project_checks,
       policy_base,
       fail_on_policy_change,
+      fail_on_protected_changes,
       iteration,
     }) => {
       const root = getGuardRoot(requestedRoot);
@@ -715,6 +720,7 @@ export function registerGuardTools(server: McpServer): void {
         projectChecks: project_checks,
         policyBase: policy_base,
         failOnPolicyChange: fail_on_policy_change,
+        failOnProtectedChanges: fail_on_protected_changes,
       });
       const completionGate = agent.config.completionGate;
       return jsonToolResult(
@@ -723,10 +729,12 @@ export function registerGuardTools(server: McpServer): void {
           completionGate: {
             ...completionGate,
             iteration,
-            canRetry: result.status === 'fail' && iteration < completionGate.maxIterations,
+            canRetry:
+              (result.status === 'fail' || result.status === 'incomplete') &&
+              iteration < completionGate.maxIterations,
           },
         },
-        result.status === 'fail',
+        result.status !== 'ok',
       );
     },
   );

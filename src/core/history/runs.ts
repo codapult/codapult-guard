@@ -37,6 +37,45 @@ export interface GuardVerificationReceiptCheck {
   status: 'passed' | 'failed' | 'not-configured';
   exitCode: number;
   durationMs: number;
+  command?: string | undefined;
+  args?: string[] | undefined;
+  execution?: 'attempted' | 'rejected' | 'not-configured' | undefined;
+}
+
+export interface GuardVerificationReceiptPolicySurface {
+  protectedPaths: string[];
+  changedPaths: string[];
+  changes?: { path: string; pattern: string; kind: string; severity: 'warning' | 'error' }[];
+  suppressionMarkers: string[];
+  workflowChanged: boolean;
+  complete: boolean;
+}
+
+export interface GuardVerificationScope {
+  algorithm: 'sha256';
+  fingerprint: string;
+  complete: boolean;
+  stable: boolean;
+  files: {
+    path: string;
+    status: 'present' | 'deleted' | 'unavailable';
+    sha256?: string | undefined;
+  }[];
+}
+
+export interface GuardVerificationCiIntegrity {
+  status: 'ok' | 'policy-weakened' | 'incomplete';
+  workflows: {
+    path: string;
+    job: string;
+    digest?: string | undefined;
+    baseDigest?: string | undefined;
+    actions: string[];
+    baseActions?: string[] | undefined;
+    actionChanges?: { name: string; base: string[]; current: string[] }[] | undefined;
+    status: 'ok' | 'policy-weakened' | 'incomplete';
+    issues: { code: string; message: string }[];
+  }[];
 }
 
 export interface GuardVerificationReceipt {
@@ -56,6 +95,12 @@ export interface GuardVerificationReceipt {
     workingTreeDirty: boolean;
   };
   policy?: GuardRunPolicy | undefined;
+  verificationScope?: GuardVerificationScope | undefined;
+  policySurface?: GuardVerificationReceiptPolicySurface | undefined;
+  ciIntegrity?: GuardVerificationCiIntegrity | undefined;
+  requiredStages?: string[] | undefined;
+  incompleteStages?: string[] | undefined;
+  effectiveInvocation?: { command: string; args: string[] } | undefined;
   stages: Record<string, 'ok' | 'fail' | 'skipped'>;
   checks: Record<string, GuardVerificationReceiptCheck>;
   findings: {
@@ -83,7 +128,14 @@ export interface GuardRunManifest {
   startedAt: string;
   completedAt: string;
   durationMs: number;
-  outcome: 'pass' | 'fail' | 'warning' | 'needs-review' | 'not-configured';
+  outcome:
+    | 'pass'
+    | 'fail'
+    | 'incomplete'
+    | 'policy-weakened'
+    | 'warning'
+    | 'needs-review'
+    | 'not-configured';
   gate: string;
   stages: Record<string, GuardRunStage>;
   commit?: string | undefined;
@@ -102,6 +154,8 @@ export interface GuardRunSummary {
   total: number;
   passed: number;
   failed: number;
+  incomplete: number;
+  policyWeakened: number;
   warnings: number;
   averageDurationMs: number;
   last?: GuardRunManifest | undefined;
@@ -152,6 +206,8 @@ function isGuardRunManifest(value: unknown): value is GuardRunManifest {
       Number.isFinite(Date.parse(receipt.generatedAt)) &&
       (receipt.outcome === 'pass' ||
         receipt.outcome === 'fail' ||
+        receipt.outcome === 'incomplete' ||
+        receipt.outcome === 'policy-weakened' ||
         receipt.outcome === 'warning' ||
         receipt.outcome === 'needs-review' ||
         receipt.outcome === 'not-configured') &&
@@ -172,6 +228,104 @@ function isGuardRunManifest(value: unknown): value is GuardRunManifest {
       (receipt.subject.baseCommit === undefined ||
         typeof receipt.subject.baseCommit === 'string') &&
       (receipt.policy === undefined || isGuardRunPolicy(receipt.policy)) &&
+      (receipt.verificationScope === undefined ||
+        (receipt.verificationScope !== null &&
+          typeof receipt.verificationScope === 'object' &&
+          receipt.verificationScope.algorithm === 'sha256' &&
+          /^[a-f0-9]{64}$/.test(receipt.verificationScope.fingerprint) &&
+          typeof receipt.verificationScope.complete === 'boolean' &&
+          typeof receipt.verificationScope.stable === 'boolean' &&
+          Array.isArray(receipt.verificationScope.files) &&
+          receipt.verificationScope.files.every(
+            (file) =>
+              file !== null &&
+              typeof file === 'object' &&
+              typeof file.path === 'string' &&
+              (file.status === 'present' ||
+                file.status === 'deleted' ||
+                file.status === 'unavailable') &&
+              (file.status === 'unavailable'
+                ? file.sha256 === undefined
+                : typeof file.sha256 === 'string' && /^[a-f0-9]{64}$/.test(file.sha256)),
+          ))) &&
+      (receipt.policySurface === undefined ||
+        (receipt.policySurface !== null &&
+          typeof receipt.policySurface === 'object' &&
+          Array.isArray(receipt.policySurface.protectedPaths) &&
+          receipt.policySurface.protectedPaths.every((path) => typeof path === 'string') &&
+          Array.isArray(receipt.policySurface.changedPaths) &&
+          receipt.policySurface.changedPaths.every((path) => typeof path === 'string') &&
+          (receipt.policySurface.changes === undefined ||
+            (Array.isArray(receipt.policySurface.changes) &&
+              receipt.policySurface.changes.every(
+                (change) =>
+                  change !== null &&
+                  typeof change === 'object' &&
+                  typeof change.path === 'string' &&
+                  typeof change.pattern === 'string' &&
+                  typeof change.kind === 'string' &&
+                  (change.severity === 'warning' || change.severity === 'error'),
+              ))) &&
+          Array.isArray(receipt.policySurface.suppressionMarkers) &&
+          receipt.policySurface.suppressionMarkers.every((marker) => typeof marker === 'string') &&
+          typeof receipt.policySurface.workflowChanged === 'boolean' &&
+          typeof receipt.policySurface.complete === 'boolean')) &&
+      (receipt.ciIntegrity === undefined ||
+        (receipt.ciIntegrity !== null &&
+          typeof receipt.ciIntegrity === 'object' &&
+          (receipt.ciIntegrity.status === 'ok' ||
+            receipt.ciIntegrity.status === 'policy-weakened' ||
+            receipt.ciIntegrity.status === 'incomplete') &&
+          Array.isArray(receipt.ciIntegrity.workflows) &&
+          receipt.ciIntegrity.workflows.every(
+            (workflow) =>
+              workflow !== null &&
+              typeof workflow === 'object' &&
+              typeof workflow.path === 'string' &&
+              typeof workflow.job === 'string' &&
+              (workflow.digest === undefined || typeof workflow.digest === 'string') &&
+              (workflow.baseDigest === undefined || typeof workflow.baseDigest === 'string') &&
+              Array.isArray(workflow.actions) &&
+              workflow.actions.every((action) => typeof action === 'string') &&
+              (workflow.baseActions === undefined ||
+                (Array.isArray(workflow.baseActions) &&
+                  workflow.baseActions.every((action) => typeof action === 'string'))) &&
+              (workflow.actionChanges === undefined ||
+                (Array.isArray(workflow.actionChanges) &&
+                  workflow.actionChanges.every(
+                    (change) =>
+                      change !== null &&
+                      typeof change === 'object' &&
+                      typeof change.name === 'string' &&
+                      Array.isArray(change.base) &&
+                      change.base.every((action) => typeof action === 'string') &&
+                      Array.isArray(change.current) &&
+                      change.current.every((action) => typeof action === 'string'),
+                  ))) &&
+              (workflow.status === 'ok' ||
+                workflow.status === 'policy-weakened' ||
+                workflow.status === 'incomplete') &&
+              Array.isArray(workflow.issues) &&
+              workflow.issues.every(
+                (issue) =>
+                  issue !== null &&
+                  typeof issue === 'object' &&
+                  typeof issue.code === 'string' &&
+                  typeof issue.message === 'string',
+              ),
+          ))) &&
+      (receipt.requiredStages === undefined ||
+        (Array.isArray(receipt.requiredStages) &&
+          receipt.requiredStages.every((stage) => typeof stage === 'string'))) &&
+      (receipt.incompleteStages === undefined ||
+        (Array.isArray(receipt.incompleteStages) &&
+          receipt.incompleteStages.every((stage) => typeof stage === 'string'))) &&
+      (receipt.effectiveInvocation === undefined ||
+        (receipt.effectiveInvocation !== null &&
+          typeof receipt.effectiveInvocation === 'object' &&
+          typeof receipt.effectiveInvocation.command === 'string' &&
+          Array.isArray(receipt.effectiveInvocation.args) &&
+          receipt.effectiveInvocation.args.every((argument) => typeof argument === 'string'))) &&
       receipt.stages !== null &&
       typeof receipt.stages === 'object' &&
       !Array.isArray(receipt.stages) &&
@@ -188,6 +342,14 @@ function isGuardRunManifest(value: unknown): value is GuardRunManifest {
           (candidate.status === 'passed' ||
             candidate.status === 'failed' ||
             candidate.status === 'not-configured') &&
+          (candidate.command === undefined || typeof candidate.command === 'string') &&
+          (candidate.args === undefined ||
+            (Array.isArray(candidate.args) &&
+              candidate.args.every((argument) => typeof argument === 'string'))) &&
+          (candidate.execution === undefined ||
+            candidate.execution === 'attempted' ||
+            candidate.execution === 'rejected' ||
+            candidate.execution === 'not-configured') &&
           Number.isInteger(candidate.exitCode) &&
           typeof candidate.durationMs === 'number' &&
           Number.isFinite(candidate.durationMs) &&
@@ -257,6 +419,8 @@ function isGuardRunManifest(value: unknown): value is GuardRunManifest {
     manifest.durationMs >= 0 &&
     (manifest.outcome === 'pass' ||
       manifest.outcome === 'fail' ||
+      manifest.outcome === 'incomplete' ||
+      manifest.outcome === 'policy-weakened' ||
       manifest.outcome === 'warning' ||
       manifest.outcome === 'needs-review' ||
       manifest.outcome === 'not-configured') &&
@@ -373,6 +537,8 @@ export function summarizeGuardRuns(root: string, limit = 100): GuardRunSummary {
     total,
     passed: runs.filter((run) => run.outcome === 'pass').length,
     failed: runs.filter((run) => run.outcome === 'fail').length,
+    incomplete: runs.filter((run) => run.outcome === 'incomplete').length,
+    policyWeakened: runs.filter((run) => run.outcome === 'policy-weakened').length,
     warnings: runs.filter((run) => run.outcome === 'warning').length,
     averageDurationMs:
       total === 0 ? 0 : Math.round(runs.reduce((sum, run) => sum + run.durationMs, 0) / total),
@@ -416,6 +582,12 @@ export function finishGuardRun(
       workingTreeDirty: receipt?.subject.workingTreeDirty ?? false,
     },
     ...(policy ? { policy } : {}),
+    ...(receipt?.verificationScope ? { verificationScope: receipt.verificationScope } : {}),
+    ...(receipt?.policySurface ? { policySurface: receipt.policySurface } : {}),
+    ...(receipt?.ciIntegrity ? { ciIntegrity: receipt.ciIntegrity } : {}),
+    requiredStages: receipt?.requiredStages ?? [],
+    incompleteStages: receipt?.incompleteStages ?? [],
+    ...(receipt?.effectiveInvocation ? { effectiveInvocation: receipt.effectiveInvocation } : {}),
     stages: receipt?.stages ?? {},
     checks: receipt?.checks ?? {},
     findings: receipt?.findings ?? {

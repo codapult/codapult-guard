@@ -97,6 +97,79 @@ export const guardConfigSchema = z.object({
       path: ['maxDays'],
     })
     .optional(),
+  protectedPaths: z
+    .array(
+      z
+        .string()
+        .trim()
+        .min(1)
+        .refine(
+          (path) =>
+            !path.startsWith('/') && !path.includes('\\') && !path.split('/').includes('..'),
+          'protectedPaths entries must be repository-relative paths without parent traversal',
+        ),
+    )
+    .optional(),
+  policySurface: z
+    .object({
+      paths: z
+        .array(
+          z.object({
+            pattern: z
+              .string()
+              .trim()
+              .min(1)
+              .refine(
+                (path) =>
+                  !path.startsWith('/') && !path.includes('\\') && !path.split('/').includes('..'),
+                'policySurface paths must be repository-relative without parent traversal',
+              ),
+            kind: z.enum([
+              'ci-workflow',
+              'guard-policy',
+              'ownership',
+              'dependency-input',
+              'tool-config',
+              'ignore-config',
+              'suppression-source',
+              'custom',
+            ]),
+            severity: z.enum(['warning', 'error']).default('error'),
+          }),
+        )
+        .default([]),
+    })
+    .optional(),
+  githubActions: z
+    .object({
+      workflows: z
+        .array(
+          z.object({
+            path: z
+              .string()
+              .trim()
+              .min(1)
+              .refine(
+                (path) =>
+                  !path.startsWith('/') && !path.includes('\\') && !path.split('/').includes('..'),
+                'GitHub Actions workflow paths must be repository-relative without parent traversal',
+              ),
+            job: z.string().trim().min(1),
+            requiredRunIncludes: z.array(z.string().trim().min(1)).min(1),
+            requiredNeeds: z.array(z.string().trim().min(1)).optional(),
+            requirePullRequest: z.boolean().default(true),
+            requireUnfilteredPullRequest: z.boolean().default(true),
+            requireUnconditionalJob: z.boolean().default(true),
+            requireFullShaActions: z.boolean().default(true),
+            disallowContinueOnError: z.boolean().default(true),
+            maxPermissions: z
+              .record(z.string().trim().min(1), z.enum(['none', 'read', 'write']))
+              .optional(),
+          }),
+        )
+        .min(1),
+    })
+    .optional(),
 });
 
 export const guardContractsFileSchema = z.object({
@@ -181,5 +254,19 @@ export const guardAgentConfigSchema = z.object({
     maxIterations: z.number().int().min(1).max(10),
     projectChecks: z.boolean(),
     checks: z.array(z.enum(['lint', 'typecheck', 'test', 'build'])),
+    requiredStages: z
+      .array(
+        z.enum([
+          'runtime',
+          'project-checks',
+          'adapters',
+          'architecture-policy',
+          'policy-surface',
+          'ci-integrity',
+          'verification-scope',
+        ]),
+      )
+      .min(1)
+      .default(['architecture-policy']),
   }),
 });

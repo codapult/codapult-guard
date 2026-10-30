@@ -64,6 +64,7 @@ vi.mock('../../core/verification/verify.js', () => ({
     architecture: { findings: [] },
     contractIssues: [],
     requirement: { status: 'delegated-to-review', message: 'review' },
+    run: { receipt: undefined },
   })),
 }));
 

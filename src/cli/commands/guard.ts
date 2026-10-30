@@ -74,6 +74,15 @@ interface GuardConfigLoadResult {
   invalid: boolean;
 }
 
+function terminalSafe(value: string): string {
+  let output = '';
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    output += code <= 0x1f || code === 0x7f ? ' ' : character;
+  }
+  return output;
+}
+
 interface GuardInitOptions {
   force?: boolean | undefined;
   wait?: boolean | undefined;
@@ -93,6 +102,7 @@ interface GuardVerifyOptions extends GuardOutputOptions {
   projectChecks?: boolean | undefined;
   policyBase?: string | undefined;
   failOnPolicyChange?: boolean | undefined;
+  failOnProtectedChanges?: boolean | undefined;
 }
 
 interface GuardGovernanceOptions extends GuardOutputOptions {
@@ -352,7 +362,7 @@ export function guardRunsCommand(options: GuardOutputOptions = {}): void {
   }
   heading('Codapult Guard Runs');
   info(
-    `${result.summary.total} run(s); ${result.summary.failed} failed, ${result.summary.warnings} warning, average ${result.summary.averageDurationMs} ms`,
+    `${result.summary.total} run(s); ${result.summary.failed} failed, ${result.summary.incomplete} incomplete, ${result.summary.policyWeakened} policy-weakened, ${result.summary.warnings} warning, average ${result.summary.averageDurationMs} ms`,
   );
   for (const run of result.runs) {
     info(`${run.runId}: ${run.outcome}, gate=${run.gate}, ${run.durationMs} ms`);
@@ -461,6 +471,7 @@ export function guardVerifyCommand(options: GuardVerifyOptions = {}): void {
     projectChecks: options.projectChecks,
     policyBase: options.policyBase,
     failOnPolicyChange: options.failOnPolicyChange,
+    failOnProtectedChanges: options.failOnProtectedChanges,
   });
   if (options.json) {
     console.log(JSON.stringify(result, null, 2));
@@ -479,15 +490,61 @@ export function guardVerifyCommand(options: GuardVerifyOptions = {}): void {
       warn('The working-tree policy differs from the base policy; the base policy was used.');
     }
   }
+  if (result.policySurface) {
+    dim(`protected paths changed: ${result.policySurface.changedPaths.length}`);
+    for (const path of result.policySurface.changedPaths)
+      warn(`verification-sensitive: ${terminalSafe(path)}`);
+    for (const change of result.policySurface.changes) {
+      dim(
+        `policy surface: ${change.kind}/${change.severity} ${terminalSafe(change.path)} (${terminalSafe(change.pattern)})`,
+      );
+    }
+    for (const marker of result.policySurface.suppressionMarkers)
+      warn(`inline suppression added: ${terminalSafe(marker)}`);
+    if (result.policySurface.workflowChanged)
+      warn('Workflow changes require host-enforced required checks and protected review.');
+  }
+  if (result.ciIntegrity) {
+    if (result.ciIntegrity.status === 'ok') success('CI integrity: passed');
+    else if (result.ciIntegrity.status === 'policy-weakened') {
+      fail('CI integrity: policy weakened');
+    } else {
+      warn('CI integrity: incomplete');
+    }
+    for (const workflow of result.ciIntegrity.workflows) {
+      for (const change of workflow.actionChanges ?? []) {
+        warn(
+          `[${terminalSafe(workflow.path)}] action refs changed for ${terminalSafe(change.name)}: ${terminalSafe(change.base.join(', ') || '(none)')} → ${terminalSafe(change.current.join(', ') || '(none)')}`,
+        );
+      }
+      for (const issue of workflow.issues)
+        fail(`[${terminalSafe(workflow.path)}] ${terminalSafe(issue.message)}`);
+    }
+  }
+  const receipt = result.run.receipt;
+  if (receipt?.effectiveInvocation) {
+    dim(
+      `effective invocation: ${terminalSafe(receipt.effectiveInvocation.command)} ${terminalSafe(receipt.effectiveInvocation.args.join(' '))}`,
+    );
+  }
+  if (result.incompleteStages && result.incompleteStages.length > 0) {
+    warn(`Required stages incomplete: ${result.incompleteStages.join(', ')}`);
+  }
   for (const [name, check] of Object.entries(result.checks)) {
-    if (check.status === 'passed') success(`${name}: passed`);
-    else if (check.status === 'not-configured') dim(`${name}: not configured`);
-    else fail(`${name}: failed (exit ${check.exitCode})`);
+    if (check.status === 'passed') success(`${terminalSafe(name)}: passed`);
+    else if (check.status === 'not-configured') dim(`${terminalSafe(name)}: not configured`);
+    else fail(`${terminalSafe(name)}: failed (exit ${check.exitCode})`);
   }
   for (const [name, check] of Object.entries(result.adapters ?? {})) {
-    if (check.status === 'passed') success(`${name}: passed`);
-    else if (check.status === 'not-configured') dim(`${name}: not configured`);
-    else fail(`${name}: failed (exit ${check.exitCode})`);
+    if (check.status === 'passed') success(`${terminalSafe(name)}: passed`);
+    else if (check.status === 'not-configured') dim(`${terminalSafe(name)}: not configured`);
+    else fail(`${terminalSafe(name)}: failed (exit ${check.exitCode})`);
+  }
+  for (const [name, evidence] of Object.entries(receipt?.checks ?? {})) {
+    if (!evidence.command) continue;
+    dim(
+      `${terminalSafe(name)} command (${evidence.execution ?? 'unknown'}): ${terminalSafe(evidence.command)}${(evidence.args?.length ?? 0) > 0 ? ` ${terminalSafe(evidence.args?.join(' ') ?? '')}` : ''}`,
+    );
   }
   const findings = result.architecture?.findings ?? [];
   if (findings.length === 0) success('architecture: no new regressions');
