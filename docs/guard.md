@@ -639,6 +639,55 @@ Guard version. If a path cannot be hashed or the inventory changes during verifi
 `verification-scope` stage is incomplete and the overall result cannot pass. The receipt includes
 hashes and paths but no source contents; it is not signed and does not prove who ran Guard.
 
+### Exporting and signing a verification attestation
+
+`verify --attestation-out <file>` writes a versioned in-toto Statement containing the verification
+receipt. It is emitted only when the result is `pass` and the scope is complete and stable. The
+Statement subject digest is the SHA-256 fingerprint of the verified context; its predicate embeds
+the receipt, including per-file digests, policy fingerprint, base commit, Guard version, and result.
+The output contains paths and hashes, not file contents. The supplied [CI template](guard-ci.yml)
+exports and uploads this unsigned statement alongside the JSON receipt when verification passes.
+
+Guard does not sign the Statement. Keep signing in the CI platform so Guard needs no signing key or
+Sigstore dependency. In a trusted workflow, export the statement as a separate artifact:
+
+```sh
+pnpm exec codapult-guard verify \
+  --policy-base "$BASE_SHA" \
+  --fail-on-policy-change \
+  --fail-on-protected-changes \
+  --json \
+  --attestation-out "$RUNNER_TEMP/guard-verification.intoto.json" \
+  > guard-verification.json
+```
+
+After installing a pinned Cosign version, run signing in an isolated trusted job on a protected
+ref. Grant `id-token: write` only to that signing job, transfer the statement as an artifact, and
+do not execute PR-controlled scripts in the signer. For example:
+
+```sh
+cosign sign-blob "$RUNNER_TEMP/guard-verification.intoto.json" \
+  --bundle "$RUNNER_TEMP/guard-verification.sigstore.json" --yes
+```
+
+Verify the bundle against the exact workflow identity and GitHub OIDC issuer, for example:
+
+```sh
+cosign verify-blob "$RUNNER_TEMP/guard-verification.intoto.json" \
+  --bundle "$RUNNER_TEMP/guard-verification.sigstore.json" \
+  --certificate-identity 'https://github.com/ORG/REPO/.github/workflows/guard-attest.yml@refs/heads/main' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
+```
+
+The identity must name the trusted workflow and protected ref that policy allows. Do not grant
+`id-token: write` to a job that executes PR-controlled workflow code and then treat its signature
+as proof of trusted verification: on `pull_request`, GitHub runs the workflow from the PR merge
+commit. A signature authenticates the signer identity; it does not make the workflow definition or
+its inputs trustworthy. See the [in-toto Statement spec](https://github.com/in-toto/attestation/blob/main/spec/README.md),
+[Cosign blob signing](https://docs.sigstore.dev/cosign/signing/signing_with_blobs/), and
+[GitHub OIDC reference](https://docs.github.com/en/actions/reference/security/oidc). Repository
+settings must still require the appropriate Guard check.
+
 ### Governance audit
 
 Use the read-only governance audit to inspect whether approval records retain enough declared

@@ -592,6 +592,8 @@ if Guard cannot hash the full scope or if the inputs changed during the run. The
 source contents and command output. It describes what Guard decided; it is not a cryptographic
 signature or proof of CI identity. When a policy base is supplied, it separates the base diff from
 dirty working-tree files so local verification cannot silently present an incomplete change set.
+For portable exchange, `verify --attestation-out <file>` exports a passing receipt as an unsigned
+in-toto Statement; a trusted CI signer can sign that file with Sigstore. See the [attestation guide](docs/guard.md#exporting-and-signing-a-verification-attestation).
 
 ## Security and data handling
 

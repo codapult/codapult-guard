@@ -74,9 +74,9 @@ jobs:
             check_args=(--tools auto)
           fi
           if [ -n "$POLICY_BASE" ]; then
-            pnpm exec codapult-guard verify "${check_args[@]}" --policy-base "$POLICY_BASE" --fail-on-policy-change --json > guard-verification.json
+            pnpm exec codapult-guard verify "${check_args[@]}" --policy-base "$POLICY_BASE" --fail-on-policy-change --json --attestation-out guard-verification.intoto.json > guard-verification.json
           else
-            pnpm exec codapult-guard verify "${check_args[@]}" --json > guard-verification.json
+            pnpm exec codapult-guard verify "${check_args[@]}" --json --attestation-out guard-verification.intoto.json > guard-verification.json
           fi
 
       - name: Add Guard result to the workflow summary
@@ -159,7 +159,9 @@ jobs:
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: codapult-guard-verification
-          path: guard-verification.json
+          path: |
+            guard-verification.json
+            guard-verification.intoto.json
           if-no-files-found: ignore
 
       # Keep .codapult/guard policy files behind the repository's protected
