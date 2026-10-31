@@ -8,13 +8,14 @@ on:
 permissions: {}
 
 jobs:
-  verify:
+  inspect:
     if: github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     outputs:
-      attestation: ${{ steps.result.outputs.attestation }}
+      number: ${{ steps.pr.outputs.number }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+      base_sha: ${{ steps.pr.outputs.base_sha }}
+      fork: ${{ steps.pr.outputs.fork }}
     steps:
       - name: Read the associated pull request context
         id: pr
@@ -25,27 +26,48 @@ jobs:
           import { appendFileSync, readFileSync } from 'node:fs';
           const event = JSON.parse(readFileSync(process.env.EVENT_PATH, 'utf8'));
           const pullRequests = event.workflow_run?.pull_requests ?? [];
-          if (pullRequests.length !== 1) throw new Error('Expected exactly one associated pull request.');
-          const pullRequest = pullRequests[0];
-          const number = pullRequest.number;
-          const headSha = pullRequest.head?.sha;
-          const baseSha = pullRequest.base?.sha;
-          if (!Number.isSafeInteger(number) || !/^[a-f0-9]{40}$/i.test(headSha ?? '') || !/^[a-f0-9]{40}$/i.test(baseSha ?? '')) {
-            throw new Error('Pull request number, head SHA, or base SHA is missing or invalid.');
+          if (pullRequests.length === 0) {
+            const runHeadRepository = event.workflow_run?.head_repository?.full_name;
+            const eventBaseRepository = event.repository?.full_name;
+            if (typeof runHeadRepository !== 'string' || typeof eventBaseRepository !== 'string' || runHeadRepository.toLowerCase() === eventBaseRepository.toLowerCase()) {
+              throw new Error('Expected exactly one associated pull request; could not safely identify an unattached fork run.');
+            }
+            appendFileSync(process.env.GITHUB_OUTPUT, 'fork=true\n');
+          } else {
+            if (pullRequests.length !== 1) throw new Error('Expected exactly one associated pull request.');
+            const pullRequest = pullRequests[0];
+            const number = pullRequest.number;
+            const headSha = pullRequest.head?.sha;
+            const baseSha = pullRequest.base?.sha;
+            const headRepository = pullRequest.head?.repo?.full_name;
+            const baseRepository = pullRequest.base?.repo?.full_name;
+            if (!Number.isSafeInteger(number) || !/^[a-f0-9]{40}$/i.test(headSha ?? '') || !/^[a-f0-9]{40}$/i.test(baseSha ?? '') || typeof headRepository !== 'string' || typeof baseRepository !== 'string') {
+              throw new Error('Pull request number, repository, head SHA, or base SHA is missing or invalid.');
+            }
+            const fork = headRepository.toLowerCase() !== baseRepository.toLowerCase();
+            appendFileSync(process.env.GITHUB_OUTPUT, `number=${number}\nhead_sha=${headSha}\nbase_sha=${baseSha}\nfork=${fork}\n`);
           }
-          appendFileSync(process.env.GITHUB_OUTPUT, `number=${number}\nhead_sha=${headSha}\nbase_sha=${baseSha}\n`);
           NODE
 
+  verify:
+    needs: inspect
+    if: needs.inspect.result == 'success' && needs.inspect.outputs.fork != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      attestation: ${{ steps.result.outputs.attestation }}
+    steps:
       - name: Check out the PR head from the base repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/pull/${{ steps.pr.outputs.number }}/head
+          ref: refs/pull/${{ needs.inspect.outputs.number }}/head
           fetch-depth: 0
 
       - name: Fetch the exact base commit and verify the checkout
         env:
-          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
-          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          BASE_SHA: ${{ needs.inspect.outputs.base_sha }}
+          HEAD_SHA: ${{ needs.inspect.outputs.head_sha }}
         run: |
           git fetch --no-tags origin "$BASE_SHA"
           actual_head=$(git rev-parse HEAD)
@@ -111,8 +133,8 @@ jobs:
       - name: Confirm the receipt matches this PR
         id: result
         env:
-          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
-          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          BASE_SHA: ${{ needs.inspect.outputs.base_sha }}
+          HEAD_SHA: ${{ needs.inspect.outputs.head_sha }}
         run: |
           node --input-type=module <<'NODE'
           import { appendFileSync, readFileSync } from 'node:fs';
@@ -141,9 +163,23 @@ jobs:
           path: guard-verification.intoto.json
           if-no-files-found: error
 
+  fork-pr-summary:
+    needs: inspect
+    if: needs.inspect.result == 'success' && needs.inspect.outputs.fork == 'true'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Explain why this fork PR has no attestation
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
+          ## Guard attestation skipped
+
+          This pull request comes from a fork. The trusted workflow did not check out or inspect fork-controlled code, and it did not create a signed attestation. Checkout's fork protection remains enabled. The ordinary Guard pull request check still reports its own result.
+          SUMMARY
+
   attest:
-    needs: verify
-    if: needs.verify.result == 'success' && needs.verify.outputs.attestation == 'true'
+    needs: [inspect, verify]
+    if: needs.inspect.result == 'success' && needs.inspect.outputs.fork != 'true' && needs.verify.result == 'success' && needs.verify.outputs.attestation == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read

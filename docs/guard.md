@@ -667,9 +667,11 @@ statement digest to the expected repository, workflow identity, source revision,
 
 The [trusted PR workflow template](guard-trusted-pr-attestation.yml) independently runs Guard in a
 workflow triggered by completion of the ordinary `Guard` workflow. It does not consume artifacts
-from that run. It checks out the PR head, fetches the exact base commit, installs a fixed Guard
-version with lifecycle scripts disabled, runs Guard without project checks, checks that the
-receipt matches the PR head and base SHAs, and signs the statement in a separate job.
+from that run. It first validates that the event identifies exactly one PR and compares the head and
+base repository names. For same-repository PRs, it checks out the PR head, fetches the exact base
+commit, installs a fixed Guard version with lifecycle scripts disabled, runs Guard without project
+checks, checks that the receipt matches the PR head and base SHAs, and signs the statement in a
+separate job.
 
 This attestation covers **Guard's architecture and policy verification only**. The template skips
 project checks and does not attest the result of tests, builds, deployments, or other jobs in the
@@ -718,20 +720,27 @@ version tag and resolve its commit, for example:
 `git rev-parse 'FETCH_HEAD^{commit}'`.
 
 Checkout v7 blocks fork PR checkouts in `workflow_run` by default, and this template keeps that
-protection enabled. Fork PRs therefore receive no trusted attestation from this workflow unless a
-future version adds a separately reviewed safe lookup and verification path. The `verify` job has
-only `contents: read`, does not run project checks or package lifecycle scripts, and does not receive
-signing permissions or secrets. The separate `attest` job signs only after the verifier has passed
-and the receipt has been matched to the PR. Do not add commands that execute files from the PR to
-the verifier job.
+protection enabled. The context job detects a fork by comparing the PR head and base repository names.
+If the event has no associated PR, it compares the workflow run's head repository with the event's
+base repository; only a clear repository mismatch is treated as an unattached fork. For a detected
+fork, the `verify` and `attest` jobs are skipped before checkout, and a separate read-only job adds a
+summary explaining that no signed attestation was created. This is an expected skip, not a Guard pass:
+the ordinary Guard pull request check remains responsible for its own result. Fork PRs receive no
+trusted attestation unless a future version adds a separately reviewed safe lookup and verification
+path. Missing or ambiguous PR context, missing repository identity, or invalid SHAs fail closed. The
+`verify` job has only `contents: read`, does not run project checks or package lifecycle scripts, and
+does not receive signing permissions or secrets. The separate `attest` job signs only after the
+verifier has passed and the receipt has been matched to the PR. Do not add commands that execute
+files from the PR to the verifier job.
 
 The `workflow_run` event only runs a workflow file present on the default branch. It has a different
 trust context from the original PR workflow and can receive more privileges, so keep its permissions
-minimal and protect this workflow file with CODEOWNERS/repository rules. The template reads the
-event's associated PR and fails closed unless it finds exactly one PR with valid head/base SHAs. GitHub
-may omit that association for fork PRs; for those events this template produces no attestation. The
-ordinary PR workflow can still run, but fork support for signed receipts requires a separately
-reviewed PR lookup design. Never solve this by running PR-controlled scripts in the trusted workflow.
+minimal and protect this workflow file with CODEOWNERS/repository rules. GitHub may omit the PR
+association in some events; an empty association is treated as a fork only when the trusted event
+metadata identifies a different head repository. Otherwise, the context job fails closed and no
+attestation is produced. The ordinary PR workflow can still run, but fork support for signed receipts
+requires a separately reviewed PR lookup design. Never solve this by running PR-controlled scripts
+in the trusted workflow.
 Although this template does not execute project files, Guard still parses attacker-controlled source
 and configuration. Use GitHub-hosted ephemeral runners and keep verifier and signer permissions at
 the template's minimum; parser vulnerabilities remain a residual risk.
