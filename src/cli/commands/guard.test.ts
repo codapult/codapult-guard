@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { config } from '../../core/config.js';
 
-vi.mock('node:fs', () => ({ existsSync: vi.fn(() => true) }));
+vi.mock('node:fs', () => ({ existsSync: vi.fn(() => true), writeFileSync: vi.fn() }));
 vi.mock('../../core/guard.js', () => ({
   GUARD_BASELINE_FILE: `.${config.appName}/guard/baseline.json`,
   GUARD_BASELINE_META_FILE: `.${config.appName}/guard/baseline-meta.json`,
@@ -96,6 +96,65 @@ describe('guard commands', () => {
   it('runs the unified verification gate', async () => {
     const { guardVerifyCommand } = await import('./guard.js');
     guardVerifyCommand();
+    expect(process.exitCode).toBe(0);
+    process.exitCode = undefined;
+  });
+
+  it('does not export an attestation when verification produced no receipt', async () => {
+    const { guardVerifyCommand } = await import('./guard.js');
+    const { writeFileSync } = await import('node:fs');
+
+    guardVerifyCommand({ json: true, attestationOut: '/tmp/guard-verification.intoto.json' });
+
+    expect(process.exitCode).toBe(1);
+    expect(writeFileSync).not.toHaveBeenCalled();
+    process.exitCode = undefined;
+  });
+
+  it('writes an in-toto statement for a passing verification receipt', async () => {
+    const { guardVerifyCommand } = await import('./guard.js');
+    const { runGuardVerification } = await import('../../core/verification/verify.js');
+    const { writeFileSync } = await import('node:fs');
+    const result = runGuardVerification('/project');
+    result.run.receipt = {
+      version: 1,
+      kind: 'verification-receipt',
+      runId: 'run-1',
+      generatedAt: '2026-10-31T00:00:00.000Z',
+      outcome: 'pass',
+      gate: 'none',
+      subject: { changedFiles: [], workingTreeDirty: false },
+      verificationScope: {
+        algorithm: 'sha256',
+        fingerprint: 'a'.repeat(64),
+        complete: true,
+        stable: true,
+        files: [],
+      },
+      stages: { 'verification-scope': 'ok' },
+      checks: {},
+      findings: {
+        total: 0,
+        errors: 0,
+        warnings: 0,
+        waived: 0,
+        waiverWarnings: 0,
+        expiredWaivers: 0,
+        fingerprints: [],
+        ruleIds: [],
+      },
+      contractIssues: [],
+      decisionIds: [],
+      tool: { name: '@codapult/guard', version: '0.10.0' },
+    };
+    vi.mocked(runGuardVerification).mockReturnValueOnce(result);
+
+    guardVerifyCommand({ json: true, attestationOut: '/tmp/guard-verification.intoto.json' });
+
+    expect(writeFileSync).toHaveBeenCalledWith(
+      '/tmp/guard-verification.intoto.json',
+      expect.stringContaining('https://in-toto.io/Statement/v1'),
+    );
     expect(process.exitCode).toBe(0);
     process.exitCode = undefined;
   });

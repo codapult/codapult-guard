@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import {
   GUARD_BASELINE_FILE,
@@ -60,6 +60,7 @@ import { guardFindingsToSarif, type GuardSarifNotice } from '../../core/output/s
 import { analyzeProjectImpact } from '../../core/analysis/impact.js';
 import { listGuardRuns, summarizeGuardRuns } from '../../core/history/runs.js';
 import { auditGuardGovernance, type GuardGovernanceAudit } from '../../core/audit/governance.js';
+import { guardReceiptToInToto } from '../../core/output/attestation.js';
 
 interface GuardOutputOptions {
   json?: boolean | undefined;
@@ -103,6 +104,7 @@ interface GuardVerifyOptions extends GuardOutputOptions {
   policyBase?: string | undefined;
   failOnPolicyChange?: boolean | undefined;
   failOnProtectedChanges?: boolean | undefined;
+  attestationOut?: string | undefined;
 }
 
 interface GuardGovernanceOptions extends GuardOutputOptions {
@@ -473,9 +475,22 @@ export function guardVerifyCommand(options: GuardVerifyOptions = {}): void {
     failOnPolicyChange: options.failOnPolicyChange,
     failOnProtectedChanges: options.failOnProtectedChanges,
   });
+  let attestationFailed = false;
+  if (options.attestationOut) {
+    try {
+      if (!result.run.receipt) throw new Error('Guard did not produce a verification receipt.');
+      const statement = guardReceiptToInToto(result.run.receipt);
+      writeFileSync(resolve(options.attestationOut), `${JSON.stringify(statement, null, 2)}\n`);
+      if (!options.json)
+        info(`in-toto verification statement written to ${options.attestationOut}`);
+    } catch (error) {
+      attestationFailed = true;
+      fail(error instanceof Error ? error.message : 'Could not write the in-toto statement.');
+    }
+  }
   if (options.json) {
     console.log(JSON.stringify(result, null, 2));
-    process.exitCode = result.status === 'ok' ? 0 : 1;
+    process.exitCode = result.status === 'ok' && !attestationFailed ? 0 : 1;
     return;
   }
   heading('Codapult Guard Verify');
@@ -553,7 +568,7 @@ export function guardVerifyCommand(options: GuardVerifyOptions = {}): void {
   for (const issue of result.contractIssues) warn(`[${issue.contractId}] ${issue.message}`);
   if (result.contractIssues.length > 0) fail(`contracts: ${result.contractIssues.length} invalid`);
   dim(`requirements: ${result.requirement.message}`);
-  process.exitCode = result.status === 'ok' ? 0 : 1;
+  process.exitCode = result.status === 'ok' && !attestationFailed ? 0 : 1;
 }
 
 export function guardCheckCommand(options: GuardCheckOptions = {}): void {
