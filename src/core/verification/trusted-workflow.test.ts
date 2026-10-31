@@ -12,9 +12,49 @@ interface TrustedWorkflow {
       needs?: string | string[];
       outputs?: Record<string, string>;
       permissions?: Record<string, string>;
-      steps?: { uses?: string; run?: string; with?: Record<string, string | boolean> }[];
+      steps?: {
+        if?: string;
+        uses?: string;
+        run?: string;
+        env?: Record<string, string>;
+        with?: Record<string, string | boolean>;
+      }[];
     }
   >;
+}
+
+interface TestReceipt {
+  version: number;
+  kind: string;
+  outcome: string;
+  runId: string;
+  gate: string;
+  subject: { headSha: string; baseSha: string };
+  verificationScope: {
+    algorithm: string;
+    complete: boolean;
+    stable: boolean;
+    fingerprint: string;
+  };
+}
+
+interface TestPullRequestEvent {
+  repository: { full_name: string };
+  workflow_run: {
+    head_repository: { full_name: string };
+    pull_requests: {
+      number: number;
+      head: { sha: string; repo: { full_name: string } };
+      base: { sha: string; repo: { full_name: string } };
+    }[];
+  };
+}
+
+interface TestStatement {
+  _type: string;
+  subject: { name: string; digest: { sha256: string } }[];
+  predicateType: string;
+  predicate: { receipt: TestReceipt };
 }
 
 const workflow = parse(
@@ -32,24 +72,24 @@ function runEmbeddedScript(
   script: string,
   files: Record<string, string>,
   extraEnv: Record<string, string> = {},
-) {
+): Record<string, string> {
   const appended: Record<string, string> = {};
   const source = script.replace(/^import \{ appendFileSync, readFileSync \} from 'node:fs';\n/, '');
   try {
     runInNewContext(source, {
       process: { env: extraEnv },
       readFileSync: (path: string) => {
-        const name = String(path).split('/').at(-1) ?? '';
+        const name = path.split('/').at(-1) ?? '';
         if (!(name in files)) throw new Error(`No test file mapped for ${name}`);
         return files[name];
       },
       appendFileSync: (path: string, value: string) => {
-        const name = String(path).split('/').at(-1) ?? '';
+        const name = path.split('/').at(-1) ?? '';
         appended[name] = (appended[name] ?? '') + value;
       },
     });
   } catch (error) {
-    throw new Error(error instanceof Error ? error.message : String(error));
+    throw new Error(error instanceof Error ? error.message : String(error), { cause: error });
   }
   return appended;
 }
@@ -61,10 +101,15 @@ const receiptScript = workflow.jobs?.verify.steps
 if (!receiptScript) throw new Error('Could not find embedded receipt validation script');
 
 function prEvent(
-  options: { count?: number; headRepository?: string; baseRepository?: string } = {},
-) {
+  options: {
+    count?: number;
+    number?: number;
+    headRepository?: string;
+    baseRepository?: string;
+  } = {},
+): TestPullRequestEvent {
   const pullRequest = {
-    number: 42,
+    number: options.number ?? 42,
     head: {
       sha: 'a'.repeat(40),
       repo: { full_name: options.headRepository ?? 'contributor/project' },
@@ -80,7 +125,7 @@ function prEvent(
   };
 }
 
-function runContext(event: unknown) {
+function runContext(event: unknown): string | undefined {
   return runEmbeddedScript(
     contextScript,
     { 'event.json': JSON.stringify(event) },
@@ -88,23 +133,64 @@ function runContext(event: unknown) {
   )['output.txt'];
 }
 
-function receiptFiles(
-  overrides: { outcome?: string; headSha?: string; baseSha?: string; statement?: unknown } = {},
-) {
+function receiptEnvironment(): Record<string, string> {
+  return {
+    BASE_SHA: 'b'.repeat(40),
+    HEAD_SHA: 'a'.repeat(40),
+    GUARD_RESULT_FILE: 'guard-verification.json',
+    GUARD_STATEMENT_FILE: 'guard-verification.intoto.json',
+    GITHUB_OUTPUT: 'output.txt',
+  };
+}
+
+function testReceipt(
+  overrides: {
+    outcome?: string;
+    headSha?: string;
+    baseSha?: string;
+    receiptVersion?: number;
+    scopeAlgorithm?: string;
+  } = {},
+): TestReceipt {
   const fingerprint = 'c'.repeat(64);
-  const receipt = {
+  return {
+    version: overrides.receiptVersion ?? 1,
+    kind: 'verification-receipt',
     outcome: overrides.outcome ?? 'pass',
     runId: 'run-123',
+    gate: 'none',
     subject: {
       headSha: overrides.headSha ?? 'a'.repeat(40),
       baseSha: overrides.baseSha ?? 'b'.repeat(40),
     },
-    verificationScope: { complete: true, stable: true, fingerprint },
+    verificationScope: {
+      algorithm: overrides.scopeAlgorithm ?? 'sha256',
+      complete: true,
+      stable: true,
+      fingerprint,
+    },
   };
-  const statement = overrides.statement ?? {
-    predicate: { receipt: { runId: 'run-123' } },
-    subject: [{ digest: { sha256: fingerprint } }],
+}
+
+function statementFor(receipt: TestReceipt): TestStatement {
+  return {
+    _type: 'https://in-toto.io/Statement/v1',
+    subject: [
+      {
+        name: 'codapult-guard:verification-context',
+        digest: { sha256: receipt.verificationScope.fingerprint },
+      },
+    ],
+    predicateType: 'https://codapult.dev/attestations/guard-verification/v1',
+    predicate: { receipt },
   };
+}
+
+function receiptFiles(
+  overrides: Parameters<typeof testReceipt>[0] & { statement?: unknown } = {},
+): Record<string, string> {
+  const receipt = testReceipt(overrides);
+  const statement = overrides.statement ?? statementFor(receipt);
   return {
     'guard-verification.json': JSON.stringify({
       outcome: overrides.outcome ?? 'pass',
@@ -172,40 +258,65 @@ describe('trusted PR attestation workflow template', () => {
 
   it('fails closed when PR repository identity is missing', () => {
     const event = prEvent();
-    event.workflow_run.pull_requests[0]!.head.repo.full_name = undefined as never;
+    Object.assign(event.workflow_run.pull_requests[0].head.repo, { full_name: null });
     expect(() => runContext(event)).toThrow();
   });
 
+  it.each(['', 'owner', 'owner/repo/extra', 'owner/repo with spaces'])(
+    'fails closed for invalid PR repository identity %s',
+    (repository) => {
+      const event = prEvent();
+      event.workflow_run.pull_requests[0].head.repo.full_name = repository;
+      expect(() => runContext(event)).toThrow();
+    },
+  );
+
+  it('fails closed for a nonpositive PR number', () => {
+    expect(() => runContext(prEvent({ number: 0 }))).toThrow();
+  });
+
   it('accepts a passing receipt bound to the expected PR head and base', () => {
-    const output = runEmbeddedScript(receiptScript, receiptFiles(), {
-      BASE_SHA: 'b'.repeat(40),
-      HEAD_SHA: 'a'.repeat(40),
-      GITHUB_OUTPUT: 'output.txt',
-    });
+    const output = runEmbeddedScript(receiptScript, receiptFiles(), receiptEnvironment());
     expect(output['output.txt']).toBe('attestation=true\n');
   });
 
   it.each([
     ['head SHA', { headSha: 'd'.repeat(40) }],
     ['base SHA', { baseSha: 'd'.repeat(40) }],
+    ['unknown receipt schema', { receiptVersion: 2 }],
+    ['unknown scope hash algorithm', { scopeAlgorithm: 'sha1' }],
     ['failed Guard outcome', { outcome: 'fail' }],
     [
-      'statement for another receipt',
+      'statement with a different PR head',
+      {
+        statement: (() => {
+          const receipt = testReceipt();
+          return statementFor({
+            ...receipt,
+            subject: { ...receipt.subject, headSha: 'd'.repeat(40) },
+          });
+        })(),
+      },
+    ],
+    [
+      'statement with different receipt claims',
+      {
+        statement: statementFor({ ...testReceipt(), gate: 'changed' }),
+      },
+    ],
+    [
+      'wrong Guard predicate type',
       {
         statement: {
-          predicate: { receipt: { runId: 'other' } },
-          subject: [{ digest: { sha256: 'c'.repeat(64) } }],
+          ...statementFor(testReceipt()),
+          predicateType: 'https://example.invalid/other',
         },
       },
     ],
     ['malformed statement', { statement: { predicate: {}, subject: [] } }],
   ])('refuses attestation for %s', (_case, overrides) => {
     expect(() =>
-      runEmbeddedScript(receiptScript, receiptFiles(overrides), {
-        BASE_SHA: 'b'.repeat(40),
-        HEAD_SHA: 'a'.repeat(40),
-        GITHUB_OUTPUT: 'output.txt',
-      }),
+      runEmbeddedScript(receiptScript, receiptFiles(overrides), receiptEnvironment()),
     ).toThrow();
   });
 
@@ -228,6 +339,18 @@ describe('trusted PR attestation workflow template', () => {
     expect(verify?.run).toContain('--fail-on-policy-change');
     expect(verify?.run).toContain('--fail-on-protected-changes');
     expect(verify?.run).toContain('$RUNNER_TEMP/codapult-guard-source/dist/cli/index.js');
+    expect(verify?.env?.BASE_SHA).toBe('${{ needs.inspect.outputs.base_sha }}');
+    expect(verify?.env?.GUARD_RESULT_FILE).toBe('${{ runner.temp }}/guard-verification.json');
+    expect(verify?.env?.GUARD_STATEMENT_FILE).toBe(
+      '${{ runner.temp }}/guard-verification.intoto.json',
+    );
+    expect(verify?.run).toContain('--attestation-out "$GUARD_STATEMENT_FILE"');
+    expect(verify?.run).toContain('> "$GUARD_RESULT_FILE"');
+    expect(steps.some((step) => step.run?.includes('steps.pr.outputs.'))).toBe(false);
+    const upload = steps.find((step) => step.uses?.startsWith('actions/upload-artifact@'));
+    expect(upload?.if).toContain("steps.result.outcome == 'success'");
+    expect(upload?.if).not.toContain('always()');
+    expect(upload?.with?.path).toBe('${{ runner.temp }}/guard-verification.intoto.json');
     expect(steps.some((step) => /\bnpm install(?:\s|$)/m.test(step.run ?? ''))).toBe(false);
     expect(workflow.jobs?.verify.permissions).toEqual({ contents: 'read' });
   });

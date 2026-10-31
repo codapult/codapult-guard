@@ -833,9 +833,11 @@ base SHA checks above bind the attestation to the PR revisions.
 
 For a first setup check, open a test PR from a branch in the same repository, wait for both workflow
 runs to finish, confirm that `guard-trusted-pr-attestation` appears as an artifact on the trusted
-workflow run, download it, and run both verification commands above. This template intentionally
-fails closed when it cannot identify exactly one associated PR, when the Guard receipt is not a
-pass, when its scope is incomplete or unstable, or when the PR SHAs do not match the event.
+workflow run, download it, and run both verification commands above. The template intentionally
+fails closed when PR context is missing or ambiguous and cannot be identified as an unattached fork,
+when the Guard receipt is not a pass, when its scope is incomplete or unstable, or when the PR SHAs
+do not match the event. A fork that can be identified safely is an expected skip and receives no
+attestation.
 
 Signature verification proves which workflow signed the statement and that the statement file was
 not changed after signing. It does not, by itself, prove that arbitrary claims inside the statement

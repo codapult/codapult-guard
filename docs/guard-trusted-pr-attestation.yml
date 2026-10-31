@@ -26,10 +26,11 @@ jobs:
           import { appendFileSync, readFileSync } from 'node:fs';
           const event = JSON.parse(readFileSync(process.env.EVENT_PATH, 'utf8'));
           const pullRequests = event.workflow_run?.pull_requests ?? [];
+          const isRepository = (value) => typeof value === 'string' && /^[^/\s]+\/[^/\s]+$/.test(value);
           if (pullRequests.length === 0) {
             const runHeadRepository = event.workflow_run?.head_repository?.full_name;
             const eventBaseRepository = event.repository?.full_name;
-            if (typeof runHeadRepository !== 'string' || typeof eventBaseRepository !== 'string' || runHeadRepository.toLowerCase() === eventBaseRepository.toLowerCase()) {
+            if (!isRepository(runHeadRepository) || !isRepository(eventBaseRepository) || runHeadRepository.toLowerCase() === eventBaseRepository.toLowerCase()) {
               throw new Error('Expected exactly one associated pull request; could not safely identify an unattached fork run.');
             }
             appendFileSync(process.env.GITHUB_OUTPUT, 'fork=true\n');
@@ -41,7 +42,7 @@ jobs:
             const baseSha = pullRequest.base?.sha;
             const headRepository = pullRequest.head?.repo?.full_name;
             const baseRepository = pullRequest.base?.repo?.full_name;
-            if (!Number.isSafeInteger(number) || !/^[a-f0-9]{40}$/i.test(headSha ?? '') || !/^[a-f0-9]{40}$/i.test(baseSha ?? '') || typeof headRepository !== 'string' || typeof baseRepository !== 'string') {
+            if (!Number.isSafeInteger(number) || number < 1 || !/^[a-f0-9]{40}$/i.test(headSha ?? '') || !/^[a-f0-9]{40}$/i.test(baseSha ?? '') || !isRepository(headRepository) || !isRepository(baseRepository)) {
               throw new Error('Pull request number, repository, head SHA, or base SHA is missing or invalid.');
             }
             const fork = headRepository.toLowerCase() !== baseRepository.toLowerCase();
@@ -118,7 +119,9 @@ jobs:
 
       - name: Verify PR with trusted Guard and base policy
         env:
-          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          BASE_SHA: ${{ needs.inspect.outputs.base_sha }}
+          GUARD_RESULT_FILE: ${{ runner.temp }}/guard-verification.json
+          GUARD_STATEMENT_FILE: ${{ runner.temp }}/guard-verification.intoto.json
         run: |
           node "$RUNNER_TEMP/codapult-guard-source/dist/cli/index.js" verify \
             --no-project-checks \
@@ -127,40 +130,52 @@ jobs:
             --fail-on-policy-change \
             --fail-on-protected-changes \
             --json \
-            --attestation-out guard-verification.intoto.json \
-            > guard-verification.json
+            --attestation-out "$GUARD_STATEMENT_FILE" \
+            > "$GUARD_RESULT_FILE"
 
       - name: Confirm the receipt matches this PR
         id: result
         env:
           BASE_SHA: ${{ needs.inspect.outputs.base_sha }}
           HEAD_SHA: ${{ needs.inspect.outputs.head_sha }}
+          GUARD_RESULT_FILE: ${{ runner.temp }}/guard-verification.json
+          GUARD_STATEMENT_FILE: ${{ runner.temp }}/guard-verification.intoto.json
         run: |
           node --input-type=module <<'NODE'
           import { appendFileSync, readFileSync } from 'node:fs';
-          const result = JSON.parse(readFileSync('guard-verification.json', 'utf8'));
-          const statement = JSON.parse(readFileSync('guard-verification.intoto.json', 'utf8'));
+          const result = JSON.parse(readFileSync(process.env.GUARD_RESULT_FILE, 'utf8'));
+          const statement = JSON.parse(readFileSync(process.env.GUARD_STATEMENT_FILE, 'utf8'));
           const receipt = result.run?.receipt;
           const scope = receipt?.verificationScope;
+          const statementReceipt = statement?.predicate?.receipt;
           if (result.outcome !== 'pass' || receipt?.outcome !== 'pass') throw new Error('Guard did not pass.');
+          if (receipt.version !== 1 || receipt.kind !== 'verification-receipt' || typeof receipt.runId !== 'string' || receipt.runId.length === 0) {
+            throw new Error('Guard receipt has an unsupported schema or no run ID.');
+          }
           if (receipt.subject?.headSha !== process.env.HEAD_SHA || receipt.subject?.baseSha !== process.env.BASE_SHA) {
             throw new Error('Guard receipt does not match the triggering PR head and base SHAs.');
           }
-          if (!scope?.complete || !scope?.stable || !/^[a-f0-9]{64}$/.test(scope.fingerprint ?? '')) {
+          if (scope?.algorithm !== 'sha256' || scope.complete !== true || scope.stable !== true || !/^[a-f0-9]{64}$/.test(scope.fingerprint ?? '')) {
             throw new Error('Guard receipt has no complete, stable verification scope.');
           }
-          if (statement.predicate?.receipt?.runId !== receipt.runId || statement.subject?.[0]?.digest?.sha256 !== scope.fingerprint) {
+          if (statement?._type !== 'https://in-toto.io/Statement/v1' || statement.predicateType !== 'https://codapult.dev/attestations/guard-verification/v1') {
+            throw new Error('in-toto statement or Guard predicate type is invalid.');
+          }
+          if (!Array.isArray(statement.subject) || statement.subject.length !== 1 || statement.subject[0]?.name !== 'codapult-guard:verification-context' || statement.subject[0]?.digest?.sha256 !== scope.fingerprint) {
+            throw new Error('in-toto statement subject does not match the verified scope.');
+          }
+          if (JSON.stringify(statementReceipt) !== JSON.stringify(receipt)) {
             throw new Error('in-toto statement does not match the verified receipt and scope.');
           }
           appendFileSync(process.env.GITHUB_OUTPUT, 'attestation=true\n');
           NODE
 
       - name: Upload the independently verified statement
-        if: always() && hashFiles('guard-verification.intoto.json') != ''
+        if: steps.result.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: guard-trusted-pr-attestation
-          path: guard-verification.intoto.json
+          path: ${{ runner.temp }}/guard-verification.intoto.json
           if-no-files-found: error
 
   fork-pr-summary:
