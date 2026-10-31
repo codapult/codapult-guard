@@ -1,4 +1,5 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 
 export type GuardAgentTarget = 'generic' | 'codex' | 'cursor' | 'claude' | 'copilot' | 'gemini';
@@ -18,6 +19,20 @@ export class GuardAgentInstallError extends Error {
 
 const START_MARKER = '<!-- codapult-guard:start -->';
 const END_MARKER = '<!-- codapult-guard:end -->';
+
+function writeInstructionFile(path: string, content: string): void {
+  const temporaryPath = `${path}.tmp-${process.pid}-${randomUUID()}`;
+  try {
+    writeFileSync(temporaryPath, content, { encoding: 'utf8', flag: 'wx' });
+    renameSync(temporaryPath, path);
+  } finally {
+    try {
+      unlinkSync(temporaryPath);
+    } catch {
+      // The temporary file was renamed or could not be created.
+    }
+  }
+}
 
 const instruction = `${START_MARKER}
 ## Codapult Guard completion gate
@@ -79,7 +94,12 @@ export function installGuardAgentInstructions(
   assertNoSymlinkPath(root, relativePath);
   const path = resolve(root, relativePath);
   const nextBlock = instruction;
-  const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
+  let existing = '';
+  try {
+    existing = readFileSync(path, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
   const start = existing.indexOf(START_MARKER);
   const end = existing.indexOf(END_MARKER);
   const content =
@@ -89,7 +109,7 @@ export function installGuardAgentInstructions(
         ? `${existing.trimEnd()}\n\n${renderContent(target)}`
         : renderContent(target);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, content, 'utf8');
+  writeInstructionFile(path, content);
   return { target, path: relativePath, action: existing ? 'updated' : 'created' };
 }
 

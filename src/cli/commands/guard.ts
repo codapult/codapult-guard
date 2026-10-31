@@ -79,7 +79,7 @@ function terminalSafe(value: string): string {
   let output = '';
   for (const character of value) {
     const code = character.charCodeAt(0);
-    output += code <= 0x1f || code === 0x7f ? ' ' : character;
+    output += code <= 0x1f || (code >= 0x7f && code <= 0x9f) ? ' ' : character;
   }
   return output;
 }
@@ -178,7 +178,7 @@ function loadConfigSafely(
       hint: 'Repair or remove the invalid Guard artifact, then run `codapult-guard doctor`.',
     });
     if (options.json || options.machine) console.log(JSON.stringify(payload, null, 2));
-    else fail(`${payload.message} Run \`codapult-guard doctor\` for details.`);
+    else fail(`${terminalSafe(payload.message)} Run \`codapult-guard doctor\` for details.`);
     process.exitCode = 1;
     return { invalid: true };
   }
