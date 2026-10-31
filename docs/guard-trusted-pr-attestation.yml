@@ -1,0 +1,138 @@
+name: Guard Trusted PR Attestation
+
+on:
+  workflow_run:
+    workflows: [Guard]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  verify:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      attestation: ${{ steps.result.outputs.attestation }}
+    steps:
+      - name: Read the associated pull request context
+        id: pr
+        env:
+          EVENT_PATH: ${{ github.event_path }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          const event = JSON.parse(readFileSync(process.env.EVENT_PATH, 'utf8'));
+          const pullRequests = event.workflow_run?.pull_requests ?? [];
+          if (pullRequests.length !== 1) throw new Error('Expected exactly one associated pull request.');
+          const pullRequest = pullRequests[0];
+          const number = pullRequest.number;
+          const headSha = pullRequest.head?.sha;
+          const baseSha = pullRequest.base?.sha;
+          if (!Number.isSafeInteger(number) || !/^[a-f0-9]{40}$/i.test(headSha ?? '') || !/^[a-f0-9]{40}$/i.test(baseSha ?? '')) {
+            throw new Error('Pull request number, head SHA, or base SHA is missing or invalid.');
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `number=${number}\nhead_sha=${headSha}\nbase_sha=${baseSha}\n`);
+          NODE
+
+      - name: Check out the PR head from the base repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: refs/pull/${{ steps.pr.outputs.number }}/head
+          fetch-depth: 0
+
+      - name: Fetch the exact base commit and verify the checkout
+        env:
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          git fetch --no-tags origin "$BASE_SHA"
+          actual_head=$(git rev-parse HEAD)
+          if [ "$actual_head" != "$HEAD_SHA" ]; then
+            echo "Checked out $actual_head, expected PR head $HEAD_SHA" >&2
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Install pinned Guard without project lifecycle scripts
+        working-directory: ${{ runner.temp }}
+        env:
+          GUARD_VERSION: ${{ vars.CODAPULT_GUARD_VERSION }}
+        run: |
+          if ! [[ "$GUARD_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Set CODAPULT_GUARD_VERSION to an exact published Guard version that supports workflow_run receipts." >&2
+            exit 1
+          fi
+          npm install --global --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org "@codapult/guard@$GUARD_VERSION"
+
+      - name: Verify PR with trusted Guard and base policy
+        env:
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+        run: |
+          codapult-guard verify \
+            --no-project-checks \
+            --tools off \
+            --policy-base "$BASE_SHA" \
+            --fail-on-policy-change \
+            --fail-on-protected-changes \
+            --json \
+            --attestation-out guard-verification.intoto.json \
+            > guard-verification.json
+
+      - name: Confirm the receipt matches this PR
+        id: result
+        env:
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          const result = JSON.parse(readFileSync('guard-verification.json', 'utf8'));
+          const statement = JSON.parse(readFileSync('guard-verification.intoto.json', 'utf8'));
+          const receipt = result.run?.receipt;
+          const scope = receipt?.verificationScope;
+          if (result.outcome !== 'pass' || receipt?.outcome !== 'pass') throw new Error('Guard did not pass.');
+          if (receipt.subject?.headSha !== process.env.HEAD_SHA || receipt.subject?.baseSha !== process.env.BASE_SHA) {
+            throw new Error('Guard receipt does not match the triggering PR head and base SHAs.');
+          }
+          if (!scope?.complete || !scope?.stable || !/^[a-f0-9]{64}$/.test(scope.fingerprint ?? '')) {
+            throw new Error('Guard receipt has no complete, stable verification scope.');
+          }
+          if (statement.predicate?.receipt?.runId !== receipt.runId || statement.subject?.[0]?.digest?.sha256 !== scope.fingerprint) {
+            throw new Error('in-toto statement does not match the verified receipt and scope.');
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, 'attestation=true\n');
+          NODE
+
+      - name: Upload the independently verified statement
+        if: always() && hashFiles('guard-verification.intoto.json') != ''
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: guard-trusted-pr-attestation
+          path: guard-verification.intoto.json
+          if-no-files-found: error
+
+  attest:
+    needs: verify
+    if: needs.verify.result == 'success' && needs.verify.outputs.attestation == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Download the trusted verifier output
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: guard-trusted-pr-attestation
+
+      - name: Sign the in-toto statement file
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: guard-verification.intoto.json

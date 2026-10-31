@@ -643,50 +643,55 @@ hashes and paths but no source contents; it is not signed and does not prove who
 
 `verify --attestation-out <file>` writes a versioned in-toto Statement containing the verification
 receipt. It is emitted only when the result is `pass` and the scope is complete and stable. The
-Statement subject digest is the SHA-256 fingerprint of the verified context; its predicate embeds
-the receipt, including per-file digests, policy fingerprint, base commit, Guard version, and result.
-The output contains paths and hashes, not file contents. The supplied [CI template](guard-ci.yml)
-exports and uploads this unsigned statement alongside the JSON receipt when verification passes.
+Statement subject digest is the SHA-256 fingerprint of the verified content and policy scope; its
+predicate embeds the receipt, including per-file digests, policy fingerprint, base commit, Guard
+version, and result. The in-toto `predicateType` URI versions the predicate schema independently
+from the receipt's numeric `version` field. Consumers should reject unsupported versions rather than
+guessing how to interpret them.
 
-Guard does not sign the Statement. Keep signing in the CI platform so Guard needs no signing key or
-Sigstore dependency. In a trusted workflow, export the statement as a separate artifact:
+On GitHub pull request events, the receipt also records `headSha` and `baseSha` from the event
+payload. `mergeSha` is recorded only when `GITHUB_SHA` identifies the checked-out merge result rather
+than the PR head. These commit identifiers describe the hosting event context; the content
+fingerprint remains authoritative for the exact files and policy Guard hashed. The output contains
+paths and hashes, not file contents. The supplied [CI template](guard-ci.yml) exports and uploads
+this unsigned statement alongside the JSON receipt when verification passes.
 
-```sh
-pnpm exec codapult-guard verify \
-  --policy-base "$BASE_SHA" \
-  --fail-on-policy-change \
-  --fail-on-protected-changes \
-  --json \
-  --attestation-out "$RUNNER_TEMP/guard-verification.intoto.json" \
-  > guard-verification.json
-```
+Guard does not sign the Statement. Keep signing in CI so Guard needs no signing key or Sigstore
+dependency. The [trusted PR workflow template](guard-trusted-pr-attestation.yml) runs from the
+default-branch workflow definition after the ordinary `Guard` pull request workflow completes. It
+does not trust that workflow's artifact: it checks out the PR head itself, fetches the exact base
+commit, installs an exact Guard package version with lifecycle scripts disabled, runs Guard without
+project checks, compares the receipt to the PR head/base SHAs, and signs the resulting statement in
+a separate job. Set the repository variable `CODAPULT_GUARD_VERSION` to an exact published version
+that includes `workflow_run` receipt support before enabling the template.
 
-After installing a pinned Cosign version, run signing in an isolated trusted job on a protected
-ref. Grant `id-token: write` only to that signing job, transfer the statement as an artifact, and
-do not execute PR-controlled scripts in the signer. For example:
-
-```sh
-cosign sign-blob "$RUNNER_TEMP/guard-verification.intoto.json" \
-  --bundle "$RUNNER_TEMP/guard-verification.sigstore.json" --yes
-```
-
-Verify the bundle against the exact workflow identity and GitHub OIDC issuer, for example:
+Verify the statement file's signature and signer workflow with GitHub CLI:
 
 ```sh
-cosign verify-blob "$RUNNER_TEMP/guard-verification.intoto.json" \
-  --bundle "$RUNNER_TEMP/guard-verification.sigstore.json" \
-  --certificate-identity 'https://github.com/ORG/REPO/.github/workflows/guard-attest.yml@refs/heads/main' \
-  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
+gh attestation verify guard-verification.intoto.json \
+  --repo ORG/REPO \
+  --signer-workflow ORG/REPO/.github/workflows/guard-trusted-pr-attestation.yml \
+  --source-ref refs/heads/main
 ```
 
-The identity must name the trusted workflow and protected ref that policy allows. Do not grant
-`id-token: write` to a job that executes PR-controlled workflow code and then treat its signature
-as proof of trusted verification: on `pull_request`, GitHub runs the workflow from the PR merge
-commit. A signature authenticates the signer identity; it does not make the workflow definition or
-its inputs trustworthy. See the [in-toto Statement spec](https://github.com/in-toto/attestation/blob/main/spec/README.md),
-[Cosign blob signing](https://docs.sigstore.dev/cosign/signing/signing_with_blobs/), and
-[GitHub OIDC reference](https://docs.github.com/en/actions/reference/security/oidc). Repository
-settings must still require the appropriate Guard check.
+The identity must name the trusted workflow and protected ref that policy allows. Check the
+attestation's subject digest against the exact statement file, then parse that statement and compare
+its receipt's `headSha`, `baseSha`, and `mergeSha` with the expected PR context. A valid signer
+identity alone does not establish that an attested predicate is true. Do not grant `id-token: write`
+to a job that executes PR-controlled workflow code and then treat its signature as proof of trusted
+verification: on `pull_request`, GitHub runs the workflow from the PR merge commit. GitHub also
+cautions that statement predicates can be attacker-controlled unless the signer acts as a trusted
+builder. Repository settings must still require the appropriate Guard check.
+
+The trusted workflow provides an independently verified, signed receipt before merge. The host
+still decides whether its result blocks merging: require the ordinary Guard check and protect its
+workflow definition with repository rules/CODEOWNERS. The attestation workflow itself does not
+create a required PR check. Do not make the PR-modifiable workflow a trusted signer, and do not treat
+the signature as proof that an arbitrary predicate is true. See the
+[in-toto Statement spec](https://github.com/in-toto/attestation/blob/main/spec/README.md),
+[GitHub artifact attestations](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations),
+[actions/attest](https://github.com/actions/attest), and
+[gh attestation verify](https://cli.github.com/manual/gh_attestation_verify).
 
 ### Governance audit
 
