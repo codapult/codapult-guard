@@ -543,6 +543,13 @@ The package repository separately runs its own unit, typecheck, build, and packa
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml), while the fixture workflow tests Guard on
 real project shapes.
 
+To add a separately signed Guard receipt, copy
+[`docs/guard-trusted-pr-attestation.yml`](docs/guard-trusted-pr-attestation.yml) to
+`.github/workflows/guard-trusted-pr-attestation.yml` and follow the
+[trusted-attestation setup guide](docs/guard.md#install-the-trusted-github-actions-workflow).
+This optional workflow re-runs Guard; it does not replace the required `Guard` check or attest
+project test/build results.
+
 ## CLI surface
 
 | Command                    | Purpose                                                                                     |
