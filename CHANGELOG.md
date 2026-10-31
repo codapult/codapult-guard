@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.11.0](https://github.com/codapult/codapult-guard/compare/v0.10.0...v0.11.0) (2026-10-31)
+
+### Features
+
+* **guard:** add trusted PR attestation workflow template ([567c070](https://github.com/codapult/codapult-guard/commit/567c0709928d422b83ce2b6fe92395e98d1af3f2))
+* **guard:** audit verification and CI policy integrity ([4694286](https://github.com/codapult/codapult-guard/commit/4694286ebb30e59a1c71346bb250865760a2ee98))
+* **guard:** bind receipts to GitHub pull request SHAs ([1b02e19](https://github.com/codapult/codapult-guard/commit/1b02e198db033e213a7ddb1099392df7d436a572))
+* **guard:** export verification receipts as in-toto statements ([76935d3](https://github.com/codapult/codapult-guard/commit/76935d309fe5fd88e34e0809698d5ba01bef71ad))
+* **guard:** handle fork PR attestation skips ([83fbd94](https://github.com/codapult/codapult-guard/commit/83fbd9498d636b965ef4a3006a91a607f18f27d8))
+* **guard:** harden trusted PR attestations ([db20ab2](https://github.com/codapult/codapult-guard/commit/db20ab206c4ad0fdfff9bc54209e4a80000ad77f))
+
+### Bug Fixes
+
+* **guard:** address security scan findings ([74c561a](https://github.com/codapult/codapult-guard/commit/74c561a2bcef298d465d7eeb8d32008903bb4bf9))
+* **guard:** harden trusted PR verification ([495173c](https://github.com/codapult/codapult-guard/commit/495173c2f17b8f24bc1a0665bca7965d6bd29d82))
+
 ## [0.10.0](https://github.com/codapult/codapult-guard/compare/v0.9.0...v0.10.0) (2026-10-19)
 
 ### Features
