@@ -600,7 +600,9 @@ source contents and command output. It describes what Guard decided; it is not a
 signature or proof of CI identity. When a policy base is supplied, it separates the base diff from
 dirty working-tree files so local verification cannot silently present an incomplete change set.
 For portable exchange, `verify --attestation-out <file>` exports a passing receipt as an unsigned
-in-toto Statement; a trusted CI signer can sign that file with Sigstore. See the [attestation guide](docs/guard.md#exporting-and-signing-a-verification-attestation).
+in-toto Statement. The format is independent of the CI platform and signing mechanism; a trusted CI
+signer can sign it using the mechanism supported by that platform. The attestation guide includes a
+GitHub Actions example using Sigstore. See the [attestation guide](docs/guard.md#exporting-and-signing-a-verification-attestation).
 
 ## Security and data handling
 

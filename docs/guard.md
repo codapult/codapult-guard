@@ -657,7 +657,11 @@ paths and hashes, not file contents. The supplied [CI template](guard-ci.yml) ex
 this unsigned statement alongside the JSON receipt when verification passes.
 
 Guard does not sign the Statement. Signing stays in CI so Guard needs no signing key or Sigstore
-dependency.
+dependency. The in-toto Statement format does not require GitHub or Sigstore: another CI system can
+sign or attest the same exported file with its own trusted mechanism. The workflow below is a
+GitHub-specific integration example; its signature verification commands and trust checks apply to
+GitHub artifact attestations. For another CI provider, configure its signer and verifier to bind the
+statement digest to the expected repository, workflow identity, source revision, and Guard receipt.
 
 #### Install the trusted GitHub Actions workflow
 
@@ -684,13 +688,11 @@ Requirements:
 - The repository has Guard initialized and its protected base revision contains a valid Guard policy.
 - The ordinary pull request workflow is named exactly `Guard` and runs for `pull_request` events. If
   you use a different workflow name, update `workflow_run.workflows` in the template to match it.
-- A published Guard version is available that records PR context for `workflow_run` events. Use an
-  exact version, not `latest` or a range.
-- The npm package and its transitive dependencies are part of the trusted verifier. The exact
-  `CODAPULT_GUARD_VERSION` pins the Guard package version, but npm still resolves the dependency
-  ranges declared by that package at install time. Organizations that require a reproducible
-  dependency graph should use their approved package mirror/lock strategy or another audited,
-  immutable distribution of Guard.
+- A Guard release tag is available that records PR context for `workflow_run` events. Configure
+  both its exact version and the full commit SHA of that tag; the workflow checks that they match.
+- The trusted workflow builds Guard from that immutable source commit using its committed pnpm
+  lockfile with `--frozen-lockfile`. Lifecycle scripts are disabled during dependency installation.
+  The lockfile's package versions and integrity values pin the complete dependency graph.
 
 Copy the template into the project and commit it on the repository's default branch:
 
@@ -700,11 +702,28 @@ cp node_modules/@codapult/guard/docs/guard-trusted-pr-attestation.yml \
   .github/workflows/guard-trusted-pr-attestation.yml
 ```
 
-In **Settings → Secrets and variables → Actions → Variables**, create the repository variable
-`CODAPULT_GUARD_VERSION` and set it to the exact published version that includes `workflow_run`
-receipt support. Do not add a `v` prefix or use a range. The template validates the value as an
-exact semantic version and installs that package from the npm registry. This is a non-secret
-variable; the workflow does not need an npm token for the public package.
+In **Settings → Secrets and variables → Actions → Variables**, create these repository variables:
+
+- `CODAPULT_GUARD_VERSION`: the exact release version that includes `workflow_run` receipt support,
+  without a `v` prefix or range (for example, `0.10.0`).
+- `CODAPULT_GUARD_COMMIT`: the full 40-character Git commit SHA that the matching `v<version>` tag
+  resolves to.
+
+Both are non-secret values. The workflow fetches the tag from the public Guard repository, confirms
+that it resolves to the configured SHA and that the package version matches, then installs from the
+Guard repository's frozen pnpm lockfile. If the release tag moves or either value is wrong, the
+workflow stops before installing or running Guard. To obtain the commit SHA for a release, fetch the
+version tag and resolve its commit, for example:
+`git fetch https://github.com/codapult/codapult-guard.git refs/tags/v0.10.0` followed by
+`git rev-parse 'FETCH_HEAD^{commit}'`.
+
+Checkout v7 blocks fork PR checkouts in `workflow_run` by default, and this template keeps that
+protection enabled. Fork PRs therefore receive no trusted attestation from this workflow unless a
+future version adds a separately reviewed safe lookup and verification path. The `verify` job has
+only `contents: read`, does not run project checks or package lifecycle scripts, and does not receive
+signing permissions or secrets. The separate `attest` job signs only after the verifier has passed
+and the receipt has been matched to the PR. Do not add commands that execute files from the PR to
+the verifier job.
 
 The `workflow_run` event only runs a workflow file present on the default branch. It has a different
 trust context from the original PR workflow and can receive more privileges, so keep its permissions
@@ -748,6 +767,28 @@ gh attestation verify .guard-attestation/guard-verification.intoto.json \
   --signer-workflow ORG/REPO/.github/workflows/guard-trusted-pr-attestation.yml \
   --source-ref refs/heads/main
 ```
+
+The command above verifies the signed artifact file and its GitHub workflow identity. To also check
+the embedded Guard receipt's schema version, passing outcome, complete and stable scope, scope digest,
+and the exact PR head and base SHAs, copy the bundled consumer script and run it after downloading
+the artifact:
+
+```bash
+cp node_modules/@codapult/guard/docs/verify-guard-attestation.mjs .guard-attestation/
+node .guard-attestation/verify-guard-attestation.mjs \
+  .guard-attestation/guard-verification.intoto.json \
+  --repo ORG/REPO \
+  --signer-workflow ORG/REPO/.github/workflows/guard-trusted-pr-attestation.yml \
+  --source-ref refs/heads/main \
+  --expected-head HEAD_SHA \
+  --expected-base BASE_SHA
+```
+
+The script calls `gh attestation verify` with the repository, signer workflow, and source-ref
+constraints before inspecting the statement. It exits nonzero if signature verification fails or if
+the embedded statement is unsupported, unsuccessful, incomplete, unstable, or bound to different
+PR SHAs. Obtain the expected head and base values from the current PR; do not copy them from the
+receipt being checked.
 
 Replace `ORG/REPO` and `main` with the repository and protected default branch. This command checks
 that the attestation is for the exact downloaded statement file and that the signer identity matches

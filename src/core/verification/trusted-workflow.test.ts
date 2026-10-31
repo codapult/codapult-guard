@@ -9,7 +9,7 @@ interface TrustedWorkflow {
     {
       needs?: string | string[];
       permissions?: Record<string, string>;
-      steps?: { uses?: string; run?: string; with?: Record<string, string> }[];
+      steps?: { uses?: string; run?: string; with?: Record<string, string | boolean> }[];
     }
   >;
 }
@@ -33,18 +33,37 @@ describe('trusted PR attestation workflow template', () => {
     });
   });
 
-  it('checks out the PR head, uses base policy, and never runs project checks', () => {
+  it('uses Checkout v7 fork protection and never executes PR project code', () => {
     const steps = workflow.jobs?.verify.steps ?? [];
     const checkout = steps.find((step) => step.uses?.startsWith('actions/checkout@'));
-    const install = steps.find((step) => step.run?.includes('npm install'));
-    const verify = steps.find((step) => step.run?.includes('codapult-guard verify'));
+    const source = steps.find((step) => step.run?.includes('GUARD_COMMIT'));
+    const install = steps.find((step) => step.run?.includes('pnpm install --frozen-lockfile'));
+    const verify = steps.find((step) => step.run?.includes('dist/cli/index.js" verify'));
 
     expect(checkout?.with?.ref).toContain('refs/pull/');
+    expect(checkout?.with?.['allow-unsafe-pr-checkout']).toBeUndefined();
     expect(install?.run).toContain('--ignore-scripts');
+    expect(source?.run).toContain('refs/tags/v$GUARD_VERSION');
+    expect(source?.run).toContain('fetched_commit" != "$GUARD_COMMIT"');
+    expect(source?.run).toContain('rev-parse');
+    expect(source?.run).toContain('CODAPULT_GUARD_VERSION');
     expect(verify?.run).toContain('--no-project-checks');
     expect(verify?.run).toContain('--policy-base "$BASE_SHA"');
     expect(verify?.run).toContain('--fail-on-policy-change');
     expect(verify?.run).toContain('--fail-on-protected-changes');
+    expect(verify?.run).toContain('$RUNNER_TEMP/codapult-guard-source/dist/cli/index.js');
+    expect(steps.some((step) => /\bnpm install(?:\s|$)/m.test(step.run ?? ''))).toBe(false);
+    expect(workflow.jobs?.verify.permissions).toEqual({ contents: 'read' });
+  });
+
+  it('pins the reviewed v7 artifact actions by their published full commit SHAs', () => {
+    const uses = Object.values(workflow.jobs ?? {}).flatMap((job) =>
+      (job.steps ?? []).map((step) => step.uses).filter((value): value is string => Boolean(value)),
+    );
+
+    expect(uses).toContain('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1');
+    expect(uses).toContain('actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9');
+    expect(uses).toContain('actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333');
   });
 
   it('pins all external actions to full commit SHAs', () => {

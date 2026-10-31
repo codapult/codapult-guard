@@ -37,7 +37,7 @@ jobs:
           NODE
 
       - name: Check out the PR head from the base repository
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/pull/${{ steps.pr.outputs.number }}/head
           fetch-depth: 0
@@ -59,22 +59,46 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install pinned Guard without project lifecycle scripts
+      - name: Fetch the pinned Guard source revision
         working-directory: ${{ runner.temp }}
         env:
           GUARD_VERSION: ${{ vars.CODAPULT_GUARD_VERSION }}
+          GUARD_COMMIT: ${{ vars.CODAPULT_GUARD_COMMIT }}
         run: |
           if ! [[ "$GUARD_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Set CODAPULT_GUARD_VERSION to an exact published Guard version that supports workflow_run receipts." >&2
+            echo "Set CODAPULT_GUARD_VERSION to an exact Guard release version." >&2
             exit 1
           fi
-          npm install --global --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org "@codapult/guard@$GUARD_VERSION"
+          if ! [[ "$GUARD_COMMIT" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "Set CODAPULT_GUARD_COMMIT to the full 40-character commit SHA for that Guard release tag." >&2
+            exit 1
+          fi
+          git init codapult-guard-source
+          git -C codapult-guard-source remote add origin https://github.com/codapult/codapult-guard.git
+          git -C codapult-guard-source fetch --depth=1 origin "refs/tags/v$GUARD_VERSION:refs/tags/guard-release"
+          fetched_commit=$(git -C codapult-guard-source rev-parse 'refs/tags/guard-release^{commit}')
+          if [ "$fetched_commit" != "$GUARD_COMMIT" ]; then
+            echo "Guard release tag resolved to $fetched_commit, expected $GUARD_COMMIT." >&2
+            exit 1
+          fi
+          git -C codapult-guard-source checkout --detach "$GUARD_COMMIT"
+          if [ "$(node -p "require('./codapult-guard-source/package.json').version")" != "$GUARD_VERSION" ]; then
+            echo "Guard source package version does not match CODAPULT_GUARD_VERSION." >&2
+            exit 1
+          fi
+
+      - name: Build pinned Guard with its frozen dependency graph
+        working-directory: ${{ runner.temp }}/codapult-guard-source
+        run: |
+          corepack enable
+          corepack pnpm install --frozen-lockfile --ignore-scripts
+          corepack pnpm --filter @codapult/guard build
 
       - name: Verify PR with trusted Guard and base policy
         env:
           BASE_SHA: ${{ steps.pr.outputs.base_sha }}
         run: |
-          codapult-guard verify \
+          node "$RUNNER_TEMP/codapult-guard-source/dist/cli/index.js" verify \
             --no-project-checks \
             --tools off \
             --policy-base "$BASE_SHA" \
@@ -111,7 +135,7 @@ jobs:
 
       - name: Upload the independently verified statement
         if: always() && hashFiles('guard-verification.intoto.json') != ''
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: guard-trusted-pr-attestation
           path: guard-verification.intoto.json
@@ -128,7 +152,7 @@ jobs:
       artifact-metadata: write
     steps:
       - name: Download the trusted verifier output
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: guard-trusted-pr-attestation
 
