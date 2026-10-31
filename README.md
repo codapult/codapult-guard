@@ -6,6 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js >=20.19](https://img.shields.io/badge/node-%3E%3D20.19-339933.svg?logo=node.js&logoColor=white)](package.json)
 [![TypeScript](https://img.shields.io/badge/TypeScript-first-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![MCP Registry](https://img.shields.io/badge/MCP_Registry-Listed-4B6A88?style=flat-square)](https://registry.modelcontextprotocol.io/?q=io.github.codapult%2Fguard)
 
 ## Architecture guardrails for AI coding agents
 
