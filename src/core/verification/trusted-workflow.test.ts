@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 interface TrustedWorkflow {
   on?: { workflow_run?: { workflows?: string[]; types?: string[] } };
+  permissions?: Record<string, string>;
   jobs?: Record<
     string,
     {
@@ -213,6 +214,39 @@ describe('trusted PR attestation workflow template', () => {
       attestations: 'write',
       'artifact-metadata': 'write',
     });
+  });
+
+  it('grants signing permissions only to the isolated attestation job', () => {
+    expect(workflow.permissions).toEqual({});
+    expect(workflow.jobs?.inspect.permissions).toBeUndefined();
+    expect(workflow.jobs?.verify.permissions).toEqual({ contents: 'read' });
+    expect(workflow.jobs?.['fork-pr-summary'].permissions).toEqual({});
+    expect(workflow.jobs?.attest.permissions).toEqual({
+      contents: 'read',
+      'id-token': 'write',
+      attestations: 'write',
+      'artifact-metadata': 'write',
+    });
+  });
+
+  it('makes the signing job consume only the verifier artifact', () => {
+    const steps = workflow.jobs?.attest.steps ?? [];
+    const uses = steps.map((step) => step.uses);
+
+    expect(uses).toEqual([
+      'actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333',
+      'actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6',
+    ]);
+    expect(steps[0]?.with).toEqual({ name: 'guard-trusted-pr-attestation' });
+    expect(steps[1]?.with).toEqual({ 'subject-path': 'guard-verification.intoto.json' });
+    expect(steps.some((step) => step.run || step.uses?.startsWith('actions/checkout@'))).toBe(
+      false,
+    );
+  });
+
+  it('starts verification only for a completed pull_request workflow run', () => {
+    expect(workflow.jobs?.inspect.if).toBe("github.event.workflow_run.event == 'pull_request'");
+    expect(workflow.on?.workflow_run).toEqual({ workflows: ['Guard'], types: ['completed'] });
   });
 
   it('routes fork PRs around checkout and signing and explains the skipped attestation', () => {
