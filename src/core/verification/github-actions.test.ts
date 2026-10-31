@@ -155,6 +155,18 @@ describe('GitHub Actions integrity audit', () => {
     expect(result?.workflows[0]?.issues.map((issue) => issue.code)).toContain('workflow-invalid');
   });
 
+  it('marks the audit incomplete when the contracted workflow is unavailable from the base', () => {
+    const { root } = createRoot(workflowWithAction(`actions/checkout@${actionShaA}`));
+
+    const result = auditGitHubActions(root, policy(), 'f'.repeat(40));
+
+    expect(result?.status).toBe('incomplete');
+    expect(result?.workflows[0]?.status).toBe('incomplete');
+    expect(result?.workflows[0]?.issues.map((issue) => issue.code)).toContain(
+      'base-workflow-unavailable',
+    );
+  });
+
   it('returns no audit when no trusted CI contract is configured', () => {
     const { root } = createRoot(workflowWithAction(`actions/checkout@${actionShaA}`));
 

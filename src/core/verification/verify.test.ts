@@ -372,6 +372,63 @@ describe('runGuardVerification', () => {
     });
   });
 
+  it('uses the base rule when the PR weakens that rule and violates it in the same change', () => {
+    const baseRule = {
+      id: 'forbidden-import',
+      description: 'Reject the forbidden import.',
+      severity: 'error',
+      kind: 'forbidden-import',
+      patterns: ['forbidden-package'],
+      status: 'active',
+    };
+    const { root, base } = createGitPolicyRoot(
+      { 'src/subject.ts': 'export const value = 1;\n' },
+      { version: 1, rules: [baseRule] },
+    );
+    writeFileSync(join(root, GUARD_DIR, 'rules.json'), JSON.stringify({ version: 1, rules: [] }));
+    writeFileSync(join(root, 'src/subject.ts'), "import value from 'forbidden-package';\n");
+
+    const result = runGuardVerification(root, {
+      policyBase: base,
+      projectChecks: false,
+      tools: 'off',
+    });
+
+    expect(result.architecture?.findings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ ruleId: 'forbidden-import' })]),
+    );
+    expect(result.run.receipt?.policy).toMatchObject({ source: 'git-ref', ref: base });
+    expect(result.run.receipt?.subject.workingTreeFiles).toEqual(
+      expect.arrayContaining([`${GUARD_DIR}/rules.json`, 'src/subject.ts']),
+    );
+  });
+
+  it('reports deletion of a protected file as a policy-surface change', () => {
+    const { root, base } = createGitPolicyRoot(
+      { 'agent.config': 'strict=true\n' },
+      {
+        version: 1,
+        rules: [],
+        policySurface: {
+          paths: [{ pattern: 'agent.config', kind: 'custom', severity: 'error' }],
+        },
+      },
+    );
+    rmSync(join(root, 'agent.config'));
+
+    const result = runGuardVerification(root, {
+      policyBase: base,
+      failOnProtectedChanges: true,
+      projectChecks: false,
+      tools: 'off',
+    });
+
+    expect(result.errorCode).toBe('GUARD_PROTECTED_PATH_CHANGED');
+    expect(result.policySurface?.changes).toContainEqual(
+      expect.objectContaining({ path: 'agent.config', kind: 'custom', severity: 'error' }),
+    );
+  });
+
   it('uses the base policy to audit and report a weakened CI workflow', () => {
     const workflowPath = '.github/workflows/guard.yml';
     const workflow = [
