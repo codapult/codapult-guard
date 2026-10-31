@@ -89,6 +89,10 @@ export interface GuardVerificationReceipt {
     commit?: string | undefined;
     baseRef?: string | undefined;
     baseCommit?: string | undefined;
+    headSha?: string | undefined;
+    baseSha?: string | undefined;
+    mergeSha?: string | undefined;
+    githubEvent?: string | undefined;
     changedFiles: string[];
     baseChangedFiles?: string[] | undefined;
     workingTreeFiles?: string[] | undefined;
@@ -227,6 +231,12 @@ function isGuardRunManifest(value: unknown): value is GuardRunManifest {
       (receipt.subject.baseRef === undefined || typeof receipt.subject.baseRef === 'string') &&
       (receipt.subject.baseCommit === undefined ||
         typeof receipt.subject.baseCommit === 'string') &&
+      (receipt.subject.headSha === undefined || /^[a-f0-9]{40}$/i.test(receipt.subject.headSha)) &&
+      (receipt.subject.baseSha === undefined || /^[a-f0-9]{40}$/i.test(receipt.subject.baseSha)) &&
+      (receipt.subject.mergeSha === undefined ||
+        /^[a-f0-9]{40}$/i.test(receipt.subject.mergeSha)) &&
+      (receipt.subject.githubEvent === undefined ||
+        typeof receipt.subject.githubEvent === 'string') &&
       (receipt.policy === undefined || isGuardRunPolicy(receipt.policy)) &&
       (receipt.verificationScope === undefined ||
         (receipt.verificationScope !== null &&

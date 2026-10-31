@@ -43,6 +43,7 @@ import {
   type GuardVerificationCiIntegrity,
 } from '../history/runs.js';
 import { auditGitHubActions } from './github-actions.js';
+import { readGuardGitHubContext } from './github-context.js';
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../../../package.json') as { version: string };
@@ -598,6 +599,12 @@ function buildVerificationReceipt(
   effectiveInvocation: { command: string; args: string[] },
 ): Omit<GuardVerificationReceipt, 'runId' | 'generatedAt' | 'outcome' | 'gate' | 'subject'> &
   Pick<GuardVerificationReceipt, 'subject'> {
+  const githubContext = readGuardGitHubContext(
+    process.env.GITHUB_EVENT_NAME,
+    process.env.GITHUB_EVENT_PATH,
+    resolveGitCommit(root, 'HEAD'),
+    process.env.GITHUB_SHA,
+  );
   const baseCommit = resolveGitCommit(root, policy.ref);
   const baseChangedFiles = committedFilesSince(root, policy.ref);
   const workingTreeFiles = workingTreeChangedFiles(root) ?? impact.requestedFiles;
@@ -617,6 +624,10 @@ function buildVerificationReceipt(
     version: 1,
     kind: 'verification-receipt',
     subject: {
+      ...(githubContext?.event ? { githubEvent: githubContext.event } : {}),
+      ...(githubContext?.headSha ? { headSha: githubContext.headSha } : {}),
+      ...(githubContext?.baseSha ? { baseSha: githubContext.baseSha } : {}),
+      ...(githubContext?.mergeSha ? { mergeSha: githubContext.mergeSha } : {}),
       ...(policy.ref ? { baseRef: policy.ref } : {}),
       ...(baseCommit ? { baseCommit } : {}),
       ...(baseChangedFiles ? { baseChangedFiles } : {}),
@@ -659,6 +670,12 @@ function buildPolicyGateReceipt(
   stages: Record<string, 'ok' | 'fail' | 'skipped'>,
 ): Omit<GuardVerificationReceipt, 'runId' | 'generatedAt' | 'outcome' | 'gate' | 'subject'> &
   Pick<GuardVerificationReceipt, 'subject'> {
+  const githubContext = readGuardGitHubContext(
+    process.env.GITHUB_EVENT_NAME,
+    process.env.GITHUB_EVENT_PATH,
+    resolveGitCommit(root, 'HEAD'),
+    process.env.GITHUB_SHA,
+  );
   const baseChangedFiles = committedFilesSince(root, policy.ref);
   const workingTreeFiles = workingTreeChangedFiles(root) ?? [];
   const baseCommit = resolveGitCommit(root, policy.ref);
@@ -666,6 +683,10 @@ function buildPolicyGateReceipt(
     version: 1,
     kind: 'verification-receipt',
     subject: {
+      ...(githubContext?.event ? { githubEvent: githubContext.event } : {}),
+      ...(githubContext?.headSha ? { headSha: githubContext.headSha } : {}),
+      ...(githubContext?.baseSha ? { baseSha: githubContext.baseSha } : {}),
+      ...(githubContext?.mergeSha ? { mergeSha: githubContext.mergeSha } : {}),
       ...(policy.ref ? { baseRef: policy.ref } : {}),
       ...(baseCommit ? { baseCommit } : {}),
       ...(baseChangedFiles ? { baseChangedFiles } : {}),

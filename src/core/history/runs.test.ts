@@ -159,7 +159,13 @@ describe('Guard run observability', () => {
     const result = finishGuardRun(root, context, 'pass', 'none', 'verify', undefined, {
       version: 1,
       kind: 'verification-receipt',
-      subject: { changedFiles: ['src/index.ts'], workingTreeDirty: true },
+      subject: {
+        changedFiles: ['src/index.ts'],
+        workingTreeDirty: true,
+        githubEvent: 'workflow_run',
+        headSha: 'c'.repeat(40),
+        baseSha: 'd'.repeat(40),
+      },
       verificationScope: {
         algorithm: 'sha256',
         fingerprint: 'a'.repeat(64),
@@ -190,7 +196,12 @@ describe('Guard run observability', () => {
     expect(result.receipt).toMatchObject({
       kind: 'verification-receipt',
       runId: result.runId,
-      subject: { changedFiles: ['src/index.ts'] },
+      subject: {
+        changedFiles: ['src/index.ts'],
+        githubEvent: 'workflow_run',
+        headSha: 'c'.repeat(40),
+        baseSha: 'd'.repeat(40),
+      },
       checks: { typecheck: { status: 'passed' } },
       verificationScope: {
         algorithm: 'sha256',
@@ -248,6 +259,34 @@ describe('Guard run observability', () => {
     writeFileSync(path, `${JSON.stringify(tampered)}\n`, 'utf8');
 
     expect(listGuardRuns(root)).toEqual([]);
+  });
+
+  it('rejects GitHub receipt context with a malformed commit SHA', () => {
+    const root = createRoot();
+    const context = startGuardRun();
+    const result = finishGuardRun(root, context, 'pass', 'none', 'verify', undefined, {
+      version: 1,
+      kind: 'verification-receipt',
+      subject: { changedFiles: [], workingTreeDirty: false, headSha: 'not-a-commit' },
+      stages: { 'verification-scope': 'ok' },
+      checks: {},
+      findings: {
+        total: 0,
+        errors: 0,
+        warnings: 0,
+        waived: 0,
+        waiverWarnings: 0,
+        expiredWaivers: 0,
+        fingerprints: [],
+        ruleIds: [],
+      },
+      contractIssues: [],
+      decisionIds: [],
+      tool: { name: '@codapult/guard', version: '1.0.0' },
+    });
+
+    expect(listGuardRuns(root)).toEqual([]);
+    expect(result.receipt?.subject.headSha).toBe('not-a-commit');
   });
 
   it('rejects a receipt that disagrees with its enclosing run manifest', () => {

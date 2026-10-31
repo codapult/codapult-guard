@@ -127,6 +127,51 @@ describe('runGuardVerification', () => {
     });
   });
 
+  it('records SHAs from the pull request attached to a trusted workflow_run event', () => {
+    const root = mkdtempSync(join(tmpdir(), 'guard-verify-workflow-run-'));
+    roots.push(root);
+    mkdirSync(join(root, GUARD_DIR), { recursive: true });
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: {} }));
+    writeFileSync(join(root, GUARD_DIR, 'rules.json'), JSON.stringify({ version: 1, rules: [] }));
+    const eventPath = join(root, 'event.json');
+    const headSha = 'a'.repeat(40);
+    const baseSha = 'b'.repeat(40);
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        workflow_run: {
+          pull_requests: [{ head: { sha: headSha }, base: { sha: baseSha } }],
+        },
+      }),
+    );
+    const previous = {
+      eventName: process.env.GITHUB_EVENT_NAME,
+      eventPath: process.env.GITHUB_EVENT_PATH,
+      sha: process.env.GITHUB_SHA,
+    };
+
+    try {
+      process.env.GITHUB_EVENT_NAME = 'workflow_run';
+      process.env.GITHUB_EVENT_PATH = eventPath;
+      process.env.GITHUB_SHA = 'c'.repeat(40);
+      const result = runGuardVerification(root, { projectChecks: false, tools: 'off' });
+
+      expect(result.run.receipt?.subject).toMatchObject({
+        githubEvent: 'workflow_run',
+        headSha,
+        baseSha,
+      });
+      expect(result.run.receipt?.subject.mergeSha).toBeUndefined();
+    } finally {
+      if (previous.eventName === undefined) delete process.env.GITHUB_EVENT_NAME;
+      else process.env.GITHUB_EVENT_NAME = previous.eventName;
+      if (previous.eventPath === undefined) delete process.env.GITHUB_EVENT_PATH;
+      else process.env.GITHUB_EVENT_PATH = previous.eventPath;
+      if (previous.sha === undefined) delete process.env.GITHUB_SHA;
+      else process.env.GITHUB_SHA = previous.sha;
+    }
+  });
+
   it('returns incomplete when a policy-required project-check stage was skipped', () => {
     const { root } = createGitPolicyRoot(
       {},
