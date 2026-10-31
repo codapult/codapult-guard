@@ -677,6 +677,10 @@ Requirements:
 - GitHub Actions is enabled, and the repository or organization policy permits artifact attestations
   and the permissions declared in the template (`id-token: write`, `attestations: write`, and
   `artifact-metadata: write` in the signer job).
+- GitHub artifact attestations are available for public repositories on current GitHub plans. Private
+  and internal repositories require GitHub Enterprise Cloud; GitHub Enterprise Server is not
+  supported by `actions/attest`. Check the current
+  [actions/attest support requirements](https://github.com/actions/attest#readme) for plan changes.
 - The repository has Guard initialized and its protected base revision contains a valid Guard policy.
 - The ordinary pull request workflow is named exactly `Guard` and runs for `pull_request` events. If
   you use a different workflow name, update `workflow_run.workflows` in the template to match it.
