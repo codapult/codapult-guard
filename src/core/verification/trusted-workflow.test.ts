@@ -26,6 +26,19 @@ interface TrustedWorkflow {
   >;
 }
 
+interface GuardCiWorkflow {
+  jobs?: Record<
+    string,
+    {
+      steps?: {
+        name?: string;
+        run?: string;
+        env?: Record<string, string>;
+      }[];
+    }
+  >;
+}
+
 interface TestReceipt {
   version: number;
   kind: string;
@@ -52,6 +65,9 @@ interface TestReceipt {
 const workflow = parse(
   readFileSync(new URL('../../../docs/guard-trusted-pr-attestation.yml', import.meta.url), 'utf8'),
 ) as TrustedWorkflow;
+const ciWorkflow = parse(
+  readFileSync(new URL('../../../.github/workflows/ci.yml', import.meta.url), 'utf8'),
+) as GuardCiWorkflow;
 
 function embeddedScript(jobName: string, marker: string): string {
   const step = workflow.jobs?.[jobName]?.steps?.find((candidate) => candidate.run?.includes(marker));
@@ -203,7 +219,22 @@ function receiptFiles(overrides: Parameters<typeof testReceipt>[0] = {}) {
 }
 
 describe('trusted PR verification workflow template', () => {
-  it('runs from the target branch on PR changes and exposes a stable required job', () => {
+  it('runs a checksum-verified actionlint on shipped workflow templates in package CI', () => {
+    const steps = ciWorkflow.jobs?.actionlint?.steps ?? [];
+    const install = steps.find((step) => step.name === 'Install verified actionlint binary');
+    const lint = steps.find((step) => step.name === 'Lint repository workflows and distributed templates');
+
+    expect(install?.env?.ACTIONLINT_VERSION).toBe('1.7.12');
+    expect(install?.env?.ACTIONLINT_SHA256).toMatch(/^[a-f0-9]{64}$/);
+    expect(install?.run).toContain('sha256sum --check');
+    expect(lint?.run).toContain('docs/guard-ci.yml');
+    expect(lint?.run).toContain('docs/guard-trusted-pr-attestation.yml');
+  });
+
+  it('uses the default-branch workflow source and exposes a stable required job', () => {
+    expect(workflow.on?.pull_request_target).toBeDefined();
+    expect(readFileSync(new URL('../../../docs/guard-trusted-pr-attestation.yml', import.meta.url), 'utf8'))
+      .toContain("repository's default branch");
     expect(workflow.on?.pull_request_target?.types).toEqual([
       'opened',
       'synchronize',

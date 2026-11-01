@@ -666,12 +666,13 @@ statement digest to the expected repository, workflow identity, source revision,
 #### Install the trusted GitHub Actions workflow
 
 The [trusted PR workflow template](guard-trusted-pr-attestation.yml) runs on
-`pull_request_target`. GitHub loads this workflow from the target branch, so a PR cannot replace the
-workflow that creates the `Guard trusted verification` status. The verifier reads the PR event,
-checks out the exact PR head from the base repository's pull ref, fetches the exact base commit, and
-runs a pinned Guard release against policy loaded from that base commit. It does not execute PR
-scripts, install PR dependencies, or use artifacts from a PR-controlled workflow. It verifies fork
-PRs too; only same-repository PRs receive a signed statement. The signer is a separate job.
+`pull_request_target`. GitHub loads this workflow from the repository's default branch, so a PR
+cannot replace the workflow that creates the `Guard trusted verification` status. The verifier
+reads the PR event, checks out the exact PR head from the base repository's pull ref, fetches the
+exact PR base commit, and runs a pinned Guard release against policy loaded from that base commit.
+It does not execute PR scripts, install PR dependencies, or use artifacts from a PR-controlled
+workflow. It verifies fork PRs too; only same-repository PRs receive a signed statement. The signer
+is a separate job.
 
 This required check covers **Guard's architecture and policy verification only**. It skips project
 checks and does not attest tests, builds, deployments, or other jobs. Keep project checks as separate
@@ -724,7 +725,7 @@ for a release, fetch the version tag and resolve its commit, for example:
 
 The base Guard policy must define a GitHub Actions integrity contract for the ordinary PR workflow.
 The trusted check fails closed when that audit is missing or incomplete. Keep the contract scoped to
-the workflow(s) it audits; the trusted verifier is protected by the target-branch workflow source,
+the workflow(s) it audits; the trusted verifier is protected by the default-branch workflow source,
 the verification receipt, strict policy-sensitive change handling, and host-side owner review.
 
 The `Guard trusted verification` job uses only `contents: read`; the separate signer receives the

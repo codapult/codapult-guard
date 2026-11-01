@@ -1,7 +1,7 @@
 name: Guard Trusted PR Verification
 
 on:
-  # This workflow is loaded from the target branch, so changes in the PR cannot
+  # GitHub loads this workflow from the repository's default branch, so PR changes cannot
   # alter or skip the verifier that produces the required status check.
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review, edited]
