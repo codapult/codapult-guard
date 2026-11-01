@@ -2,9 +2,13 @@ import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import {
+  closeSync,
+  constants,
   existsSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -704,17 +708,22 @@ function isGuardConfig(value: unknown): value is GuardConfig {
 }
 
 function readJson(filePath: string): unknown {
-  let stats;
+  let descriptor: number | undefined;
   try {
-    stats = lstatSync(filePath);
-  } catch {
+    const pathStats = lstatSync(filePath);
+    if (pathStats.isSymbolicLink()) throw new GuardConfigError(filePath);
+    descriptor = openSync(filePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const stats = fstatSync(descriptor);
+    if (!stats.isFile() || stats.dev !== pathStats.dev || stats.ino !== pathStats.ino) {
+      throw new GuardConfigError(filePath);
+    }
+    return JSON.parse(readFileSync(descriptor, 'utf8')) as unknown;
+  } catch (error) {
+    if (error instanceof GuardConfigError) throw error;
+    if ((error as NodeJS.ErrnoException).code === 'ELOOP') throw new GuardConfigError(filePath);
     return undefined;
-  }
-  if (stats.isSymbolicLink()) throw new GuardConfigError(filePath);
-  try {
-    return JSON.parse(readFileSync(filePath, 'utf8')) as unknown;
-  } catch {
-    return undefined;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 

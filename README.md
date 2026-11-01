@@ -300,6 +300,15 @@ Start the standalone MCP server over stdio:
 pnpm exec codapult-guard mcp-server
 ```
 
+#### Security and authentication
+
+The MCP server communicates over the host-managed local stdio process; it does not open a network
+listener or implement application-level authentication. The host and operating system control who
+can start the process and which workspace files it can access. Treat workspace MCP configuration
+and the project being inspected as trusted code, and grant the server only the filesystem access it
+needs. This is a local trust boundary, not a substitute for authentication when wrapping Guard in a
+network service.
+
 Register that command in the MCP client from the project root. For example, Cursor can use
 `.cursor/mcp.json`:
 

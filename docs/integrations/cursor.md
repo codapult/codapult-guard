@@ -1,5 +1,10 @@
 # Cursor integration
 
+Guard runs as a host-managed local stdio process and has no application-level authentication or
+network listener. Access is controlled by Cursor and the operating system; only enable this server
+for a trusted workspace and grant it the filesystem access it needs. See the [Guard security
+model](../guard.md#security-and-authentication) before using it in a shared environment.
+
 This page targets Cursor Agent in a trusted local workspace. Cursor supports project MCP
 configuration in `.cursor/mcp.json`, project rules in `.cursor/rules/`, and project hooks in
 `.cursor/hooks.json`.

@@ -132,15 +132,23 @@ jobs:
           GUARD_POLICY_MODE: ${{ vars.CODAPULT_GUARD_POLICY_MODE || 'host-review' }}
         run: |
           node --input-type=module <<'NODE'
-          import { appendFileSync, existsSync, readFileSync, statSync } from 'node:fs';
+          import { appendFileSync, readFileSync } from 'node:fs';
           const resultFile = process.env.GUARD_RESULT_FILE;
-          if (!resultFile || !existsSync(resultFile) || statSync(resultFile).size === 0) {
+          let resultContent;
+          try {
+            if (!resultFile) throw new Error('missing result file path');
+            resultContent = readFileSync(resultFile, 'utf8');
+          } catch {
+            appendFileSync(process.env.GITHUB_STEP_SUMMARY, '## Codapult Guard\n\n- Result: **incomplete** (verification did not produce a result file).\n');
+            process.exit(0);
+          }
+          if (resultContent.length === 0) {
             appendFileSync(process.env.GITHUB_STEP_SUMMARY, '## Codapult Guard\n\n- Result: **incomplete** (verification did not produce a result file).\n');
             process.exit(0);
           }
           let result;
           try {
-            result = JSON.parse(readFileSync(resultFile, 'utf8'));
+            result = JSON.parse(resultContent);
           } catch {
             appendFileSync(process.env.GITHUB_STEP_SUMMARY, '## Codapult Guard\n\n- Result: **incomplete** (verification result was not valid JSON).\n');
             process.exit(0);
@@ -243,12 +251,12 @@ jobs:
           GUARD_STATEMENT_FILE: ${{ runner.temp }}/guard-verification.intoto.json
         run: |
           node --input-type=module <<'NODE'
-          import { existsSync, readFileSync, rmSync } from 'node:fs';
+          import { readFileSync, rmSync } from 'node:fs';
           const statementFile = process.env.GUARD_STATEMENT_FILE;
           const resultFile = process.env.GUARD_RESULT_FILE;
           let result;
           try {
-            if (!resultFile || !existsSync(resultFile)) throw new Error('missing result');
+            if (!resultFile) throw new Error('missing result path');
             result = JSON.parse(readFileSync(resultFile, 'utf8'));
           } catch {
             if (statementFile) rmSync(statementFile, { force: true });

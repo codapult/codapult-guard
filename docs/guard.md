@@ -991,6 +991,15 @@ context response from being mistaken for a passing verification.
 
 ### Registering the MCP server
 
+#### Security and authentication
+
+The MCP server communicates over the host-managed local stdio process; it does not open a network
+listener or implement application-level authentication. The host and operating system control who
+can start the process and which workspace files it can access. Treat workspace MCP configuration
+and the project being inspected as trusted code, and grant the server only the filesystem access it
+needs. This local trust model does not provide authentication if Guard is wrapped in a network
+service.
+
 Install Guard in the project that the agent will inspect:
 
 ```bash

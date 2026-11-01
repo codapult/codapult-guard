@@ -244,9 +244,24 @@ export const guardAgentConfigSchema = z.object({
   version: z.literal(1),
   tools: z.enum(['auto', 'on', 'off']),
   tooling: z
-    .record(
-      z.string().trim().min(1),
-      z.object({ script: z.string().trim().min(1), enabled: z.boolean() }),
+    .partialRecord(
+      z.enum([
+        'dependency-graph',
+        'security',
+        'dependency-hygiene',
+        'sast',
+        'secret-scanning',
+        'dependency-audit',
+      ]),
+      z.object({
+        script: z
+          .string()
+          .trim()
+          .min(1)
+          .max(128)
+          .regex(/^[A-Za-z0-9][A-Za-z0-9:._/-]*$/, 'Must be a package script name.'),
+        enabled: z.boolean(),
+      }),
     )
     .default({}),
   completionGate: z.object({

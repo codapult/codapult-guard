@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -46,8 +46,11 @@ try {
   const artifacts = ['project.json', 'architecture.json', 'conventions.json'];
   for (const artifact of artifacts) {
     const path = join(root, '.codapult/guard', artifact);
-    if (!existsSync(path)) throw new Error(`missing artifact after concurrent writes: ${artifact}`);
-    JSON.parse(readFileSync(path, 'utf8'));
+    try {
+      JSON.parse(readFileSync(path, 'utf8'));
+    } catch {
+      throw new Error(`missing or invalid artifact after concurrent writes: ${artifact}`);
+    }
   }
   const unexpected = results.filter(
     (result) => result.code !== 0 && !result.stderr.toLowerCase().includes('busy'),

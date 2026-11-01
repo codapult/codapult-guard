@@ -1,5 +1,10 @@
 # GitHub Copilot integration
 
+Guard runs as a host-managed local stdio process and has no application-level authentication or
+network listener. Access is controlled by the host and operating system; only enable this server
+for a trusted workspace and grant it the filesystem access it needs. See the [Guard security
+model](../guard.md#security-and-authentication) before using it in a shared environment.
+
 GitHub Copilot has two relevant local surfaces. Use the VS Code instructions for Copilot Chat in Agent mode, or the Copilot CLI instructions for the terminal agent. They do not share the same MCP configuration file.
 
 ## Copilot Chat in VS Code
