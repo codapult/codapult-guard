@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/codapult/codapult-guard/compare/v0.13.0...v0.13.1) (2026-11-01)
+
+### Bug Fixes
+
+* **ci:** update Guard artifact action pin ([0dc5fd3](https://github.com/codapult/codapult-guard/commit/0dc5fd3a536d3990492c39bb54b803043c322ea6))
+* enhance descriptions and input schemas for Guard tools ([df001ce](https://github.com/codapult/codapult-guard/commit/df001ce193488d559a1a3d829fee03186120b538))
+
 ## [0.13.0](https://github.com/codapult/codapult-guard/compare/v0.12.0...v0.13.0) (2026-11-01)
 
 ### Features
