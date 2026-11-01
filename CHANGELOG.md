@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.13.0](https://github.com/codapult/codapult-guard/compare/v0.12.0...v0.13.0) (2026-11-01)
+
+### Features
+
+* **ci:** support trusted merge queues ([651d389](https://github.com/codapult/codapult-guard/commit/651d389836e29fb3660d542eaa0b3732cedf7ce1))
+
+### Bug Fixes
+
+* **ci:** trust base-branch PR verifier ([0f728f4](https://github.com/codapult/codapult-guard/commit/0f728f44c920e13ea04f574ebfaa811896d0d93f))
+* **ci:** validate merge group base ancestry ([7368aa1](https://github.com/codapult/codapult-guard/commit/7368aa187462cd3e228be0cce9d672e785bee0cd))
+
 ## [0.12.0](https://github.com/codapult/codapult-guard/compare/v0.11.0...v0.12.0) (2026-11-01)
 
 ### Features
