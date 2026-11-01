@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.12.0](https://github.com/codapult/codapult-guard/compare/v0.11.0...v0.12.0) (2026-11-01)
+
+### Features
+
+* add host-review policy mode to CI template ([8aab882](https://github.com/codapult/codapult-guard/commit/8aab882ead62a74bab4dfa8230af18079ed46903))
+* add script to prepare fixture projects for testing ([0cedf8a](https://github.com/codapult/codapult-guard/commit/0cedf8a09276f615134b6554ef8fbbaabf68cdb7))
+
+### Bug Fixes
+
+* exclude .state.lock from verification scope files ([5e07858](https://github.com/codapult/codapult-guard/commit/5e078588f90a6736572087fdc88543e8c7540088))
+* harden consumer Guard workflow template ([ad8fc0a](https://github.com/codapult/codapult-guard/commit/ad8fc0a6d691d29575997be59de52d73dc7def73))
+* rename hono-node-server to node-server in fixture scripts ([a75dbe8](https://github.com/codapult/codapult-guard/commit/a75dbe8b0b7a445e10675a1087a7103879d54993))
+* simplify fixture project cloning step by using preparation script ([afbd548](https://github.com/codapult/codapult-guard/commit/afbd548aa54aa0a45decd8811c816f0776a34601))
+
 ## [0.11.0](https://github.com/codapult/codapult-guard/compare/v0.10.0...v0.11.0) (2026-10-31)
 
 ### Features
