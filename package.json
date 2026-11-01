@@ -62,6 +62,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:guard:coverage": "vitest run src/core src/adapters/project-checks.test.ts --coverage --coverage.include='src/core/**/*.ts' --coverage.include='src/adapters/project-checks.ts'",
+    "test:guard:prepare-fixtures": "node scripts/prepare-fixture-projects.mjs",
     "test:guard:fixtures": "pnpm build && node scripts/guard-fixture-smoke.mjs",
     "test:guard:fixtures:regression": "pnpm build && node scripts/guard-fixture-regression.mjs",
     "test:guard:fixtures:native": "pnpm build && node scripts/guard-fixture-native.mjs",
