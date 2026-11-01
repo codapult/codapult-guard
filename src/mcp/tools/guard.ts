@@ -247,15 +247,24 @@ export function registerGuardTools(server: McpServer): void {
     {
       title: 'Refresh Guard Model',
       description:
-        'Refresh persisted project facts and snapshots without changing rules, contracts, or baseline.',
+        'Rediscover the repository and persist its current project facts and snapshots. Use after repository changes when codapult_guard_next_action returns needs-refresh or needs-setup; this does not change Guard rules, contracts, or baseline. Returns the new revision and discovery metrics.',
       inputSchema: {
         root: rootSchema,
         confirm: z
           .boolean()
           .default(false)
           .describe('Required before writing refreshed Guard state.'),
-        wait_ms: z.number().int().min(0).max(120_000).default(30_000),
-        no_wait: z.boolean().default(false),
+        wait_ms: z
+          .number()
+          .int()
+          .min(0)
+          .max(120_000)
+          .default(30_000)
+          .describe('Maximum time to wait for the Guard state lock, in milliseconds.'),
+        no_wait: z
+          .boolean()
+          .default(false)
+          .describe('Return immediately if another process holds the Guard state lock.'),
       },
     },
     ({ root: requestedRoot, confirm, wait_ms, no_wait }) => {
@@ -288,7 +297,7 @@ export function registerGuardTools(server: McpServer): void {
     {
       title: 'Guard Next Action',
       description:
-        'Return the next bounded action for an AI coding-agent loop without modifying project files.',
+        'Choose the next bounded step in the Guard workflow without writing project files. Call at task start or after a step: it checks setup, stale project facts/proposals, changed-file findings, and policy contracts, then returns an action such as init, analyze, policy review, repair, or verify with the reason.',
       inputSchema: { root: rootSchema },
     },
     ({ root: requestedRoot }) => {
@@ -377,13 +386,15 @@ export function registerGuardTools(server: McpServer): void {
     {
       title: 'Guard Context',
       description:
-        'Read the discovered project model, architecture insights, and local rules used by Codapult Guard. Works before init by discovering the project on demand.',
+        'Read the project model, architecture insights, conventions, active policy, proposals, baseline, waivers, and completion-gate settings in one structured response. Works before Guard initialization. Use refresh=true (default) for current repository state; refresh=false prefers persisted snapshots and is useful when inspecting the last saved model.',
       inputSchema: {
         root: rootSchema,
         refresh: z
           .boolean()
           .default(true)
-          .describe('Rediscover the working tree instead of reading the persisted snapshot.'),
+          .describe(
+            'Rediscover the working tree and derive current context; false prefers persisted model and memory artifacts.',
+          ),
       },
     },
     ({ root: requestedRoot, refresh }) => {
@@ -454,11 +465,19 @@ export function registerGuardTools(server: McpServer): void {
     {
       title: 'Guard Proposals',
       description:
-        'Generate evidence-based rule and contract proposals for an AI agent. Proposals are never activated automatically.',
+        'Generate evidence-backed candidate architecture rules and contracts from the current project model. Use to review possible policy after setup or structural changes; proposals are never activated automatically. The result includes evidence, questions, freshness, and persistence status. Persisted proposals still require an explicit decision with codapult_guard_proposal_decide.',
       inputSchema: {
         root: rootSchema,
-        persist: z.boolean().default(false).describe('Persist proposals.json in the project.'),
-        confirm: z.boolean().default(false).describe('Required when persist is true.'),
+        persist: z
+          .boolean()
+          .default(false)
+          .describe(
+            'Write the generated packet to proposals.json; false returns it without changing project state.',
+          ),
+        confirm: z
+          .boolean()
+          .default(false)
+          .describe('Must be true to persist proposals; has no effect on read-only generation.'),
       },
     },
     ({ root: requestedRoot, persist, confirm }) => {
@@ -507,16 +526,27 @@ export function registerGuardTools(server: McpServer): void {
     {
       title: 'Initialize Guard',
       description:
-        'Create Guard artifacts after explicit confirmation; existing baselines are protected by default.',
+        'Create the initial Guard policy, project model, and supporting artifacts for a repository that has not been initialized. Existing Guard state is preserved by default. Use force only to replace existing state after reviewing the consequences; the result reports initialization findings.',
       inputSchema: {
         root: rootSchema,
         confirm: z.boolean().default(false).describe('Required before writing Guard artifacts.'),
         force: z
           .boolean()
           .default(false)
-          .describe('Replace existing Guard state; requires confirm.'),
-        wait_ms: z.number().int().min(0).max(120_000).default(30_000),
-        no_wait: z.boolean().default(false),
+          .describe(
+            'Replace existing Guard artifacts, including the baseline; requires confirm=true.',
+          ),
+        wait_ms: z
+          .number()
+          .int()
+          .min(0)
+          .max(120_000)
+          .default(30_000)
+          .describe('Maximum time to wait for the Guard state lock, in milliseconds.'),
+        no_wait: z
+          .boolean()
+          .default(false)
+          .describe('Return immediately if another process holds the Guard state lock.'),
       },
     },
     ({ root: requestedRoot, confirm, force, wait_ms, no_wait }) => {
@@ -561,12 +591,20 @@ export function registerGuardTools(server: McpServer): void {
     {
       title: 'Decide Guard Proposals',
       description:
-        'Approve or reject current evidence-backed proposals; stale proposals cannot be activated.',
+        'Record an explicit approval or rejection for the selected current proposals. Approval activates the selected rules/contracts in Guard policy; rejection records the decision without activation. Stale proposals cannot be decided, and protected approval policy may require a non-MCP reviewer. Returns the decision and affected IDs.',
       inputSchema: {
         root: rootSchema,
-        ids: z.array(z.string().trim().min(1)).min(1),
-        decision: z.enum(['approved', 'rejected']),
-        confirm: z.boolean().default(false).describe('Required before changing Guard state.'),
+        ids: z
+          .array(z.string().trim().min(1))
+          .min(1)
+          .describe('One or more proposal IDs from the current codapult_guard_propose result.'),
+        decision: z
+          .enum(['approved', 'rejected'])
+          .describe('Whether to activate the selected proposal(s) or record their rejection.'),
+        confirm: z
+          .boolean()
+          .default(false)
+          .describe('Must be true before recording decisions or activating proposals.'),
       },
     },
     ({ root: requestedRoot, ids, decision, confirm }) => {
@@ -660,39 +698,68 @@ export function registerGuardTools(server: McpServer): void {
     {
       title: 'Guard Verify',
       description:
-        'Run project checks, production build, and architecture regression checks as one verification gate.',
+        'Run the configured completion gate: selected project checks plus Guard architecture and policy checks, returning structured results. Use after implementation and semantic review; this executes project commands but does not edit source. Defaults come from agent.json where omitted. Pass requirement to bind verification to the task and increment iteration on each retry.',
       inputSchema: {
         root: rootSchema,
         checks: z
           .array(z.enum(['lint', 'typecheck', 'test', 'build']))
           .optional()
-          .describe('Checks to run; defaults to lint, typecheck, test, and build.'),
-        changed_only: z.boolean().optional(),
-        requirement: z.string().trim().min(1).max(20_000).optional(),
+          .describe(
+            'Project checks to run; when omitted, uses the configured gate (normally lint, typecheck, test, and build).',
+          ),
+        changed_only: z
+          .boolean()
+          .optional()
+          .describe(
+            'Limit architecture regression checks to changed files; omitted uses configured behavior.',
+          ),
+        requirement: z
+          .string()
+          .trim()
+          .min(1)
+          .max(20_000)
+          .optional()
+          .describe(
+            'The user task or acceptance requirement to include in the verification report.',
+          ),
         tools: z
           .enum(['auto', 'on', 'off'])
           .optional()
-          .describe('External tools mode; defaults to agent.json.'),
-        strict: z.boolean().optional(),
+          .describe(
+            'Whether configured external verification tools are enabled; omitted uses agent.json.',
+          ),
+        strict: z
+          .boolean()
+          .optional()
+          .describe(
+            'Enable strict verification behavior, including failure for required but unconfigured checks.',
+          ),
         project_checks: z
           .boolean()
           .optional()
-          .describe('Override completionGate.projectChecks for this invocation.'),
+          .describe('Override whether project commands run for this invocation.'),
         policy_base: z
           .string()
           .trim()
           .min(1)
           .optional()
-          .describe('Git ref whose Guard policy should be used for this verification.'),
+          .describe('Git ref from which to load the Guard policy for this verification.'),
         fail_on_policy_change: z
           .boolean()
           .optional()
-          .describe('Fail when the checked-out policy differs from policy_base.'),
+          .describe('Fail if the checked-out Guard policy differs from policy_base.'),
         fail_on_protected_changes: z
           .boolean()
           .optional()
-          .describe('Fail when verification-sensitive files or inline suppressions change.'),
-        iteration: z.number().int().positive().default(1),
+          .describe('Fail if verification-sensitive files or inline suppressions changed.'),
+        iteration: z
+          .number()
+          .int()
+          .positive()
+          .default(1)
+          .describe(
+            'Current verification attempt, used to report whether another retry is allowed.',
+          ),
       },
     },
     ({
@@ -744,7 +811,7 @@ export function registerGuardTools(server: McpServer): void {
     {
       title: 'Guard Governance Audit',
       description:
-        'Audit declared proposal and approval provenance, policy bindings, and retained verification reachability. This reports metadata; it does not prove identity or signatures.',
+        'Inspect proposal and approval provenance metadata, policy bindings, and whether retained verification evidence is reachable from decisions. Use for a governance trail audit; output describes declared metadata and does not authenticate identities or verify signatures.',
       inputSchema: { root: rootSchema },
     },
     ({ root: requestedRoot }) => {
@@ -764,7 +831,7 @@ export function registerGuardTools(server: McpServer): void {
     {
       title: 'Guard Audit',
       description:
-        'Run a full Guard audit, ignoring baseline suppression and validating contracts.',
+        'Scan the entire current repository against active Guard rules, including findings normally hidden by the baseline, and validate policy contracts. Use for a full health review; unlike codapult_guard_check, this is not limited to changed files. Returns findings, contract issues, counts, and overall status.',
       inputSchema: { root: rootSchema },
     },
     ({ root: requestedRoot }) => {
@@ -803,12 +870,29 @@ export function registerGuardTools(server: McpServer): void {
     {
       title: 'Prepare Guard Review',
       description:
-        'Prepare a bounded semantic-review packet containing the current diff, project model, contracts, and deterministic findings for an AI reviewer.',
+        'Build a bounded packet for an AI semantic reviewer containing the diff, project context, active contracts, and deterministic Guard findings. Use after coding and before verification. The result needs human/agent review; it is not itself an approval or verification. Set base for PR comparisons and requirement to focus the review.',
       inputSchema: {
         root: rootSchema,
-        changed_only: z.boolean().default(true),
-        max_diff_chars: z.number().int().positive().max(500_000).default(120_000),
-        requirement: z.string().trim().min(1).max(20_000).optional(),
+        changed_only: z
+          .boolean()
+          .default(true)
+          .describe(
+            'Include only changed-file findings and baseline-aware results; false requests a full-scope packet.',
+          ),
+        max_diff_chars: z
+          .number()
+          .int()
+          .positive()
+          .max(500_000)
+          .default(120_000)
+          .describe('Maximum number of diff characters included in the packet.'),
+        requirement: z
+          .string()
+          .trim()
+          .min(1)
+          .max(20_000)
+          .optional()
+          .describe('The task requirement the reviewer should assess.'),
         base: z
           .string()
           .trim()
@@ -849,8 +933,17 @@ export function registerGuardTools(server: McpServer): void {
     'codapult_guard_check',
     {
       title: 'Guard Check',
-      description: 'Check project architecture rules and return structured new violations.',
-      inputSchema: { root: rootSchema, changed_only: z.boolean().optional() },
+      description:
+        'Run active architecture rules and contract validation, returning structured findings and status. Use for a fast deterministic policy check: changed_only=true focuses on changed files and respects the baseline; false scans the full project. Omitted uses the scanner default. For a full audit that ignores baseline suppression, use codapult_guard_audit.',
+      inputSchema: {
+        root: rootSchema,
+        changed_only: z
+          .boolean()
+          .optional()
+          .describe(
+            'Limit rule findings to changed files; true respects the baseline, false scans the full project.',
+          ),
+      },
     },
     ({ root: requestedRoot, changed_only }) => {
       const root = getGuardRoot(requestedRoot);
@@ -889,17 +982,49 @@ export function registerGuardTools(server: McpServer): void {
     {
       title: 'Guard Waivers',
       description:
-        'List and manage time-bounded, project-approved exceptions to active Guard findings.',
+        'List or manage owner-attributed, time-limited exceptions tied to exact active finding fingerprints. Use list to inspect current waivers; add requires fingerprint, owner, expiry, and reason; renew/remove require waiver id and reason. Every mutation requires confirm=true and may be restricted by protected approval policy. Adding a waiver does not change the underlying rule.',
       inputSchema: {
         root: rootSchema,
-        action: z.enum(['list', 'add', 'remove', 'renew']).default('list'),
-        fingerprint: z.string().trim().min(1).optional(),
-        id: z.string().trim().min(1).optional(),
-        owner: z.string().trim().min(1).optional(),
-        reason: z.string().trim().min(1).max(2000).optional(),
-        expires_at: z.iso.datetime({ offset: true }).optional(),
-        issue: z.url().optional(),
-        confirm: z.boolean().default(false),
+        action: z
+          .enum(['list', 'add', 'remove', 'renew'])
+          .default('list')
+          .describe('Operation to perform; list is read-only.'),
+        fingerprint: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe('Exact finding fingerprint from a Guard report; required for add.'),
+        id: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe('Existing waiver ID; required for remove and renew.'),
+        owner: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe('Person or team responsible for the exception; required for add.'),
+        reason: z
+          .string()
+          .trim()
+          .min(1)
+          .max(2000)
+          .optional()
+          .describe('Why the exception is needed; required for every mutation.'),
+        expires_at: z.iso
+          .datetime({ offset: true })
+          .optional()
+          .describe(
+            'Expiry timestamp with timezone; required for add and optionally updates expiry on renew.',
+          ),
+        issue: z.url().optional().describe('Optional URL tracking the exception.'),
+        confirm: z
+          .boolean()
+          .default(false)
+          .describe('Must be true before adding, removing, or renewing a waiver.'),
       },
     },
     ({
@@ -1015,10 +1140,15 @@ export function registerGuardTools(server: McpServer): void {
     {
       title: 'Guard Impact Analysis',
       description:
-        'Explain the project impact of one or more changed files using the discovered dependency graph, routes, capabilities, and contracts.',
+        'Trace the likely project impact of one or more file paths through the discovered dependency graph, including dependents, routes, capabilities, contracts, and graph paths. Use before changing a file to understand downstream areas to inspect. This is repository analysis, not a policy pass/fail check; returns structured impact details.',
       inputSchema: {
         root: rootSchema,
-        files: z.array(z.string().trim().min(1)).min(1),
+        files: z
+          .array(z.string().trim().min(1))
+          .min(1)
+          .describe(
+            'Repository-relative paths to analyze; provide every changed or planned file of interest.',
+          ),
       },
     },
     ({ root: requestedRoot, files }) => {
@@ -1038,10 +1168,15 @@ export function registerGuardTools(server: McpServer): void {
     'codapult_guard_explain',
     {
       title: 'Explain Guard Policy',
-      description: 'Explain a Guard rule or contract with its evidence and applicable scope.',
+      description:
+        'Look up one active Guard rule or contract by ID and return its definition, evidence, guidance, and suggested next steps. Use when a check reports a rule ID or when deciding how to comply. For a finding-specific explanation, inspect the finding from codapult_guard_check or codapult_guard_audit as well.',
       inputSchema: {
         root: rootSchema,
-        id: z.string().trim().min(1),
+        id: z
+          .string()
+          .trim()
+          .min(1)
+          .describe('Exact rule or contract ID from Guard policy or a finding.'),
       },
     },
     ({ root: requestedRoot, id }) => {
