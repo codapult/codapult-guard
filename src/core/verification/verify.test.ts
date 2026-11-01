@@ -372,6 +372,35 @@ describe('runGuardVerification', () => {
     });
   });
 
+  it('checks proposed code against base policy without granting approval to policy changes', () => {
+    const baseRule = {
+      id: 'forbidden-import',
+      description: 'Reject the forbidden import.',
+      severity: 'error',
+      kind: 'forbidden-import',
+      patterns: ['forbidden-package'],
+      status: 'active',
+    };
+    const { root, base } = createGitPolicyRoot(
+      { 'src/subject.ts': 'export const value = 1;\n' },
+      { version: 1, rules: [baseRule] },
+    );
+    writeFileSync(join(root, GUARD_DIR, 'rules.json'), JSON.stringify({ version: 1, rules: [] }));
+
+    const result = runGuardVerification(root, {
+      policyBase: base,
+      projectChecks: false,
+      tools: 'off',
+    });
+
+    expect(result.outcome).toBe('pass');
+    expect(result.status).toBe('ok');
+    expect(result.policyChanged).toBe(true);
+    expect(result.policy?.source).toBe('git-ref');
+    expect(result.policySurface?.changedPaths).toContain(`${GUARD_DIR}/rules.json`);
+    expect(result.architecture?.findings).toEqual([]);
+  });
+
   it('uses the base rule when the PR weakens that rule and violates it in the same change', () => {
     const baseRule = {
       id: 'forbidden-import',

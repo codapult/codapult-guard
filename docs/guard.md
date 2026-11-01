@@ -745,10 +745,13 @@ Although this template does not execute project files, Guard still parses attack
 and configuration. Use GitHub-hosted ephemeral runners and keep verifier and signer permissions at
 the template's minimum; parser vulnerabilities remain a residual risk.
 
-The template uses `--fail-on-policy-change` and `--fail-on-protected-changes`. A PR that changes
-Guard policy, the trusted workflow, or another protected verification input will therefore receive
-no attestation from this workflow. Review such changes through the repository's protected owner
-process, merge the approved policy, then verify subsequent source PRs against that base.
+The trusted attestation template uses `--fail-on-policy-change` and
+`--fail-on-protected-changes`. A PR that changes Guard policy, the trusted workflow, or another
+protected verification input will therefore receive no attestation from this workflow. This
+strict signing behavior is independent of the consumer workflow's `CODAPULT_GUARD_POLICY_MODE`:
+`host-review` can report a passing source verdict under base policy, while this trusted workflow
+withholds signed evidence until the policy-sensitive change is handled through the repository's
+protected owner process.
 
 The workflow does not create a required check or status on the PR. GitHub branch protection or a
 ruleset must require the ordinary Guard check and protect both workflow definitions. The attestation
@@ -1041,11 +1044,14 @@ pnpm exec codapult-guard check --changed --sarif > guard-results.sarif
 ```
 
 The repository includes a copyable consumer workflow at [`docs/guard-ci.yml`](guard-ci.yml). On pull
-requests it installs dependencies without lifecycle scripts and runs the deterministic Guard gate
-without executing PR-owned project scripts; trusted pushes can run configured project checks. It uploads SARIF
-with `github/codeql-action/upload-sarif` and also runs the unified verification gate. Projects
-using protected or forked pull requests should review their `security-events: write` permissions
-and artifact policy.
+requests it installs dependencies without lifecycle scripts and runs Guard against the base policy
+without executing PR-owned project scripts; trusted pushes can run configured project checks. Its
+`CODAPULT_GUARD_POLICY_MODE` variable selects `host-review` (default) or `strict`; the README
+describes the difference and the required hosting configuration. Policy-sensitive changes are
+reported in the summary, and the unsigned in-toto statement is omitted for those runs. The workflow
+uploads SARIF with `github/codeql-action/upload-sarif` and also runs the unified verification gate.
+Projects using protected or forked pull requests should review their `security-events: write`
+permissions and artifact policy.
 
 For maintainers, the fixture and real-PR harnesses are documented in
 [`guard-fixtures.md`](guard-fixtures.md). The isolated golden flow is run with:

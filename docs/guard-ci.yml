@@ -66,18 +66,30 @@ jobs:
       - name: Verify Guard and project checks
         env:
           POLICY_BASE: ${{ github.event.pull_request.base.sha }}
+          GUARD_POLICY_MODE: ${{ vars.CODAPULT_GUARD_POLICY_MODE || 'host-review' }}
           GUARD_RESULT_FILE: ${{ runner.temp }}/guard-verification.json
           GUARD_STATEMENT_FILE: ${{ runner.temp }}/guard-verification.intoto.json
         run: |
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            # PR source code and package scripts are untrusted. Keep this gate
-            # deterministic; trusted pushes can run the project's own checks.
-            check_args=(--no-project-checks --tools off --fail-on-protected-changes)
+            # PR source code and package scripts are untrusted. Verify with the
+            # base policy; the selected mode controls how sensitive changes gate CI.
+            case "$GUARD_POLICY_MODE" in
+              host-review)
+                check_args=(--no-project-checks --tools off)
+                ;;
+              strict)
+                check_args=(--no-project-checks --tools off --fail-on-policy-change --fail-on-protected-changes)
+                ;;
+              *)
+                echo "Unsupported CODAPULT_GUARD_POLICY_MODE: $GUARD_POLICY_MODE (expected host-review or strict)." >&2
+                exit 2
+                ;;
+            esac
           else
             check_args=(--tools auto)
           fi
           if [ -n "$POLICY_BASE" ]; then
-            pnpm exec codapult-guard verify "${check_args[@]}" --policy-base "$POLICY_BASE" --fail-on-policy-change --attestation-out "$GUARD_STATEMENT_FILE" --json > "$GUARD_RESULT_FILE"
+            pnpm exec codapult-guard verify "${check_args[@]}" --policy-base "$POLICY_BASE" --attestation-out "$GUARD_STATEMENT_FILE" --json > "$GUARD_RESULT_FILE"
           else
             pnpm exec codapult-guard verify "${check_args[@]}" --attestation-out "$GUARD_STATEMENT_FILE" --json > "$GUARD_RESULT_FILE"
           fi
@@ -86,6 +98,7 @@ jobs:
         if: always()
         env:
           GUARD_RESULT_FILE: ${{ runner.temp }}/guard-verification.json
+          GUARD_POLICY_MODE: ${{ vars.CODAPULT_GUARD_POLICY_MODE || 'host-review' }}
         run: |
           node --input-type=module <<'NODE'
           import { appendFileSync, existsSync, readFileSync, statSync } from 'node:fs';
@@ -102,6 +115,18 @@ jobs:
             process.exit(0);
           }
           const receipt = result.run?.receipt;
+          const receiptIsComplete = Boolean(
+            receipt &&
+              receipt.subject &&
+              Array.isArray(receipt.subject.changedFiles) &&
+              receipt.findings &&
+              Number.isFinite(receipt.findings.total) &&
+              Number.isFinite(receipt.findings.errors) &&
+              Number.isFinite(receipt.findings.warnings) &&
+              Array.isArray(receipt.contractIssues) &&
+              typeof receipt.tool?.version === 'string',
+          );
+          const guardVerdict = result.outcome === 'pass' && !receiptIsComplete ? 'incomplete' : result.outcome ?? 'unknown';
           const code = (value) => `\`${String(value).replace(/[\u0000-\u001f\u007f`]/g, ' ')}\``;
           const plain = (value) => String(value)
             .replace(/[\u0000-\u001f\u007f]/g, ' ')
@@ -109,11 +134,12 @@ jobs:
           const lines = [
             '## Codapult Guard',
             '',
-            `- Result: **${result.outcome ?? 'unknown'}**`,
+            `- Guard verdict: **${guardVerdict}**`,
             `- Gate: \`${result.run?.gate ?? 'unknown'}\``,
+            `- Policy mode: \`${process.env.GUARD_POLICY_MODE ?? 'unknown'}\``,
             `- Run: \`${result.run?.runId ?? 'unknown'}\``,
           ];
-          if (receipt) {
+          if (receiptIsComplete) {
             const incompleteChecks = Object.entries(receipt.checks ?? {})
               .filter(([, check]) => check.status !== 'passed')
               .map(([name, check]) => `${name}=${check.status}`);
@@ -156,9 +182,14 @@ jobs:
                 for (const issue of workflow.issues) lines.push(`  - ${issue.code}: ${plain(issue.message)}`);
               }
             }
+          } else if (receipt) {
+            lines.push('- Receipt: **incomplete** (required summary fields are missing).');
           }
           const protectedChanges = result.policySurface?.changedPaths ?? [];
           const suppressions = result.policySurface?.suppressionMarkers ?? [];
+          const policyChanged = result.policyChanged === true || receipt?.policy?.changed === true;
+          const ciIntegrity = result.ciIntegrity ?? receipt?.ciIntegrity;
+          const hostReviewRequired = policyChanged || protectedChanges.length > 0 || suppressions.length > 0 || ciIntegrity?.status === 'policy-weakened';
           if (protectedChanges.length > 0 || suppressions.length > 0) {
             lines.push('', '### Verification-sensitive changes', ...protectedChanges.map((path) => `- ${code(path)}`));
             for (const change of result.policySurface?.changes ?? []) {
@@ -167,7 +198,46 @@ jobs:
             lines.push(...suppressions.map((marker) => `- Inline suppression added: ${code(marker)}`));
             lines.push('- Workflow integrity and required-check enforcement must be configured in repository settings.');
           }
+          if (hostReviewRequired) {
+            if (policyChanged) lines.push('- Guard policy differs from the base revision.');
+            lines.push('- Host review: **required**. Guard evaluated the proposed code with policy from the base revision; this result does not approve the policy-sensitive changes.');
+          }
           appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join('\n')}\n`);
+          NODE
+
+      - name: Remove statement unless the PR was verified without policy changes
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GUARD_RESULT_FILE: ${{ runner.temp }}/guard-verification.json
+          GUARD_STATEMENT_FILE: ${{ runner.temp }}/guard-verification.intoto.json
+        run: |
+          node --input-type=module <<'NODE'
+          import { existsSync, readFileSync, rmSync } from 'node:fs';
+          const statementFile = process.env.GUARD_STATEMENT_FILE;
+          const resultFile = process.env.GUARD_RESULT_FILE;
+          let result;
+          try {
+            if (!resultFile || !existsSync(resultFile)) throw new Error('missing result');
+            result = JSON.parse(readFileSync(resultFile, 'utf8'));
+          } catch {
+            if (statementFile) rmSync(statementFile, { force: true });
+            process.exit(0);
+          }
+          const receipt = result.run?.receipt;
+          const policySurface = result.policySurface;
+          const ciIntegrity = result.ciIntegrity ?? receipt?.ciIntegrity;
+          const cleanBasePolicyVerdict =
+            result.outcome === 'pass' &&
+            result.policyChanged !== true &&
+            policySurface?.complete === true &&
+            Array.isArray(policySurface.changedPaths) &&
+            policySurface.changedPaths.length === 0 &&
+            Array.isArray(policySurface.suppressionMarkers) &&
+            policySurface.suppressionMarkers.length === 0 &&
+            ciIntegrity?.status !== 'policy-weakened' &&
+            receipt?.verificationScope?.complete === true &&
+            receipt?.verificationScope?.stable === true;
+          if (!cleanBasePolicyVerdict && statementFile) rmSync(statementFile, { force: true });
           NODE
 
       - name: Upload verification receipt

@@ -419,20 +419,28 @@ same base policy:
 
 Supported kinds are `ci-workflow`, `guard-policy`, `ownership`, `dependency-input`, `tool-config`, `ignore-config`,
 `suppression-source`, and `custom`. `error` entries fail when `--fail-on-protected-changes` is
-enabled; `warning` entries are reported without blocking. Built-in verification-sensitive paths
-remain blocking. Both forms are read from the base policy during PR verification, so the PR cannot
-remove its own path coverage.
+enabled; `warning` entries are reported without blocking. Both forms are read from the base policy
+during PR verification, so the PR cannot remove its own path coverage.
 
-In pull request CI, add `--fail-on-protected-changes` alongside `--policy-base`. This fails the
-Guard invocation when a listed path changes without a matching CI integrity contract, or when a
-contracted workflow fails its checks. It emits all matched paths in JSON output. Protect
-the Guard workflow itself and require its status check in repository settings: a workflow edited
-or removed by a PR cannot independently enforce its own integrity. Guard reports workflow edits,
-but GitHub branch protection is what makes the check mandatory. The sample workflow rejects PR
-changes to package manifests, common npm/pnpm/Yarn/Bun lockfiles, package-manager config, and
-workspace install inputs before
-selecting pnpm or installing dependencies. Review those changes in a separate PR. This preflight is
-defense in depth: repository rules must still protect the workflow and require the Guard check.
+The consumer workflow template supports two policy-change modes through the repository Actions
+variable `CODAPULT_GUARD_POLICY_MODE`:
+
+- `host-review` (default) runs the complete source verification against base-branch policy,
+  reports policy and protected-path changes, and marks them as requiring host review. It does not
+  treat Guard's code verdict as approval of those changes and omits the in-toto statement for them.
+  Configure CODEOWNERS and protected-branch/ruleset review requirements to authorize the merge.
+- `strict` adds `--fail-on-policy-change` and `--fail-on-protected-changes`. Any such change fails
+  the Guard check. Use this when policy changes must follow a separate owner-controlled merge path;
+  an approving review alone will not turn the failed Guard check green. Actual Guard failures and
+  weakened or incomplete CI-integrity contracts can fail in either mode.
+
+Set the variable under **Settings → Secrets and variables → Actions → Variables**. Only the exact
+values `host-review` and `strict` are accepted; a typo fails the workflow. Guard reports workflow
+edits, but a PR workflow cannot guarantee its own integrity. Protect the Guard workflow itself and
+require its expected status check in repository settings. The sample workflow also rejects changes
+to package manifests, common lockfiles, package-manager configuration, and workspace install inputs
+before selecting pnpm or installing dependencies. This preflight is defense in depth; repository
+rules must still protect the workflow and require the Guard check.
 
 Guard reports added `eslint-disable`, `@ts-ignore`, `@ts-nocheck`, `@ts-expect-error`, and
 `biome-ignore`, and `prettier-ignore` markers in the PR diff. It reports the file and marker
