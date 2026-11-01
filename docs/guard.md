@@ -665,33 +665,31 @@ statement digest to the expected repository, workflow identity, source revision,
 
 #### Install the trusted GitHub Actions workflow
 
-The [trusted PR workflow template](guard-trusted-pr-attestation.yml) independently runs Guard in a
-workflow triggered by completion of the ordinary `Guard` workflow. It does not consume artifacts
-from that run. It first validates that the event identifies exactly one PR and compares the head and
-base repository names. For same-repository PRs, it checks out the PR head, fetches the exact base
-commit, installs a fixed Guard version with lifecycle scripts disabled, runs Guard without project
-checks, checks that the receipt matches the PR head and base SHAs, and signs the statement in a
-separate job.
+The [trusted PR workflow template](guard-trusted-pr-attestation.yml) runs on
+`pull_request_target`. GitHub loads this workflow from the target branch, so a PR cannot replace the
+workflow that creates the `Guard trusted verification` status. The verifier reads the PR event,
+checks out the exact PR head from the base repository's pull ref, fetches the exact base commit, and
+runs a pinned Guard release against policy loaded from that base commit. It does not execute PR
+scripts, install PR dependencies, or use artifacts from a PR-controlled workflow. It verifies fork
+PRs too; only same-repository PRs receive a signed statement. The signer is a separate job.
 
-This attestation covers **Guard's architecture and policy verification only**. The template skips
-project checks and does not attest the result of tests, builds, deployments, or other jobs in the
-ordinary workflow. It also does not inspect or require that workflow's conclusion. Keep the normal
-Guard workflow as a required PR check; configure other required checks separately.
+This required check covers **Guard's architecture and policy verification only**. It skips project
+checks and does not attest tests, builds, deployments, or other jobs. Keep project checks as separate
+required checks. The ordinary `pull_request` Guard workflow is useful for SARIF and fast feedback,
+but it is editable by the PR and must not be the only required Guard check.
 
 Requirements:
 
-- GitHub Actions is enabled, and the repository or organization policy permits artifact attestations
-  and the permissions declared in the template (`id-token: write`, `attestations: write`, and
-  `artifact-metadata: write` in the signer job).
+- GitHub Actions is enabled and the repository policy permits `pull_request_target`. Artifact
+  attestations and the signer permissions (`id-token: write`, `attestations: write`, and
+  `artifact-metadata: write`) are needed only if you want signed statements.
 - GitHub artifact attestations are available for public repositories on current GitHub plans. Private
   and internal repositories require GitHub Enterprise Cloud; GitHub Enterprise Server is not
   supported by `actions/attest`. Check the current
   [actions/attest support requirements](https://github.com/actions/attest#readme) for plan changes.
 - The repository has Guard initialized and its protected base revision contains a valid Guard policy.
-- The ordinary pull request workflow is named exactly `Guard` and runs for `pull_request` events. If
-  you use a different workflow name, update `workflow_run.workflows` in the template to match it.
-- A Guard release tag is available that records PR context for `workflow_run` events. Configure
-  both its exact version and the full commit SHA of that tag; the workflow checks that they match.
+- A Guard release tag is available. Configure its exact version and full commit SHA; the workflow
+  checks that they match.
 - The trusted workflow builds Guard from that immutable source commit using its committed pnpm
   lockfile with `--frozen-lockfile`. Lifecycle scripts are disabled during dependency installation.
   The lockfile's package versions and integrity values pin the complete dependency graph.
@@ -706,56 +704,51 @@ cp node_modules/@codapult/guard/docs/guard-trusted-pr-attestation.yml \
 
 In **Settings → Secrets and variables → Actions → Variables**, create these repository variables:
 
-- `CODAPULT_GUARD_VERSION`: the exact release version that includes `workflow_run` receipt support,
-  without a `v` prefix or range (for example, `0.10.0`).
+- `CODAPULT_GUARD_VERSION`: the exact release version, without a `v` prefix or range (for example,
+  `0.12.0`).
 - `CODAPULT_GUARD_COMMIT`: the full 40-character Git commit SHA that the matching `v<version>` tag
   resolves to.
+- `CODAPULT_GUARD_POLICY_MODE` (optional): `strict` (default) fails the required check when policy,
+  protected verification inputs, suppressions, or CI integrity change. Set it to `host-review` only
+  when branch protection separately requires an authorized CODEOWNER/maintainer review for those
+  changes; this mode reports the change, withholds the signed statement, and passes Guard's source
+  verdict.
 
-Both are non-secret values. The workflow fetches the tag from the public Guard repository, confirms
-that it resolves to the configured SHA and that the package version matches, then installs from the
-Guard repository's frozen pnpm lockfile. If the release tag moves or either value is wrong, the
-workflow stops before installing or running Guard. To obtain the commit SHA for a release, fetch the
-version tag and resolve its commit, for example:
-`git fetch https://github.com/codapult/codapult-guard.git refs/tags/v0.10.0` followed by
+The version, commit, and mode values are non-secret. The workflow fetches the tag from the public
+Guard repository, confirms that it resolves to the configured SHA and that the package version
+matches, then installs from the Guard repository's frozen pnpm lockfile. If the release tag moves or
+either pin is wrong, the workflow stops before installing or running Guard. To obtain the commit SHA
+for a release, fetch the version tag and resolve its commit, for example:
+`git fetch https://github.com/codapult/codapult-guard.git refs/tags/v0.12.0` followed by
 `git rev-parse 'FETCH_HEAD^{commit}'`.
 
-Checkout v7 blocks fork PR checkouts in `workflow_run` by default, and this template keeps that
-protection enabled. The context job detects a fork by comparing the PR head and base repository names.
-If the event has no associated PR, it compares the workflow run's head repository with the event's
-base repository; only a clear repository mismatch is treated as an unattached fork. For a detected
-fork, the `verify` and `attest` jobs are skipped before checkout, and a separate read-only job adds a
-summary explaining that no signed attestation was created. This is an expected skip, not a Guard pass:
-the ordinary Guard pull request check remains responsible for its own result. Fork PRs receive no
-trusted attestation unless a future version adds a separately reviewed safe lookup and verification
-path. Missing or ambiguous PR context, missing repository identity, or invalid SHAs fail closed. The
-`verify` job has only `contents: read`, does not run project checks or package lifecycle scripts, and
-does not receive signing permissions or secrets. The separate `attest` job signs only after the
-verifier has passed and the receipt has been matched to the PR. Do not add commands that execute
-files from the PR to the verifier job.
+The base Guard policy must define a GitHub Actions integrity contract for the ordinary PR workflow.
+The trusted check fails closed when that audit is missing or incomplete. Keep the contract scoped to
+the workflow(s) it audits; the trusted verifier is protected by the target-branch workflow source,
+the verification receipt, strict policy-sensitive change handling, and host-side owner review.
 
-The `workflow_run` event only runs a workflow file present on the default branch. It has a different
-trust context from the original PR workflow and can receive more privileges, so keep its permissions
-minimal and protect this workflow file with CODEOWNERS/repository rules. GitHub may omit the PR
-association in some events; an empty association is treated as a fork only when the trusted event
-metadata identifies a different head repository. Otherwise, the context job fails closed and no
-attestation is produced. The ordinary PR workflow can still run, but fork support for signed receipts
-requires a separately reviewed PR lookup design. Never solve this by running PR-controlled scripts
-in the trusted workflow.
+The `Guard trusted verification` job uses only `contents: read`; the separate signer receives the
+attestation permissions. Missing or ambiguous PR context, mismatched revisions, unavailable base
+policy, incomplete scope, or an invalid receipt fails closed. Fork PRs are independently verified
+with the same base policy, but receive no signed statement. Do not add commands that execute files
+from the PR to the verifier job. GitHub's `pull_request_target` has elevated trust context; this
+template is safe only while the verifier does not run PR-controlled code or install PR dependencies.
+If an Actions policy blocks `pull_request_target`, explicitly allow that event in repository or
+organization Actions settings.
+
+In **Settings → Rules → Rulesets** or branch protection, require the exact `Guard trusted
+verification` check from GitHub Actions. The template does not configure branch protection for you.
+Protect the default branch and require owner review for changes to the trusted workflow and Guard
+policy. Keep ordinary project checks required separately. The trusted check is authoritative for
+Guard verification; the ordinary `Guard` workflow is not a substitute because a PR can edit it.
 Although this template does not execute project files, Guard still parses attacker-controlled source
 and configuration. Use GitHub-hosted ephemeral runners and keep verifier and signer permissions at
 the template's minimum; parser vulnerabilities remain a residual risk.
 
-The trusted attestation template uses `--fail-on-policy-change` and
-`--fail-on-protected-changes`. A PR that changes Guard policy, the trusted workflow, or another
-protected verification input will therefore receive no attestation from this workflow. This
-strict signing behavior is independent of the consumer workflow's `CODAPULT_GUARD_POLICY_MODE`:
-`host-review` can report a passing source verdict under base policy, while this trusted workflow
-withholds signed evidence until the policy-sensitive change is handled through the repository's
-protected owner process.
-
-The workflow does not create a required check or status on the PR. GitHub branch protection or a
-ruleset must require the ordinary Guard check and protect both workflow definitions. The attestation
-is additional evidence for consumers that need to verify who ran Guard and which PR content was
+In the default `strict` mode, policy-sensitive changes fail the required verification check. In
+`host-review` mode, they can pass only as a Guard source verdict under the base policy; the workflow
+withholds the signed statement. Use that mode only with host-side review rules that enforce the
+required owner approval. The signature is additional evidence about who ran Guard and what it
 checked; it does not replace host-side merge policy.
 
 #### Verify a signed receipt
@@ -834,13 +827,12 @@ advanced since the workflow ran, require a new trusted workflow run and verify i
 The statement's `mergeSha`, when present, identifies the merge commit checked by Guard; the head and
 base SHA checks above bind the attestation to the PR revisions.
 
-For a first setup check, open a test PR from a branch in the same repository, wait for both workflow
-runs to finish, confirm that `guard-trusted-pr-attestation` appears as an artifact on the trusted
-workflow run, download it, and run both verification commands above. The template intentionally
+For a first setup check, open a test PR from a branch in the same repository, wait for the trusted
+workflow to finish, confirm that `guard-trusted-pr-attestation` appears as an artifact on that run,
+download it, and run both verification commands above. The template intentionally
 fails closed when PR context is missing or ambiguous and cannot be identified as an unattached fork,
 when the Guard receipt is not a pass, when its scope is incomplete or unstable, or when the PR SHAs
-do not match the event. A fork that can be identified safely is an expected skip and receives no
-attestation.
+do not match the event. Fork PRs are verified but receive no signed attestation.
 
 Signature verification proves which workflow signed the statement and that the statement file was
 not changed after signing. It does not, by itself, prove that arbitrary claims inside the statement
@@ -849,7 +841,7 @@ are true. This template acts as the trusted verifier by re-running Guard before 
 trusted verification: a `pull_request` workflow file comes from the PR merge commit. GitHub also
 warns that predicates may be controlled by the workflow that produced them unless signing is done
 by a trusted builder. See GitHub's [guidance on untrusted code checkout](https://docs.github.com/en/actions/reference/security/secure-use#mitigating-the-risks-of-untrusted-code-checkout),
-[workflow_run event details](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run),
+[`pull_request_target` security guidance](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target),
 the [in-toto Statement spec](https://github.com/in-toto/attestation/blob/main/spec/README.md),
 [GitHub artifact attestations](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations),
 [actions/attest](https://github.com/actions/attest), and

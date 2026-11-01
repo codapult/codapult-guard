@@ -556,8 +556,11 @@ To add a separately signed Guard receipt, copy
 [`docs/guard-trusted-pr-attestation.yml`](docs/guard-trusted-pr-attestation.yml) to
 `.github/workflows/guard-trusted-pr-attestation.yml` and follow the
 [trusted-attestation setup guide](docs/guard.md#install-the-trusted-github-actions-workflow).
-This optional workflow re-runs Guard; it does not replace the required `Guard` check or attest
-project test/build results.
+Require its `Guard trusted verification` job in branch protection or a ruleset. This trusted
+`pull_request_target` workflow independently verifies same-repository and fork PRs with base-branch
+policy; the ordinary PR-editable `Guard` workflow is for feedback and SARIF, and must not be the only
+required Guard check. The trusted workflow does not run or attest project test/build results, so keep
+those checks required separately.
 
 ## CLI surface
 

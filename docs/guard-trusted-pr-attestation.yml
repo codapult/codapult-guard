@@ -1,15 +1,15 @@
-name: Guard Trusted PR Attestation
+name: Guard Trusted PR Verification
 
 on:
-  workflow_run:
-    workflows: [Guard]
-    types: [completed]
+  # This workflow is loaded from the target branch, so changes in the PR cannot
+  # alter or skip the verifier that produces the required status check.
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, edited]
 
 permissions: {}
 
 jobs:
   inspect:
-    if: github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-latest
     outputs:
       number: ${{ steps.pr.outputs.number }}
@@ -25,34 +25,34 @@ jobs:
           node --input-type=module <<'NODE'
           import { appendFileSync, readFileSync } from 'node:fs';
           const event = JSON.parse(readFileSync(process.env.EVENT_PATH, 'utf8'));
-          const pullRequests = event.workflow_run?.pull_requests ?? [];
+          const pullRequest = event.pull_request;
           const isRepository = (value) => typeof value === 'string' && /^[^/\s]+\/[^/\s]+$/.test(value);
-          if (pullRequests.length === 0) {
-            const runHeadRepository = event.workflow_run?.head_repository?.full_name;
-            const eventBaseRepository = event.repository?.full_name;
-            if (!isRepository(runHeadRepository) || !isRepository(eventBaseRepository) || runHeadRepository.toLowerCase() === eventBaseRepository.toLowerCase()) {
-              throw new Error('Expected exactly one associated pull request; could not safely identify an unattached fork run.');
-            }
-            appendFileSync(process.env.GITHUB_OUTPUT, 'fork=true\n');
-          } else {
-            if (pullRequests.length !== 1) throw new Error('Expected exactly one associated pull request.');
-            const pullRequest = pullRequests[0];
-            const number = pullRequest.number;
-            const headSha = pullRequest.head?.sha;
-            const baseSha = pullRequest.base?.sha;
-            const headRepository = pullRequest.head?.repo?.full_name;
-            const baseRepository = pullRequest.base?.repo?.full_name;
-            if (!Number.isSafeInteger(number) || number < 1 || !/^[a-f0-9]{40}$/i.test(headSha ?? '') || !/^[a-f0-9]{40}$/i.test(baseSha ?? '') || !isRepository(headRepository) || !isRepository(baseRepository)) {
-              throw new Error('Pull request number, repository, head SHA, or base SHA is missing or invalid.');
-            }
-            const fork = headRepository.toLowerCase() !== baseRepository.toLowerCase();
-            appendFileSync(process.env.GITHUB_OUTPUT, `number=${number}\nhead_sha=${headSha}\nbase_sha=${baseSha}\nfork=${fork}\n`);
+          const number = pullRequest?.number;
+          const headSha = pullRequest?.head?.sha;
+          const baseSha = pullRequest?.base?.sha;
+          const headRepository = pullRequest?.head?.repo?.full_name;
+          const baseRepository = pullRequest?.base?.repo?.full_name;
+          const eventRepository = event.repository?.full_name;
+          if (
+            !Number.isSafeInteger(number) ||
+            number < 1 ||
+            !/^[a-f0-9]{40}$/i.test(headSha ?? '') ||
+            !/^[a-f0-9]{40}$/i.test(baseSha ?? '') ||
+            !isRepository(headRepository) ||
+            !isRepository(baseRepository) ||
+            !isRepository(eventRepository) ||
+            baseRepository.toLowerCase() !== eventRepository.toLowerCase()
+          ) {
+            throw new Error('Pull request number, repositories, head SHA, or base SHA is missing or invalid.');
           }
+          const fork = headRepository.toLowerCase() !== baseRepository.toLowerCase();
+          appendFileSync(process.env.GITHUB_OUTPUT, `number=${number}\nhead_sha=${headSha}\nbase_sha=${baseSha}\nfork=${fork}\n`);
           NODE
 
   verify:
     needs: inspect
-    if: needs.inspect.result == 'success' && needs.inspect.outputs.fork != 'true'
+    if: needs.inspect.result == 'success'
+    name: Guard trusted verification
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -120,15 +120,25 @@ jobs:
       - name: Verify PR with trusted Guard and base policy
         env:
           BASE_SHA: ${{ needs.inspect.outputs.base_sha }}
+          GUARD_POLICY_MODE: ${{ vars.CODAPULT_GUARD_POLICY_MODE || 'strict' }}
           GUARD_RESULT_FILE: ${{ runner.temp }}/guard-verification.json
           GUARD_STATEMENT_FILE: ${{ runner.temp }}/guard-verification.intoto.json
         run: |
+          check_args=(--no-project-checks --tools off)
+          case "$GUARD_POLICY_MODE" in
+            host-review)
+              ;;
+            strict)
+              check_args+=(--fail-on-policy-change --fail-on-protected-changes)
+              ;;
+            *)
+              echo "Unsupported CODAPULT_GUARD_POLICY_MODE: $GUARD_POLICY_MODE (expected host-review or strict)." >&2
+              exit 2
+              ;;
+          esac
           node "$RUNNER_TEMP/codapult-guard-source/dist/cli/index.js" verify \
-            --no-project-checks \
-            --tools off \
+            "${check_args[@]}" \
             --policy-base "$BASE_SHA" \
-            --fail-on-policy-change \
-            --fail-on-protected-changes \
             --json \
             --attestation-out "$GUARD_STATEMENT_FILE" \
             > "$GUARD_RESULT_FILE"
@@ -138,16 +148,15 @@ jobs:
         env:
           BASE_SHA: ${{ needs.inspect.outputs.base_sha }}
           HEAD_SHA: ${{ needs.inspect.outputs.head_sha }}
+          GUARD_POLICY_MODE: ${{ vars.CODAPULT_GUARD_POLICY_MODE || 'strict' }}
           GUARD_RESULT_FILE: ${{ runner.temp }}/guard-verification.json
           GUARD_STATEMENT_FILE: ${{ runner.temp }}/guard-verification.intoto.json
         run: |
           node --input-type=module <<'NODE'
-          import { appendFileSync, readFileSync } from 'node:fs';
+          import { appendFileSync, readFileSync, rmSync } from 'node:fs';
           const result = JSON.parse(readFileSync(process.env.GUARD_RESULT_FILE, 'utf8'));
-          const statement = JSON.parse(readFileSync(process.env.GUARD_STATEMENT_FILE, 'utf8'));
           const receipt = result.run?.receipt;
           const scope = receipt?.verificationScope;
-          const statementReceipt = statement?.predicate?.receipt;
           if (result.outcome !== 'pass' || receipt?.outcome !== 'pass') throw new Error('Guard did not pass.');
           if (receipt.version !== 1 || receipt.kind !== 'verification-receipt' || typeof receipt.runId !== 'string' || receipt.runId.length === 0) {
             throw new Error('Guard receipt has an unsupported schema or no run ID.');
@@ -155,9 +164,60 @@ jobs:
           if (receipt.subject?.headSha !== process.env.HEAD_SHA || receipt.subject?.baseSha !== process.env.BASE_SHA) {
             throw new Error('Guard receipt does not match the triggering PR head and base SHAs.');
           }
+          if (receipt.policy?.source !== 'git-ref' || receipt.policy?.ref !== process.env.BASE_SHA) {
+            throw new Error('Guard did not use the exact policy revision from the PR base.');
+          }
+          if (typeof receipt.policy.changedFromBase !== 'boolean') {
+            throw new Error('Guard receipt does not state whether policy changed from the base.');
+          }
           if (scope?.algorithm !== 'sha256' || scope.complete !== true || scope.stable !== true || !/^[a-f0-9]{64}$/.test(scope.fingerprint ?? '')) {
             throw new Error('Guard receipt has no complete, stable verification scope.');
           }
+          const surface = receipt.policySurface;
+          if (
+            !surface ||
+            surface.complete !== true ||
+            typeof surface.workflowChanged !== 'boolean' ||
+            !Array.isArray(surface.changedPaths) ||
+            !surface.changedPaths.every((path) => typeof path === 'string') ||
+            !Array.isArray(surface.suppressionMarkers) ||
+            !surface.suppressionMarkers.every((marker) => typeof marker === 'string')
+          ) {
+            throw new Error('Guard did not completely inspect the policy surface against the base.');
+          }
+          const ciIntegrity = receipt.ciIntegrity;
+          if (
+            ciIntegrity !== undefined &&
+            (!['ok', 'policy-weakened', 'incomplete'].includes(ciIntegrity.status) ||
+              !Array.isArray(ciIntegrity.workflows))
+          ) {
+            throw new Error('Guard receipt has an invalid CI integrity result.');
+          }
+          const policySensitive =
+            receipt.policy.changedFromBase === true ||
+            surface.changedPaths.length > 0 ||
+            surface.workflowChanged === true ||
+            surface.suppressionMarkers.length > 0 ||
+            !ciIntegrity ||
+            ciIntegrity.status !== 'ok';
+          if (policySensitive && process.env.GUARD_POLICY_MODE === 'strict') {
+            throw new Error('Strict policy mode passed a policy-sensitive PR unexpectedly.');
+          }
+          if (policySensitive) {
+            rmSync(process.env.GUARD_STATEMENT_FILE, { force: true });
+            appendFileSync(process.env.GITHUB_STEP_SUMMARY, [
+              '## Codapult Guard',
+              '',
+              '- Guard verdict: **pass under base policy**.',
+              '- Host review: **required** for the policy-sensitive changes listed by the receipt.',
+              '- No in-toto statement was emitted for this PR.',
+              '',
+            ].join('\n'));
+            appendFileSync(process.env.GITHUB_OUTPUT, 'attestation=false\n');
+            process.exit(0);
+          }
+          const statement = JSON.parse(readFileSync(process.env.GUARD_STATEMENT_FILE, 'utf8'));
+          const statementReceipt = statement?.predicate?.receipt;
           if (statement?._type !== 'https://in-toto.io/Statement/v1' || statement.predicateType !== 'https://codapult.dev/attestations/guard-verification/v1') {
             throw new Error('in-toto statement or Guard predicate type is invalid.');
           }
@@ -171,7 +231,7 @@ jobs:
           NODE
 
       - name: Upload the independently verified statement
-        if: steps.result.outcome == 'success'
+        if: steps.result.outputs.attestation == 'true' && needs.inspect.outputs.fork != 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: guard-trusted-pr-attestation
@@ -179,17 +239,17 @@ jobs:
           if-no-files-found: error
 
   fork-pr-summary:
-    needs: inspect
-    if: needs.inspect.result == 'success' && needs.inspect.outputs.fork == 'true'
+    needs: [inspect, verify]
+    if: needs.inspect.result == 'success' && needs.inspect.outputs.fork == 'true' && needs.verify.result == 'success'
     runs-on: ubuntu-latest
     permissions: {}
     steps:
-      - name: Explain why this fork PR has no attestation
+      - name: Explain the fork PR verification result
         run: |
           cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
-          ## Guard attestation skipped
+          ## Guard fork PR verification
 
-          This pull request comes from a fork. The trusted workflow did not check out or inspect fork-controlled code, and it did not create a signed attestation. Checkout's fork protection remains enabled. The ordinary Guard pull request check still reports its own result.
+          The trusted verifier checked this PR's exact head and base revisions using policy from the base revision. No signed attestation was created for this fork PR. The required `Guard trusted verification` check reports the verifier result above.
           SUMMARY
 
   attest:
