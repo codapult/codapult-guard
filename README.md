@@ -546,7 +546,13 @@ cp node_modules/@codapult/guard/docs/guard-ci.yml .github/workflows/guard.yml
 Or copy it from [`docs/guard-ci.yml`](docs/guard-ci.yml). It runs project verification and exports
 Guard findings as SARIF for GitHub code scanning. Pull requests install dependencies without
 lifecycle scripts and use deterministic Guard checks without executing PR-owned scripts; trusted
-pushes may run the configured project checks.
+pushes may run the configured project checks. It also handles `merge_group` events using the exact
+queue head and base SHAs, and does not run project scripts on merge-group candidates. The copied
+workflow is still editable by a PR, so use the separate
+[`docs/guard-trusted-merge-group.yml`](docs/guard-trusted-merge-group.yml) from a protected workflow
+repository in an organization ruleset when the merge-group check must itself have a protected
+workflow source. The [merge-queue setup guide](docs/guard.md#require-guard-on-github-merge-queues)
+explains both trust modes and the required host settings.
 
 The package repository separately runs its own unit, typecheck, build, and packaging checks in
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml), while the fixture workflow tests Guard on

@@ -656,6 +656,14 @@ fingerprint remains authoritative for the exact files and policy Guard hashed. T
 paths and hashes, not file contents. The supplied [CI template](guard-ci.yml) exports and uploads
 this unsigned statement alongside the JSON receipt when verification passes.
 
+On a GitHub `merge_group` event, there may be several PRs in the candidate. Guard therefore does
+not set `headSha` to one of their branch heads. It records the queue's `base_sha` as `baseSha` and
+records `head_sha` as `mergeSha` only when it matches both the checked-out commit and `GITHUB_SHA`.
+The receipt's `githubEvent` is `merge_group`; the content-bound scope fingerprint identifies the
+aggregate candidate Guard actually examined. The consumer [CI template](guard-ci.yml) validates
+these exact SHA values, uses the queue base as policy, and does not run project scripts for a merge
+group.
+
 Guard does not sign the Statement. Signing stays in CI so Guard needs no signing key or Sigstore
 dependency. The in-toto Statement format does not require GitHub or Sigstore: another CI system can
 sign or attest the same exported file with its own trusted mechanism. The workflow below is a
@@ -745,6 +753,58 @@ Guard verification; the ordinary `Guard` workflow is not a substitute because a 
 Although this template does not execute project files, Guard still parses attacker-controlled source
 and configuration. Use GitHub-hosted ephemeral runners and keep verifier and signer permissions at
 the template's minimum; parser vulnerabilities remain a residual risk.
+
+#### Require Guard on GitHub merge queues
+
+The ordinary [Guard CI template](guard-ci.yml) also listens for `merge_group: checks_requested`.
+[GitHub treats this as a separate event from `pull_request`](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#merge_group);
+a required status that is not emitted for the merge-group SHA stays pending. The template verifies the exact `merge_group.head_sha`, requires
+the reported `merge_group.base_sha` to be present locally, uses that queue base to load Guard policy
+and compare runtime dependencies, and installs candidate dependencies without lifecycle scripts.
+Guard does not execute project-owned checks in the merge group. Keep project test/build workflows
+required on `merge_group` too; Guard's architecture verdict does not replace them.
+
+That copied workflow is part of the candidate repository and can be changed by a PR. For a trusted
+required check on the aggregate code, use the separate
+[trusted merge-group workflow template](guard-trusted-merge-group.yml) from a protected workflow
+repository through an [organization or enterprise ruleset's **Require workflows to pass before
+merging** rule](https://docs.github.com/en/enterprise-cloud%40latest/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets#require-workflows-to-pass-before-merging).
+Do not copy that template into the consuming repository: its trust comes from GitHub
+running the workflow revision selected by the ruleset, outside the candidate diff. The workflow
+uses a read-only `contents` permission, checks out only the merge group's exact head, loads policy
+from the exact queue base, validates Guard's receipt, and does not sign or run project scripts. It
+adds the JSON receipt as a `guard-merge-group-verification` Actions artifact for inspection.
+
+To configure it:
+
+1. Store the template in a protected workflow repository in the organization. The source repository
+   visibility must be compatible with the target repositories; private or internal workflow
+   repositories must allow workflow access from those targets. Keep the source branch protected
+   and require owner review for changes to the workflow.
+2. Set the target repository's Actions variables `CODAPULT_GUARD_VERSION` and
+   `CODAPULT_GUARD_COMMIT` to an exact Guard release and its full commit SHA. Set
+   `CODAPULT_GUARD_POLICY_MODE` to `strict` (default), or to `host-review` only if a separate host
+   rule requires owner approval for policy-sensitive PRs before queue entry.
+3. Create an organization ruleset targeting the protected branch. Add this workflow under **Require
+   workflows to pass before merging** and select its protected branch or immutable SHA as the source.
+   Require the ordinary `Guard trusted verification` pull-request check as well, so every queue entry
+   has already passed the PR-level base-policy gate.
+4. Enable the merge queue for the target branch. Require the trusted merge-group workflow and the
+   project's test/build workflows to pass for each merge group. Do not use path filters to skip this
+   required Guard workflow.
+
+Organization ruleset workflows are documented for GitHub Enterprise Cloud; verify availability for
+the organization's current plan and repository visibility. If that feature is not
+available, the copied `merge_group` job still provides useful candidate verification, but it cannot
+prove that its own workflow definition came from a protected source. In that setup, require the
+trusted PR check before queue entry and protect workflow changes with owner review; do not describe
+the copied merge-group check as independently trusted.
+
+Merge queues may batch more than one PR. The trusted workflow checks the aggregate candidate and
+does not infer individual PR heads from it. Each PR must first pass its trusted PR check; the
+merge-group check then catches integration failures or conflicts introduced by combining queued
+changes. A passing merge-group verdict is tied to that candidate SHA and becomes stale when GitHub
+rebuilds the group with a different SHA.
 
 In the default `strict` mode, policy-sensitive changes fail the required verification check. In
 `host-review` mode, they can pass only as a Guard source verdict under the base policy; the workflow

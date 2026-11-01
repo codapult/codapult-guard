@@ -6,6 +6,7 @@ import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
 interface ConsumerWorkflow {
+  on?: { pull_request?: unknown; merge_group?: { types?: string[] }; push?: unknown };
   jobs?: Record<
     string,
     {
@@ -35,6 +36,7 @@ describe('consumer CI workflow template', () => {
     const sarifUpload = steps.find((step) => step.name === 'Upload Guard findings');
 
     expect(checkout?.with?.ref).toBe('${{ github.sha }}');
+    expect(workflow.on?.merge_group?.types).toEqual(['checks_requested']);
     expect(verify?.run).toContain('--policy-base "$POLICY_BASE"');
     expect(verify?.env?.GUARD_POLICY_MODE).toBe(
       "${{ vars.CODAPULT_GUARD_POLICY_MODE || 'host-review' }}",
@@ -56,9 +58,12 @@ describe('consumer CI workflow template', () => {
     );
     expect(summary?.run).toContain('Host review: **required**');
     const statementGuard = steps.find(
-      (step) => step.name === 'Remove statement unless the PR was verified without policy changes',
+      (step) =>
+        step.name === 'Remove statement unless the candidate was verified without policy changes',
     );
-    expect(statementGuard?.if).toBe("always() && github.event_name == 'pull_request'");
+    expect(statementGuard?.if).toBe(
+      "always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group')",
+    );
     expect(statementGuard?.run).toContain('result.policyChanged !== true');
     expect(statementGuard?.run).toContain('policySurface?.complete === true');
     expect(statementGuard?.run).toContain('rmSync(statementFile, { force: true })');
@@ -155,7 +160,8 @@ describe('consumer CI workflow template', () => {
     const steps = workflow.jobs?.guard.steps ?? [];
     const summary = steps.find((step) => step.name === 'Add Guard result to the workflow summary');
     const statementGuard = steps.find(
-      (step) => step.name === 'Remove statement unless the PR was verified without policy changes',
+      (step) =>
+        step.name === 'Remove statement unless the candidate was verified without policy changes',
     );
     const summaryScript = summary?.run?.match(
       /^node --input-type=module <<'NODE'\n([\s\S]*?)\nNODE\n?$/,
@@ -223,7 +229,8 @@ describe('consumer CI workflow template', () => {
 
   it('preserves the statement for a passing PR with a complete unchanged policy surface', () => {
     const statementGuard = workflow.jobs?.guard.steps?.find(
-      (step) => step.name === 'Remove statement unless the PR was verified without policy changes',
+      (step) =>
+        step.name === 'Remove statement unless the candidate was verified without policy changes',
     );
     const script = statementGuard?.run?.match(
       /^node --input-type=module <<'NODE'\n([\s\S]*?)\nNODE\n?$/,
@@ -270,7 +277,8 @@ describe('consumer CI workflow template', () => {
 
   it.each(['missing', 'malformed'])('removes the statement when the PR result is %s', (state) => {
     const statementGuard = workflow.jobs?.guard.steps?.find(
-      (step) => step.name === 'Remove statement unless the PR was verified without policy changes',
+      (step) =>
+        step.name === 'Remove statement unless the candidate was verified without policy changes',
     );
     const script = statementGuard?.run?.match(
       /^node --input-type=module <<'NODE'\n([\s\S]*?)\nNODE\n?$/,

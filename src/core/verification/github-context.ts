@@ -20,6 +20,10 @@ interface PullRequestEvent {
       base?: { sha?: unknown };
     }[];
   };
+  merge_group?: {
+    head_sha?: unknown;
+    base_sha?: unknown;
+  };
 }
 
 function validSha(value: unknown): string | undefined {
@@ -40,7 +44,8 @@ export function readGuardGitHubContext(
     eventPath &&
     (eventName === 'pull_request' ||
       eventName === 'pull_request_target' ||
-      eventName === 'workflow_run')
+      eventName === 'workflow_run' ||
+      eventName === 'merge_group')
   ) {
     try {
       payload = JSON.parse(readFileSync(eventPath, 'utf8')) as PullRequestEvent;
@@ -57,6 +62,19 @@ export function readGuardGitHubContext(
   const currentSha = validSha(checkedOutSha);
   const githubSha = validSha(eventSha);
   const context: GuardGitHubContext = { event: eventName };
+
+  if (eventName === 'merge_group') {
+    const mergeGroupHeadSha = validSha(payload?.merge_group?.head_sha);
+    const mergeGroupBaseSha = validSha(payload?.merge_group?.base_sha);
+    if (mergeGroupBaseSha) context.baseSha = mergeGroupBaseSha;
+    // A merge group can contain multiple PRs, so its synthetic head is not a PR head.
+    // Record it as the checked merge result only when the payload and checkout agree.
+    if (mergeGroupHeadSha && currentSha === mergeGroupHeadSha && githubSha === mergeGroupHeadSha) {
+      context.mergeSha = mergeGroupHeadSha;
+    }
+    return context;
+  }
+
   if (headSha) context.headSha = headSha;
   if (baseSha) context.baseSha = baseSha;
   if (

@@ -37,7 +37,8 @@ jobs:
           "$RUNNER_TEMP/actionlint" \
             .github/workflows/*.yml \
             docs/guard-ci.yml \
-            docs/guard-trusted-pr-attestation.yml
+            docs/guard-trusted-pr-attestation.yml \
+            docs/guard-trusted-merge-group.yml
 
   test:
     name: Guard package checks

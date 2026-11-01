@@ -65,6 +65,35 @@ describe('readGuardGitHubContext', () => {
     });
   });
 
+  it('records the merge-group base and exact synthetic merge SHA without inventing a PR head', () => {
+    const mergeGroupSha = 'c'.repeat(40);
+    const baseSha = 'b'.repeat(40);
+    const path = eventFile({ merge_group: { head_sha: mergeGroupSha, base_sha: baseSha } });
+
+    expect(readGuardGitHubContext('merge_group', path, mergeGroupSha, mergeGroupSha)).toEqual({
+      event: 'merge_group',
+      baseSha,
+      mergeSha: mergeGroupSha,
+    });
+  });
+
+  it('does not bind a merge-group receipt when the checkout differs from the requested group SHA', () => {
+    const path = eventFile({ merge_group: { head_sha: 'c'.repeat(40), base_sha: 'b'.repeat(40) } });
+
+    expect(readGuardGitHubContext('merge_group', path, 'd'.repeat(40), 'c'.repeat(40))).toEqual({
+      event: 'merge_group',
+      baseSha: 'b'.repeat(40),
+    });
+  });
+
+  it('keeps merge-group event context but omits malformed merge-group SHAs', () => {
+    const path = eventFile({ merge_group: { head_sha: 'not-a-sha', base_sha: 5 } });
+
+    expect(readGuardGitHubContext('merge_group', path, 'c'.repeat(40), 'c'.repeat(40))).toEqual({
+      event: 'merge_group',
+    });
+  });
+
   it('keeps the event name when event payload data is unavailable or malformed', () => {
     expect(
       readGuardGitHubContext('pull_request', '/missing/event.json', 'invalid', undefined),

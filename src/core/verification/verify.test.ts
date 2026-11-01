@@ -172,6 +172,54 @@ describe('runGuardVerification', () => {
     }
   });
 
+  it('records a merge-group base and synthetic merge SHA as the checked candidate', () => {
+    const root = mkdtempSync(join(tmpdir(), 'guard-verify-merge-group-'));
+    roots.push(root);
+    mkdirSync(join(root, GUARD_DIR), { recursive: true });
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: {} }));
+    writeFileSync(join(root, GUARD_DIR, 'rules.json'), JSON.stringify({ version: 1, rules: [] }));
+    const eventPath = join(root, 'event.json');
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    execFileSync('git', ['config', 'user.email', 'guard@example.test'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'Guard Test'], { cwd: root });
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['commit', '-qm', 'merge group candidate'], { cwd: root });
+    const mergeGroupSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root })
+      .toString()
+      .trim();
+    const baseSha = 'b'.repeat(40);
+    writeFileSync(
+      eventPath,
+      JSON.stringify({ merge_group: { head_sha: mergeGroupSha, base_sha: baseSha } }),
+    );
+    const previous = {
+      eventName: process.env.GITHUB_EVENT_NAME,
+      eventPath: process.env.GITHUB_EVENT_PATH,
+      sha: process.env.GITHUB_SHA,
+    };
+
+    try {
+      process.env.GITHUB_EVENT_NAME = 'merge_group';
+      process.env.GITHUB_EVENT_PATH = eventPath;
+      process.env.GITHUB_SHA = mergeGroupSha;
+      const result = runGuardVerification(root, { projectChecks: false, tools: 'off' });
+
+      expect(result.run.receipt?.subject).toMatchObject({
+        githubEvent: 'merge_group',
+        baseSha,
+        mergeSha: mergeGroupSha,
+      });
+      expect(result.run.receipt?.subject.headSha).toBeUndefined();
+    } finally {
+      if (previous.eventName === undefined) delete process.env.GITHUB_EVENT_NAME;
+      else process.env.GITHUB_EVENT_NAME = previous.eventName;
+      if (previous.eventPath === undefined) delete process.env.GITHUB_EVENT_PATH;
+      else process.env.GITHUB_EVENT_PATH = previous.eventPath;
+      if (previous.sha === undefined) delete process.env.GITHUB_SHA;
+      else process.env.GITHUB_SHA = previous.sha;
+    }
+  });
+
   it('returns incomplete when a policy-required project-check stage was skipped', () => {
     const { root } = createGitPolicyRoot(
       {},

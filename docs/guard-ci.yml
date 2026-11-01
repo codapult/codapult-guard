@@ -2,6 +2,8 @@ name: Guard
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
 
@@ -27,12 +29,37 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
-      - name: Verify Guard runtime dependencies against base
-        if: github.event_name == 'pull_request'
+      - name: Validate exact merge-group candidate and base
+        if: github.event_name == 'merge_group'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
-          if ! git diff --quiet "$BASE_SHA...HEAD" -- \
+          if ! [[ "$HEAD_SHA" =~ ^[a-f0-9]{40}$ ]] || ! [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "Merge group is missing a valid head_sha or base_sha." >&2
+            exit 1
+          fi
+          actual_head=$(git rev-parse HEAD)
+          if [ "$actual_head" != "$HEAD_SHA" ] || [ "$GITHUB_SHA" != "$HEAD_SHA" ]; then
+            echo "Checked out $actual_head; expected merge-group head $HEAD_SHA (GITHUB_SHA=$GITHUB_SHA)." >&2
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA^{commit}"; then
+            echo "Merge-group base commit $BASE_SHA is unavailable." >&2
+            exit 1
+          fi
+
+      - name: Verify Guard runtime dependencies against base
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "merge_group" ]; then
+            diff_range="$BASE_SHA..HEAD"
+          else
+            diff_range="$BASE_SHA...HEAD"
+          fi
+          if ! git diff --quiet "$diff_range" -- \
             package.json pnpm-lock.yaml package-lock.json npm-shrinkwrap.json yarn.lock bun.lock bun.lockb \
             pnpm-workspace.yaml .npmrc .pnpmfile.cjs pnpmfile.cjs .yarnrc .yarnrc.yml .pnp.cjs .pnp.loader.mjs \
             '**/package.json' '**/pnpm-lock.yaml' '**/package-lock.json' '**/npm-shrinkwrap.json' \
@@ -54,7 +81,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ] || [ "$GITHUB_EVENT_NAME" = "merge_group" ]; then
             # Do not execute lifecycle scripts supplied by untrusted PR content.
             pnpm install --frozen-lockfile --ignore-scripts
           else
@@ -65,14 +92,14 @@ jobs:
       # Run `codapult-guard init` once locally and commit the generated Guard memory.
       - name: Verify Guard and project checks
         env:
-          POLICY_BASE: ${{ github.event.pull_request.base.sha }}
+          POLICY_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           GUARD_POLICY_MODE: ${{ vars.CODAPULT_GUARD_POLICY_MODE || 'host-review' }}
           GUARD_RESULT_FILE: ${{ runner.temp }}/guard-verification.json
           GUARD_STATEMENT_FILE: ${{ runner.temp }}/guard-verification.intoto.json
         run: |
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            # PR source code and package scripts are untrusted. Verify with the
-            # base policy; the selected mode controls how sensitive changes gate CI.
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ] || [ "$GITHUB_EVENT_NAME" = "merge_group" ]; then
+            # PR and merge-group candidate code are untrusted. Verify with the
+            # event's exact base policy; never execute project-owned scripts here.
             case "$GUARD_POLICY_MODE" in
               host-review)
                 check_args=(--no-project-checks --tools off)
@@ -205,8 +232,8 @@ jobs:
           appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join('\n')}\n`);
           NODE
 
-      - name: Remove statement unless the PR was verified without policy changes
-        if: always() && github.event_name == 'pull_request'
+      - name: Remove statement unless the candidate was verified without policy changes
+        if: always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
         env:
           GUARD_RESULT_FILE: ${{ runner.temp }}/guard-verification.json
           GUARD_STATEMENT_FILE: ${{ runner.temp }}/guard-verification.intoto.json
@@ -254,11 +281,16 @@ jobs:
       # review path. Guard applies the base policy above; CODEOWNERS or branch
       # protection decides who may approve a policy change.
       - name: Report policy files changed
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: |
-          policy_files=$(git diff --name-only "$BASE_SHA...HEAD" -- .codapult/guard)
+          if [ "$GITHUB_EVENT_NAME" = "merge_group" ]; then
+            diff_range="$BASE_SHA..HEAD"
+          else
+            diff_range="$BASE_SHA...HEAD"
+          fi
+          policy_files=$(git diff --name-only "$diff_range" -- .codapult/guard)
           if [ -n "$policy_files" ]; then
             echo "Guard policy files changed; require the configured CODEOWNERS/protected review:"
             echo "$policy_files"
@@ -279,7 +311,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Export Guard findings as SARIF
-        if: always()
+        if: always() && github.event_name != 'merge_group'
         id: export-sarif
         continue-on-error: true
         env:
