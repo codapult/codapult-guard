@@ -10,7 +10,7 @@ const requested = process.env.GUARD_SMOKE_PROJECTS?.split(',')
   .filter(Boolean);
 const projects = requested?.length
   ? requested
-  : ['next-learn', 'vite-react-ts-starter', 'hono-node-server', 'changesets', 'express'];
+  : ['next-learn', 'vite-react-ts-starter', 'node-server', 'changesets', 'express'];
 
 function run(project, args) {
   const outputDir = mkdtempSync(join(tmpdir(), 'guard-smoke-output-'));
@@ -49,7 +49,7 @@ const results = [];
 const packExpectations = {
   'next-learn': { includes: ['nextjs'], excludes: ['react'] },
   'vite-react-ts-starter': { includes: ['react'], excludes: ['nextjs', 'ai'] },
-  'hono-node-server': { excludes: ['ai'] },
+  'node-server': { excludes: ['ai'] },
   express: { excludes: ['ai'] },
 };
 for (const name of projects) {

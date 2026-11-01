@@ -15,7 +15,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 const cli = resolve(process.env.GUARD_CLI ?? 'dist/cli/index.js');
 const fixturesRoot = resolve(process.env.GUARD_FIXTURES_ROOT ?? '../guard-fixtures');
 const projects = (
-  process.env.GUARD_SMOKE_PROJECTS ?? 'next-learn,vite-react-ts-starter,hono-node-server'
+  process.env.GUARD_SMOKE_PROJECTS ?? 'next-learn,vite-react-ts-starter,node-server'
 )
   .split(',')
   .map((value) => value.trim())

@@ -21,7 +21,7 @@ const matrix = {
     command: ['pnpm', ['run', 'check-all']],
     env: { COREPACK_ENABLE_PROJECT_SPEC: '0' },
   },
-  'hono-node-server': {
+  'node-server': {
     install: ['pnpm', ['install', '--frozen-lockfile', '--ignore-scripts']],
     command: ['pnpm', ['run', 'test', '--', '--run']],
   },
