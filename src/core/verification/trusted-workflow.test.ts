@@ -327,6 +327,17 @@ describe('trusted PR verification workflow template', () => {
     expect(verify?.run).toContain('--no-project-checks --tools off');
   });
 
+  it('pins consumer receipt uploads to the current Node 24 artifact action release', () => {
+    const uploads = (guardCiTemplate.jobs?.guard.steps ?? []).filter((step) =>
+      step.uses?.startsWith('actions/upload-artifact@'),
+    );
+
+    expect(uploads).toHaveLength(2);
+    for (const upload of uploads) {
+      expect(upload.uses).toBe('actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9');
+    }
+  });
+
   it('ships a read-only trusted merge-group ruleset workflow with no signing permissions', () => {
     expect(trustedMergeGroupWorkflow.on?.merge_group?.types).toEqual(['checks_requested']);
     expect(trustedMergeGroupWorkflow.permissions).toEqual({});
