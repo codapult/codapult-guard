@@ -63,6 +63,10 @@ jobs:
             echo "Merge-group base commit $BASE_SHA is unavailable." >&2
             exit 1
           fi
+          if ! git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"; then
+            echo "Merge-group base $BASE_SHA is not an ancestor of candidate $HEAD_SHA." >&2
+            exit 1
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

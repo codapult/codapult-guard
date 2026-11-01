@@ -48,6 +48,10 @@ jobs:
             echo "Merge-group base commit $BASE_SHA is unavailable." >&2
             exit 1
           fi
+          if ! git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"; then
+            echo "Merge-group base $BASE_SHA is not an ancestor of candidate $HEAD_SHA." >&2
+            exit 1
+          fi
 
       - name: Verify Guard runtime dependencies against base
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
