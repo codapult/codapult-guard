@@ -33,7 +33,7 @@ Copy [`guard-ci.yml`](guard-ci.yml) into the consumer project. It runs the compl
 SARIF for GitHub Code Scanning. For PR-specific semantic context, run:
 
 ```bash
-codapult-guard review --base origin/main --json > guard-review.json
+codapult-guard review --base origin/main > guard-review.json
 ```
 
 The JSON packet can be supplied to an approved AI reviewer by the host workflow. The packet is

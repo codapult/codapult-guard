@@ -21,9 +21,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
-          # The base commit is required so verify can read policy from the
-          # protected side of a pull request instead of trusting the PR copy.
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # On pull requests, github.sha is the merge commit. This keeps the
+          # base project's Guard dependency and policy available while testing
+          # the proposed changes. Verify still reads policy from base.sha below.
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Verify Guard runtime dependencies against base
@@ -65,6 +66,8 @@ jobs:
       - name: Verify Guard and project checks
         env:
           POLICY_BASE: ${{ github.event.pull_request.base.sha }}
+          GUARD_RESULT_FILE: ${{ runner.temp }}/guard-verification.json
+          GUARD_STATEMENT_FILE: ${{ runner.temp }}/guard-verification.intoto.json
         run: |
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             # PR source code and package scripts are untrusted. Keep this gate
@@ -74,17 +77,30 @@ jobs:
             check_args=(--tools auto)
           fi
           if [ -n "$POLICY_BASE" ]; then
-            pnpm exec codapult-guard verify "${check_args[@]}" --policy-base "$POLICY_BASE" --fail-on-policy-change --json --attestation-out guard-verification.intoto.json > guard-verification.json
+            pnpm exec codapult-guard verify "${check_args[@]}" --policy-base "$POLICY_BASE" --fail-on-policy-change --attestation-out "$GUARD_STATEMENT_FILE" --json > "$GUARD_RESULT_FILE"
           else
-            pnpm exec codapult-guard verify "${check_args[@]}" --json --attestation-out guard-verification.intoto.json > guard-verification.json
+            pnpm exec codapult-guard verify "${check_args[@]}" --attestation-out "$GUARD_STATEMENT_FILE" --json > "$GUARD_RESULT_FILE"
           fi
 
       - name: Add Guard result to the workflow summary
-        if: always() && hashFiles('guard-verification.json') != ''
+        if: always()
+        env:
+          GUARD_RESULT_FILE: ${{ runner.temp }}/guard-verification.json
         run: |
           node --input-type=module <<'NODE'
-          import { appendFileSync, readFileSync } from 'node:fs';
-          const result = JSON.parse(readFileSync('guard-verification.json', 'utf8'));
+          import { appendFileSync, existsSync, readFileSync, statSync } from 'node:fs';
+          const resultFile = process.env.GUARD_RESULT_FILE;
+          if (!resultFile || !existsSync(resultFile) || statSync(resultFile).size === 0) {
+            appendFileSync(process.env.GITHUB_STEP_SUMMARY, '## Codapult Guard\n\n- Result: **incomplete** (verification did not produce a result file).\n');
+            process.exit(0);
+          }
+          let result;
+          try {
+            result = JSON.parse(readFileSync(resultFile, 'utf8'));
+          } catch {
+            appendFileSync(process.env.GITHUB_STEP_SUMMARY, '## Codapult Guard\n\n- Result: **incomplete** (verification result was not valid JSON).\n');
+            process.exit(0);
+          }
           const receipt = result.run?.receipt;
           const code = (value) => `\`${String(value).replace(/[\u0000-\u001f\u007f`]/g, ' ')}\``;
           const plain = (value) => String(value)
@@ -155,13 +171,13 @@ jobs:
           NODE
 
       - name: Upload verification receipt
-        if: always() && hashFiles('guard-verification.json') != ''
+        if: always()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: codapult-guard-verification
           path: |
-            guard-verification.json
-            guard-verification.intoto.json
+            ${{ runner.temp }}/guard-verification.json
+            ${{ runner.temp }}/guard-verification.intoto.json
           if-no-files-found: ignore
 
       # Keep .codapult/guard policy files behind the repository's protected
@@ -180,23 +196,35 @@ jobs:
 
       - name: Prepare PR review packet
         if: github.event_name == 'pull_request'
-        run: pnpm exec codapult-guard review --base "${{ github.event.pull_request.base.sha }}" --json > guard-review.json
+        env:
+          GUARD_REVIEW_FILE: ${{ runner.temp }}/guard-review.json
+        run: pnpm exec codapult-guard review --base "${{ github.event.pull_request.base.sha }}" > "$GUARD_REVIEW_FILE"
 
       - name: Upload PR review packet
         if: always() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: codapult-guard-review
-          path: guard-review.json
+          path: ${{ runner.temp }}/guard-review.json
           if-no-files-found: ignore
 
       - name: Export Guard findings as SARIF
         if: always()
+        id: export-sarif
         continue-on-error: true
-        run: pnpm exec codapult-guard check --changed --sarif > guard-results.sarif
+        env:
+          GUARD_SARIF_FILE: ${{ runner.temp }}/guard-results.sarif
+        run: |
+          set +e
+          pnpm exec codapult-guard check --changed --sarif > "$GUARD_SARIF_FILE"
+          status=$?
+          if [ -s "$GUARD_SARIF_FILE" ]; then
+            echo "sarif_exists=true" >> "$GITHUB_OUTPUT"
+          fi
+          exit "$status"
 
       - name: Upload Guard findings
-        if: always() && hashFiles('guard-results.sarif') != ''
+        if: always() && steps.export-sarif.outputs.sarif_exists == 'true'
         uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
-          sarif_file: guard-results.sarif
+          sarif_file: ${{ runner.temp }}/guard-results.sarif
