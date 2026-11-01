@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.13.2](https://github.com/codapult/codapult-guard/compare/v0.13.1...v0.13.2) (2026-11-01)
+
+### Bug Fixes
+
+* **security:** harden guard inputs and workflows ([58cd786](https://github.com/codapult/codapult-guard/commit/58cd78614f2078ec556fb25fad2270e33e9911f3))
+
 ## [0.13.1](https://github.com/codapult/codapult-guard/compare/v0.13.0...v0.13.1) (2026-11-01)
 
 ### Bug Fixes
