@@ -277,6 +277,7 @@ function addedSuppressionMarkers(root: string, baseRef: string | undefined): str
 function isGeneratedGuardArtifact(path: string): boolean {
   const normalized = path.replaceAll('\\', '/');
   return (
+    normalized === `${GUARD_DIR}/.state.lock` ||
     normalized === `${GUARD_DIR}/cache.json` ||
     normalized === GUARD_HISTORY_DIR ||
     normalized.startsWith(`${GUARD_HISTORY_DIR}/`)

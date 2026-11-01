@@ -268,6 +268,9 @@ describe('runGuardVerification', () => {
         stable: true,
       },
     });
+    expect(result.run.receipt?.verificationScope?.files).not.toContainEqual(
+      expect.objectContaining({ path: `${GUARD_DIR}/.state.lock` }),
+    );
     expect(result.requiredStages).toContain('verification-scope');
     const scopeFile = result.run.receipt?.verificationScope?.files.find(
       (file) => file.path === 'working-tree.ts',
