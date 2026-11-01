@@ -4,16 +4,18 @@ import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
 interface TrustedWorkflow {
-  on?: { workflow_run?: { workflows?: string[]; types?: string[] } };
+  on?: { pull_request_target?: { types?: string[] } };
   permissions?: Record<string, string>;
   jobs?: Record<
     string,
     {
+      name?: string;
       if?: string;
       needs?: string | string[];
       outputs?: Record<string, string>;
       permissions?: Record<string, string>;
       steps?: {
+        name?: string;
         if?: string;
         uses?: string;
         run?: string;
@@ -31,6 +33,14 @@ interface TestReceipt {
   runId: string;
   gate: string;
   subject: { headSha: string; baseSha: string };
+  policy: { source: string; ref: string; changedFromBase: boolean };
+  policySurface: {
+    complete: boolean;
+    workflowChanged: boolean;
+    changedPaths: string[];
+    suppressionMarkers: string[];
+  };
+  ciIntegrity?: { status: string; workflows: unknown[] };
   verificationScope: {
     algorithm: string;
     complete: boolean;
@@ -39,33 +49,14 @@ interface TestReceipt {
   };
 }
 
-interface TestPullRequestEvent {
-  repository: { full_name: string };
-  workflow_run: {
-    head_repository: { full_name: string };
-    pull_requests: {
-      number: number;
-      head: { sha: string; repo: { full_name: string } };
-      base: { sha: string; repo: { full_name: string } };
-    }[];
-  };
-}
-
-interface TestStatement {
-  _type: string;
-  subject: { name: string; digest: { sha256: string } }[];
-  predicateType: string;
-  predicate: { receipt: TestReceipt };
-}
-
 const workflow = parse(
   readFileSync(new URL('../../../docs/guard-trusted-pr-attestation.yml', import.meta.url), 'utf8'),
 ) as TrustedWorkflow;
 
-function scriptFor(stepName: string): string {
-  const step = workflow.jobs?.inspect.steps?.find((candidate) => candidate.run?.includes(stepName));
+function embeddedScript(jobName: string, marker: string): string {
+  const step = workflow.jobs?.[jobName]?.steps?.find((candidate) => candidate.run?.includes(marker));
   const script = step?.run?.match(/node --input-type=module <<'NODE'\n([\s\S]*?)\nNODE/)?.[1];
-  if (!script) throw new Error(`Could not find embedded Node script for ${stepName}`);
+  if (!script) throw new Error(`Could not find embedded Node script for ${marker}`);
   return script;
 }
 
@@ -75,53 +66,44 @@ function runEmbeddedScript(
   extraEnv: Record<string, string> = {},
 ): Record<string, string> {
   const appended: Record<string, string> = {};
-  const source = script.replace(/^import \{ appendFileSync, readFileSync \} from 'node:fs';\n/, '');
-  try {
-    runInNewContext(source, {
-      process: { env: extraEnv },
-      readFileSync: (path: string) => {
-        const name = path.split('/').at(-1) ?? '';
-        if (!(name in files)) throw new Error(`No test file mapped for ${name}`);
-        return files[name];
-      },
-      appendFileSync: (path: string, value: string) => {
-        const name = path.split('/').at(-1) ?? '';
-        appended[name] = (appended[name] ?? '') + value;
-      },
-    });
-  } catch (error) {
-    throw new Error(error instanceof Error ? error.message : String(error), { cause: error });
-  }
+  const source = script.replace(/^import \{[^}]+\} from 'node:fs';\n/, '');
+  runInNewContext(source, {
+    process: { env: extraEnv },
+    readFileSync: (path: string) => {
+      const name = path.split('/').at(-1) ?? '';
+      if (!(name in files)) throw new Error(`No test file mapped for ${name}`);
+      return files[name];
+    },
+    appendFileSync: (path: string, value: string) => {
+      const name = path.split('/').at(-1) ?? '';
+      appended[name] = (appended[name] ?? '') + value;
+    },
+    rmSync: () => undefined,
+  });
   return appended;
 }
 
-const contextScript = scriptFor('pullRequests.length');
-const receiptScript = workflow.jobs?.verify.steps
-  ?.find((step) => step.run?.includes('Guard receipt does not match'))
-  ?.run?.match(/node --input-type=module <<'NODE'\n([\s\S]*?)\nNODE/)?.[1];
-if (!receiptScript) throw new Error('Could not find embedded receipt validation script');
+const contextScript = embeddedScript('inspect', 'Pull request number');
+const receiptScript = embeddedScript('verify', 'Guard did not pass');
 
-function prEvent(
-  options: {
-    count?: number;
-    number?: number;
-    headRepository?: string;
-    baseRepository?: string;
-  } = {},
-): TestPullRequestEvent {
-  const pullRequest = {
-    number: options.number ?? 42,
-    head: {
-      sha: 'a'.repeat(40),
-      repo: { full_name: options.headRepository ?? 'contributor/project' },
-    },
-    base: { sha: 'b'.repeat(40), repo: { full_name: options.baseRepository ?? 'owner/project' } },
-  };
+function pullRequestEvent(options: {
+  number?: number;
+  headSha?: string;
+  baseSha?: string;
+  headRepository?: string;
+  baseRepository?: string;
+  eventRepository?: string;
+} = {}) {
+  const baseRepository = options.baseRepository ?? 'owner/project';
   return {
-    repository: { full_name: options.baseRepository ?? 'owner/project' },
-    workflow_run: {
-      head_repository: { full_name: options.headRepository ?? 'contributor/project' },
-      pull_requests: Array.from({ length: options.count ?? 1 }, () => pullRequest),
+    repository: { full_name: options.eventRepository ?? baseRepository },
+    pull_request: {
+      number: options.number ?? 42,
+      head: {
+        sha: options.headSha ?? 'a'.repeat(40),
+        repo: { full_name: options.headRepository ?? 'contributor/project' },
+      },
+      base: { sha: options.baseSha ?? 'b'.repeat(40), repo: { full_name: baseRepository } },
     },
   };
 }
@@ -134,26 +116,34 @@ function runContext(event: unknown): string | undefined {
   )['output.txt'];
 }
 
-function receiptEnvironment(): Record<string, string> {
+function receiptEnvironment(mode = 'strict'): Record<string, string> {
   return {
     BASE_SHA: 'b'.repeat(40),
     HEAD_SHA: 'a'.repeat(40),
+    GUARD_POLICY_MODE: mode,
     GUARD_RESULT_FILE: 'guard-verification.json',
     GUARD_STATEMENT_FILE: 'guard-verification.intoto.json',
     GITHUB_OUTPUT: 'output.txt',
+    GITHUB_STEP_SUMMARY: 'summary.txt',
   };
 }
 
-function testReceipt(
-  overrides: {
-    outcome?: string;
-    headSha?: string;
-    baseSha?: string;
-    receiptVersion?: number;
-    scopeAlgorithm?: string;
-  } = {},
-): TestReceipt {
-  const fingerprint = 'c'.repeat(64);
+function testReceipt(overrides: {
+  outcome?: string;
+  headSha?: string;
+  baseSha?: string;
+  receiptVersion?: number;
+  scopeAlgorithm?: string;
+  policySource?: string;
+  policyRef?: string;
+  policyChanged?: boolean;
+  surfaceComplete?: boolean;
+  changedPaths?: string[];
+  workflowChanged?: boolean;
+  suppressionMarkers?: string[];
+  ciStatus?: string;
+  noCiIntegrity?: boolean;
+} = {}): TestReceipt {
   return {
     version: overrides.receiptVersion ?? 1,
     kind: 'verification-receipt',
@@ -164,16 +154,30 @@ function testReceipt(
       headSha: overrides.headSha ?? 'a'.repeat(40),
       baseSha: overrides.baseSha ?? 'b'.repeat(40),
     },
+    policy: {
+      source: overrides.policySource ?? 'git-ref',
+      ref: overrides.policyRef ?? 'b'.repeat(40),
+      changedFromBase: overrides.policyChanged ?? false,
+    },
+    policySurface: {
+      complete: overrides.surfaceComplete ?? true,
+      workflowChanged: overrides.workflowChanged ?? false,
+      changedPaths: overrides.changedPaths ?? [],
+      suppressionMarkers: overrides.suppressionMarkers ?? [],
+    },
+    ...(overrides.noCiIntegrity
+      ? {}
+      : { ciIntegrity: { status: overrides.ciStatus ?? 'ok', workflows: [{ path: '.github/workflows/guard.yml' }] } }),
     verificationScope: {
       algorithm: overrides.scopeAlgorithm ?? 'sha256',
       complete: true,
       stable: true,
-      fingerprint,
+      fingerprint: 'c'.repeat(64),
     },
   };
 }
 
-function statementFor(receipt: TestReceipt): TestStatement {
+function statementFor(receipt: TestReceipt) {
   return {
     _type: 'https://in-toto.io/Statement/v1',
     subject: [
@@ -187,129 +191,86 @@ function statementFor(receipt: TestReceipt): TestStatement {
   };
 }
 
-function receiptFiles(
-  overrides: Parameters<typeof testReceipt>[0] & { statement?: unknown } = {},
-): Record<string, string> {
+function receiptFiles(overrides: Parameters<typeof testReceipt>[0] = {}) {
   const receipt = testReceipt(overrides);
-  const statement = overrides.statement ?? statementFor(receipt);
   return {
     'guard-verification.json': JSON.stringify({
       outcome: overrides.outcome ?? 'pass',
       run: { receipt },
     }),
-    'guard-verification.intoto.json': JSON.stringify(statement),
+    'guard-verification.intoto.json': JSON.stringify(statementFor(receipt)),
   };
 }
 
-describe('trusted PR attestation workflow template', () => {
-  it('runs from workflow_run after the ordinary Guard PR workflow', () => {
-    expect(workflow.on?.workflow_run).toEqual({ workflows: ['Guard'], types: ['completed'] });
+describe('trusted PR verification workflow template', () => {
+  it('runs from the target branch on PR changes and exposes a stable required job', () => {
+    expect(workflow.on?.pull_request_target?.types).toEqual([
+      'opened',
+      'synchronize',
+      'reopened',
+      'ready_for_review',
+      'edited',
+    ]);
+    expect(workflow.jobs?.verify.name).toBe('Guard trusted verification');
+    expect(workflow.jobs?.verify.if).toBe("needs.inspect.result == 'success'");
   });
 
-  it('keeps OIDC signing separate from the verifier that reads PR files', () => {
+  it('verifies both same-repository and fork PRs using base-branch policy', () => {
+    expect(workflow.jobs?.verify.needs).toBe('inspect');
+    expect(workflow.jobs?.verify.if).not.toContain('fork');
+    expect(workflow.jobs?.verify.steps?.[0]?.with?.ref).toBe(
+      'refs/pull/${{ needs.inspect.outputs.number }}/head',
+    );
+    expect(workflow.jobs?.verify.steps?.find((step) => step.run?.includes('--policy-base'))?.run)
+      .toContain('--policy-base "$BASE_SHA"');
+    expect(workflow.jobs?.['fork-pr-summary'].needs).toEqual(['inspect', 'verify']);
+    expect(workflow.jobs?.['fork-pr-summary'].steps?.[0]?.run).toContain(
+      'checked this PR\'s exact head and base revisions',
+    );
+  });
+
+  it('reads and validates exact PR identity and SHAs from the pull_request_target event', () => {
+    expect(runContext(pullRequestEvent())).toBe(
+      `number=42\nhead_sha=${'a'.repeat(40)}\nbase_sha=${'b'.repeat(40)}\nfork=true\n`,
+    );
+    expect(runContext(pullRequestEvent({ headRepository: 'owner/project' }))).toContain('fork=false');
+    expect(() => runContext({ repository: { full_name: 'owner/project' } })).toThrow();
+    expect(() => runContext(pullRequestEvent({ number: 0 }))).toThrow();
+    expect(() => runContext(pullRequestEvent({ headSha: 'not-a-sha' }))).toThrow();
+    expect(() => runContext(pullRequestEvent({ eventRepository: 'other/project' }))).toThrow();
+  });
+
+  it('keeps signing isolated from verification and grants minimum permissions', () => {
+    expect(workflow.permissions).toEqual({});
     expect(workflow.jobs?.verify.permissions).toEqual({ contents: 'read' });
     expect(workflow.jobs?.attest.needs).toEqual(['inspect', 'verify']);
-    expect(workflow.jobs?.attest.permissions).toMatchObject({
-      'id-token': 'write',
-      attestations: 'write',
-      'artifact-metadata': 'write',
-    });
-  });
-
-  it('grants signing permissions only to the isolated attestation job', () => {
-    expect(workflow.permissions).toEqual({});
-    expect(workflow.jobs?.inspect.permissions).toBeUndefined();
-    expect(workflow.jobs?.verify.permissions).toEqual({ contents: 'read' });
-    expect(workflow.jobs?.['fork-pr-summary'].permissions).toEqual({});
     expect(workflow.jobs?.attest.permissions).toEqual({
       contents: 'read',
       'id-token': 'write',
       attestations: 'write',
       'artifact-metadata': 'write',
     });
-  });
-
-  it('makes the signing job consume only the verifier artifact', () => {
-    const steps = workflow.jobs?.attest.steps ?? [];
-    const uses = steps.map((step) => step.uses);
-
-    expect(uses).toEqual([
-      'actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333',
-      'actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6',
-    ]);
-    expect(steps[0]?.with).toEqual({ name: 'guard-trusted-pr-attestation' });
-    expect(steps[1]?.with).toEqual({ 'subject-path': 'guard-verification.intoto.json' });
-    expect(steps.some((step) => step.run || step.uses?.startsWith('actions/checkout@'))).toBe(
-      false,
-    );
-  });
-
-  it('starts verification only for a completed pull_request workflow run', () => {
-    expect(workflow.jobs?.inspect.if).toBe("github.event.workflow_run.event == 'pull_request'");
-    expect(workflow.on?.workflow_run).toEqual({ workflows: ['Guard'], types: ['completed'] });
-  });
-
-  it('routes fork PRs around checkout and signing and explains the skipped attestation', () => {
-    expect(workflow.jobs?.verify.needs).toBe('inspect');
-    expect(workflow.jobs?.verify.if).toContain("needs.inspect.outputs.fork != 'true'");
-    expect(workflow.jobs?.['fork-pr-summary'].needs).toBe('inspect');
-    expect(workflow.jobs?.['fork-pr-summary'].if).toContain("needs.inspect.outputs.fork == 'true'");
-    expect(workflow.jobs?.attest.needs).toEqual(['inspect', 'verify']);
     expect(workflow.jobs?.attest.if).toContain("needs.inspect.outputs.fork != 'true'");
-    expect(workflow.jobs?.['fork-pr-summary'].steps?.[0]?.run).toContain(
-      'did not create a signed attestation',
-    );
-    expect(workflow.jobs?.attest.if).toContain("needs.verify.result == 'success'");
     expect(workflow.jobs?.attest.if).toContain("needs.verify.outputs.attestation == 'true'");
   });
 
-  it('identifies a valid fork PR without checking out its code', () => {
-    expect(runContext(prEvent())).toContain('fork=true');
-    expect(workflow.jobs?.verify.if).toContain("needs.inspect.outputs.fork != 'true'");
+  it('requires a complete passing CI contract before allowing a receipt', () => {
+    expect(() =>
+      runEmbeddedScript(receiptScript, receiptFiles({ noCiIntegrity: true }), receiptEnvironment('host-review')),
+    ).toThrow('complete, passing GitHub Actions integrity contract');
+    expect(() =>
+      runEmbeddedScript(receiptScript, receiptFiles({ ciStatus: 'incomplete' }), receiptEnvironment('host-review')),
+    ).toThrow('complete, passing GitHub Actions integrity contract');
+    expect(() =>
+      runEmbeddedScript(
+        receiptScript,
+        receiptFiles({ ciStatus: 'policy-weakened', outcome: 'policy-weakened' }),
+        receiptEnvironment(),
+      ),
+    ).toThrow('Guard did not pass');
   });
 
-  it('summarizes an unattached fork run using trusted repository metadata', () => {
-    expect(runContext(prEvent({ count: 0 }))).toBe('fork=true\n');
-    expect(workflow.jobs?.['fork-pr-summary'].if).toContain("needs.inspect.outputs.fork == 'true'");
-  });
-
-  it('allows the trusted workflow to inspect a same-repository PR', () => {
-    const event = prEvent({ headRepository: 'owner/project', baseRepository: 'owner/project' });
-    expect(runContext(event)).toContain('fork=false');
-  });
-
-  it.each([0, 2])(
-    'fails closed when the workflow_run event contains %i associated PRs',
-    (count) => {
-      const sameRepositoryEvent = prEvent({
-        count,
-        headRepository: 'owner/project',
-        baseRepository: 'owner/project',
-      });
-      expect(() => runContext(sameRepositoryEvent)).toThrow();
-    },
-  );
-
-  it('fails closed when PR repository identity is missing', () => {
-    const event = prEvent();
-    Object.assign(event.workflow_run.pull_requests[0].head.repo, { full_name: null });
-    expect(() => runContext(event)).toThrow();
-  });
-
-  it.each(['', 'owner', 'owner/repo/extra', 'owner/repo with spaces'])(
-    'fails closed for invalid PR repository identity %s',
-    (repository) => {
-      const event = prEvent();
-      event.workflow_run.pull_requests[0].head.repo.full_name = repository;
-      expect(() => runContext(event)).toThrow();
-    },
-  );
-
-  it('fails closed for a nonpositive PR number', () => {
-    expect(() => runContext(prEvent({ number: 0 }))).toThrow();
-  });
-
-  it('accepts a passing receipt bound to the expected PR head and base', () => {
+  it('attests a clean receipt bound to the PR and exact base policy', () => {
     const output = runEmbeddedScript(receiptScript, receiptFiles(), receiptEnvironment());
     expect(output['output.txt']).toBe('attestation=true\n');
   });
@@ -317,93 +278,50 @@ describe('trusted PR attestation workflow template', () => {
   it.each([
     ['head SHA', { headSha: 'd'.repeat(40) }],
     ['base SHA', { baseSha: 'd'.repeat(40) }],
-    ['unknown receipt schema', { receiptVersion: 2 }],
-    ['unknown scope hash algorithm', { scopeAlgorithm: 'sha1' }],
-    ['failed Guard outcome', { outcome: 'fail' }],
-    [
-      'statement with a different PR head',
-      {
-        statement: (() => {
-          const receipt = testReceipt();
-          return statementFor({
-            ...receipt,
-            subject: { ...receipt.subject, headSha: 'd'.repeat(40) },
-          });
-        })(),
-      },
-    ],
-    [
-      'statement with different receipt claims',
-      {
-        statement: statementFor({ ...testReceipt(), gate: 'changed' }),
-      },
-    ],
-    [
-      'wrong Guard predicate type',
-      {
-        statement: {
-          ...statementFor(testReceipt()),
-          predicateType: 'https://example.invalid/other',
-        },
-      },
-    ],
-    ['malformed statement', { statement: { predicate: {}, subject: [] } }],
-  ])('refuses attestation for %s', (_case, overrides) => {
+    ['policy source', { policySource: 'working-tree' }],
+    ['policy base ref', { policyRef: 'd'.repeat(40) }],
+    ['unknown schema', { receiptVersion: 2 }],
+    ['unknown scope hash', { scopeAlgorithm: 'sha1' }],
+    ['incomplete policy surface', { surfaceComplete: false }],
+  ])('refuses attestation for invalid %s', (_case, overrides) => {
     expect(() =>
       runEmbeddedScript(receiptScript, receiptFiles(overrides), receiptEnvironment()),
     ).toThrow();
   });
 
-  it('uses Checkout v7 fork protection and never executes PR project code', () => {
-    const steps = workflow.jobs?.verify.steps ?? [];
-    const checkout = steps.find((step) => step.uses?.startsWith('actions/checkout@'));
-    const source = steps.find((step) => step.run?.includes('GUARD_COMMIT'));
-    const install = steps.find((step) => step.run?.includes('pnpm install --frozen-lockfile'));
-    const verify = steps.find((step) => step.run?.includes('dist/cli/index.js" verify'));
+  it.each([
+    ['policy file change', { policyChanged: true }],
+    ['protected path change', { changedPaths: ['.github/workflows/guard.yml'] }],
+    ['workflow change', { workflowChanged: true }],
+    ['new suppression', { suppressionMarkers: ['src/file.ts:eslint-disable'] }],
+  ])('blocks %s in strict mode and withholds its statement in host-review mode', (_case, overrides) => {
+    expect(() =>
+      runEmbeddedScript(receiptScript, receiptFiles(overrides), receiptEnvironment('strict')),
+    ).toThrow('Strict policy mode');
 
-    expect(checkout?.with?.ref).toContain('refs/pull/');
-    expect(checkout?.with?.['allow-unsafe-pr-checkout']).toBeUndefined();
-    expect(install?.run).toContain('--ignore-scripts');
-    expect(source?.run).toContain('refs/tags/v$GUARD_VERSION');
-    expect(source?.run).toContain('fetched_commit" != "$GUARD_COMMIT"');
-    expect(source?.run).toContain('rev-parse');
-    expect(source?.run).toContain('CODAPULT_GUARD_VERSION');
-    expect(verify?.run).toContain('--no-project-checks');
-    expect(verify?.run).toContain('--policy-base "$BASE_SHA"');
-    expect(verify?.run).toContain('--fail-on-policy-change');
-    expect(verify?.run).toContain('--fail-on-protected-changes');
-    expect(verify?.run).toContain('$RUNNER_TEMP/codapult-guard-source/dist/cli/index.js');
-    expect(verify?.env?.BASE_SHA).toBe('${{ needs.inspect.outputs.base_sha }}');
-    expect(verify?.env?.GUARD_RESULT_FILE).toBe('${{ runner.temp }}/guard-verification.json');
-    expect(verify?.env?.GUARD_STATEMENT_FILE).toBe(
-      '${{ runner.temp }}/guard-verification.intoto.json',
+    const output = runEmbeddedScript(
+      receiptScript,
+      receiptFiles(overrides),
+      receiptEnvironment('host-review'),
     );
-    expect(verify?.run).toContain('--attestation-out "$GUARD_STATEMENT_FILE"');
-    expect(verify?.run).toContain('> "$GUARD_RESULT_FILE"');
-    expect(steps.some((step) => step.run?.includes('steps.pr.outputs.'))).toBe(false);
-    const upload = steps.find((step) => step.uses?.startsWith('actions/upload-artifact@'));
-    expect(upload?.if).toContain("steps.result.outcome == 'success'");
-    expect(upload?.if).not.toContain('always()');
-    expect(upload?.with?.path).toBe('${{ runner.temp }}/guard-verification.intoto.json');
-    expect(steps.some((step) => /\bnpm install(?:\s|$)/m.test(step.run ?? ''))).toBe(false);
-    expect(workflow.jobs?.verify.permissions).toEqual({ contents: 'read' });
+    expect(output['output.txt']).toBe('attestation=false\n');
+    expect(output['summary.txt']).toContain('Host review: **required**');
   });
 
-  it('pins the reviewed v7 artifact actions by their published full commit SHAs', () => {
+  it('uploads a statement only for a clean same-repository PR', () => {
+    const upload = workflow.jobs?.verify.steps?.find((step) =>
+      step.uses?.startsWith('actions/upload-artifact@'),
+    );
+    expect(upload?.if).toContain("steps.result.outputs.attestation == 'true'");
+    expect(upload?.if).toContain("needs.inspect.outputs.fork != 'true'");
+    expect(workflow.jobs?.verify.steps?.find((step) => step.run?.includes('pnpm install --frozen-lockfile'))?.run)
+      .toContain('--ignore-scripts');
+  });
+
+  it('pins every external action to a full commit SHA', () => {
     const uses = Object.values(workflow.jobs ?? {}).flatMap((job) =>
       (job.steps ?? []).map((step) => step.uses).filter((value): value is string => Boolean(value)),
     );
-
-    expect(uses).toContain('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1');
-    expect(uses).toContain('actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9');
-    expect(uses).toContain('actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333');
-  });
-
-  it('pins all external actions to full commit SHAs', () => {
-    for (const job of Object.values(workflow.jobs ?? {})) {
-      for (const step of job.steps ?? []) {
-        if (step.uses) expect(step.uses).toMatch(/@[a-f0-9]{40}\b/i);
-      }
-    }
+    for (const action of uses) expect(action).toMatch(/@[a-f0-9]{40}\b/i);
   });
 });

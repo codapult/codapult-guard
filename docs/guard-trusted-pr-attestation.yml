@@ -193,13 +193,14 @@ jobs:
           ) {
             throw new Error('Guard receipt has an invalid CI integrity result.');
           }
+          if (!ciIntegrity || ciIntegrity.status !== 'ok') {
+            throw new Error('Guard requires a complete, passing GitHub Actions integrity contract.');
+          }
           const policySensitive =
             receipt.policy.changedFromBase === true ||
             surface.changedPaths.length > 0 ||
             surface.workflowChanged === true ||
-            surface.suppressionMarkers.length > 0 ||
-            !ciIntegrity ||
-            ciIntegrity.status !== 'ok';
+            surface.suppressionMarkers.length > 0;
           if (policySensitive && process.env.GUARD_POLICY_MODE === 'strict') {
             throw new Error('Strict policy mode passed a policy-sensitive PR unexpectedly.');
           }
@@ -214,20 +215,20 @@ jobs:
               '',
             ].join('\n'));
             appendFileSync(process.env.GITHUB_OUTPUT, 'attestation=false\n');
-            process.exit(0);
+          } else {
+            const statement = JSON.parse(readFileSync(process.env.GUARD_STATEMENT_FILE, 'utf8'));
+            const statementReceipt = statement?.predicate?.receipt;
+            if (statement?._type !== 'https://in-toto.io/Statement/v1' || statement.predicateType !== 'https://codapult.dev/attestations/guard-verification/v1') {
+              throw new Error('in-toto statement or Guard predicate type is invalid.');
+            }
+            if (!Array.isArray(statement.subject) || statement.subject.length !== 1 || statement.subject[0]?.name !== 'codapult-guard:verification-context' || statement.subject[0]?.digest?.sha256 !== scope.fingerprint) {
+              throw new Error('in-toto statement subject does not match the verified scope.');
+            }
+            if (JSON.stringify(statementReceipt) !== JSON.stringify(receipt)) {
+              throw new Error('in-toto statement does not match the verified receipt and scope.');
+            }
+            appendFileSync(process.env.GITHUB_OUTPUT, 'attestation=true\n');
           }
-          const statement = JSON.parse(readFileSync(process.env.GUARD_STATEMENT_FILE, 'utf8'));
-          const statementReceipt = statement?.predicate?.receipt;
-          if (statement?._type !== 'https://in-toto.io/Statement/v1' || statement.predicateType !== 'https://codapult.dev/attestations/guard-verification/v1') {
-            throw new Error('in-toto statement or Guard predicate type is invalid.');
-          }
-          if (!Array.isArray(statement.subject) || statement.subject.length !== 1 || statement.subject[0]?.name !== 'codapult-guard:verification-context' || statement.subject[0]?.digest?.sha256 !== scope.fingerprint) {
-            throw new Error('in-toto statement subject does not match the verified scope.');
-          }
-          if (JSON.stringify(statementReceipt) !== JSON.stringify(receipt)) {
-            throw new Error('in-toto statement does not match the verified receipt and scope.');
-          }
-          appendFileSync(process.env.GITHUB_OUTPUT, 'attestation=true\n');
           NODE
 
       - name: Upload the independently verified statement
