@@ -84,6 +84,13 @@ function terminalSafe(value: string): string {
   return output;
 }
 
+function terminalSafeJson(value: unknown): string {
+  return (JSON.stringify(value, null, 2) ?? 'null').replace(
+    /[\u007f-\u009f]/g,
+    (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
+}
+
 interface GuardInitOptions {
   force?: boolean | undefined;
   wait?: boolean | undefined;
@@ -177,7 +184,7 @@ function loadConfigSafely(
       recoverable: true,
       hint: 'Repair or remove the invalid Guard artifact, then run `codapult-guard doctor`.',
     });
-    if (options.json || options.machine) console.log(JSON.stringify(payload, null, 2));
+    if (options.json || options.machine) console.log(terminalSafeJson(payload));
     else fail(`${terminalSafe(payload.message)} Run \`codapult-guard doctor\` for details.`);
     process.exitCode = 1;
     return { invalid: true };
