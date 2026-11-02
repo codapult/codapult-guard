@@ -1,9 +1,14 @@
 # @codapult/guard
 
 [![CI](https://github.com/codapult/codapult-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/codapult/codapult-guard/actions/workflows/ci.yml)
+[![Fixtures](https://github.com/codapult/codapult-guard/actions/workflows/guard-fixtures.yml/badge.svg)](https://github.com/codapult/codapult-guard/actions/workflows/guard-fixtures.yml)
 [![npm](https://img.shields.io/npm/v/@codapult/guard?logo=npm)](https://www.npmjs.com/package/@codapult/guard)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js >=20.19](https://img.shields.io/badge/node-%3E%3D20.19-339933.svg?logo=node.js&logoColor=white)](package.json)
+[![TypeScript](https://img.shields.io/badge/TypeScript-first-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![MCP Registry](https://img.shields.io/badge/MCP_Registry-Listed-4B6A88?style=flat-square)](https://registry.modelcontextprotocol.io/?q=io.github.codapult%2Fguard)
+[![MCPSafe](https://api.mcpsafe.io/badge/github/codapult/codapult-guard.svg)](https://mcpsafe.io/registry/github/codapult/codapult-guard)
+[![codapult-guard MCP server – quality and maintenance score on Glama](https://glama.ai/mcp/servers/codapult/codapult-guard/badges/score.svg)](https://glama.ai/mcp/servers/codapult/codapult-guard)
 
 ## Architecture guardrails for AI-assisted development
 
