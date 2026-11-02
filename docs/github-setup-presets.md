@@ -3,11 +3,11 @@
 Choose a preset based on the protection you need. Each combines a Guard workflow template with the
 GitHub settings that make the check useful for that level of trust.
 
-| Preset | Good fit | Template |
-| --- | --- | --- |
-| [PR checks](#github-pr-checks) | Add architecture feedback and a required check to pull requests. | `guard-ci.yml` |
-| [Trusted PR verification](#trusted-pr-verification) | Keep the verifier under protected control and validate fork PRs. | `guard-trusted-pr-attestation.yml` |
-| [Merge queue](#merge-queue) | Verify the exact aggregate candidate built by a GitHub merge queue. | `guard-trusted-merge-group.yml` |
+| Preset                                              | Good fit                                                            | Template                           |
+| --------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------- |
+| [PR checks](#github-pr-checks)                      | Add architecture feedback and a required check to pull requests.    | `guard-ci.yml`                     |
+| [Trusted PR verification](#trusted-pr-verification) | Keep the verifier under protected control and validate fork PRs.    | `guard-trusted-pr-attestation.yml` |
+| [Merge queue](#merge-queue)                         | Verify the exact aggregate candidate built by a GitHub merge queue. | `guard-trusted-merge-group.yml`    |
 
 For local development and AI-agent instructions, see [Get started](../README.md#get-started) and
 the [agent integration guide](guard-agent-integration.md).
