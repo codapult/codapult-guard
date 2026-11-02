@@ -88,6 +88,10 @@ Use Node versions supported by each fixture. `GUARD_NATIVE_PROJECTS=changesets,e
 run. The harness preserves upstream manifests; it does not rewrite `engines` to make an unsupported
 runtime appear valid.
 
+If a native fixture check fails because of Node, use a version supported by that fixture instead of
+weakening Guard's runtime check or rewriting the upstream project's `engines` field. Guard reports
+the active and declared Node versions in its runtime diagnostics.
+
 Discovery also records nested workspace package boundaries in `project.json` under
 `project.workspacePackages`. During `verify`, root scripts remain authoritative; checks missing
 at the root are run in workspace packages that declare them, without duplicating root orchestration.

@@ -1,679 +1,114 @@
 # @codapult/guard
 
 [![CI](https://github.com/codapult/codapult-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/codapult/codapult-guard/actions/workflows/ci.yml)
-[![Fixtures](https://github.com/codapult/codapult-guard/actions/workflows/guard-fixtures.yml/badge.svg)](https://github.com/codapult/codapult-guard/actions/workflows/guard-fixtures.yml)
 [![npm](https://img.shields.io/npm/v/@codapult/guard?logo=npm)](https://www.npmjs.com/package/@codapult/guard)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js >=20.19](https://img.shields.io/badge/node-%3E%3D20.19-339933.svg?logo=node.js&logoColor=white)](package.json)
-[![TypeScript](https://img.shields.io/badge/TypeScript-first-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![MCP Registry](https://img.shields.io/badge/MCP_Registry-Listed-4B6A88?style=flat-square)](https://registry.modelcontextprotocol.io/?q=io.github.codapult%2Fguard)
 
-## Architecture guardrails for AI coding agents
+## Architecture guardrails for AI-assisted development
 
-`@codapult/guard` is local-first, model-agnostic **architecture guardrail software for AI coding
-agents**. Use it to detect architectural drift, enforce approved software architecture rules, and
-check code changes in JavaScript and TypeScript projects.
+Codapult Guard helps teams preserve the architecture that makes their project work as it changes.
+It maps a JavaScript or TypeScript codebase, lets the team approve project-specific boundaries, and
+checks future changes locally and in CI. AI agents can use the same project context and verification
+results as developers.
 
-Guard learns how your codebase is structured, records project architecture as reviewable memory, and
-checks future changes against the rules your team approves. It connects AI coding agents to those
-rules and returns deterministic evidence when a change introduces a covered architecture
-regression. Run the same project-specific checks locally and in CI.
+### Catch project-specific regressions
 
-### See the value in one change
-
-Suppose a SaaS project has an established boundary:
+A type checker can confirm that code is valid TypeScript. It cannot know that this project requires
+client components to stay away from persistence modules. Once the team approves that boundary,
+Guard can detect a violating import in changed files and show which rule was triggered.
 
 ```text
-Client → Server Action → Service → Repository → Database
+Project boundary:  Client → Server Action → Service → Repository → Database
+Possible regression: Client ─────────────────────────────────────→ Database
 ```
 
-An AI agent can still produce code that is valid TypeScript but crosses that boundary:
+Guard discovers the architecture in the repository; it does not prescribe one universal structure
+or activate proposed rules without approval.
 
-```text
-Client → Database
-```
-
-After the project has explicitly approved a matching import rule or deterministic contract, Guard
-checks the changed files and reports matching violations deterministically:
-
-```text
-Codapult Guard (changed files)
-Scanned 1 source file(s); suppressed 12 baseline finding(s).
-
-src/app/settings/page.tsx:1 [client-no-persistence-import]
-  Client modules should not import persistence-layer modules.
-  import: @/lib/db/client
-
-✗ 1 issue(s) found
-Exit code: 1
-```
-
-The file path, rule ID, message, and counts depend on the project. This is the actual CLI output
-shape: Guard does not infer that every `Client → Database` edge is forbidden, and it does not
-activate proposals silently. The team approves the relevant policy first; then existing findings
-can be baselined while newly matching violations fail the gate and give the agent bounded evidence
-to repair.
-
-> **Guard does not tell every project to use the same architecture.**
-> It discovers the architecture that is already there, then lets the team decide what becomes policy.
-
-The core is universal. The strongest first-class scenarios are Next.js SaaS and AI-assisted
-development, including server/client boundaries, routes, persistence, authentication, billing,
-background jobs, environment configuration, and AI integrations.
-
-## Why Guard exists
-
-AI agents can produce syntactically valid code that still violates the architecture of a real
-project: a client component imports server-only code, a new action bypasses the established auth
-boundary, a route writes to the database directly, or a change duplicates a service that already
-exists.
-
-Existing tools remain essential, but they solve different problems:
-
-| Tool category              | Primary question                                   | Guard’s relationship                                                  |
-| -------------------------- | -------------------------------------------------- | --------------------------------------------------------------------- |
-| TypeScript                 | Is the code type-correct?                          | Uses the project’s typecheck as an optional gate.                     |
-| ESLint / Biome             | Does code follow language and style rules?         | Does not duplicate their lint rules.                                  |
-| Tests                      | Does behavior match executable expectations?       | Runs configured checks when enabled; does not replace tests.          |
-| SAST / dependency scanners | Is there a known security or dependency risk?      | Can connect adapters; focuses on architecture and change impact.      |
-| PR review services         | What semantic concerns should a reviewer consider? | Produces a bounded, redacted review packet for the selected AI host.  |
-| **Guard**                  | Is the project becoming architecturally worse?     | Maintains project-specific architectural memory and regression gates. |
-
-## Install
+## Get started
 
 Requirements: Node.js `>=20.19` and a JavaScript or TypeScript project.
 
 ```bash
+# pnpm
 pnpm add -D @codapult/guard
-# or
+pnpm exec codapult-guard init
+
+# npm
 npm install --save-dev @codapult/guard
+npx codapult-guard init
 ```
 
-The package exposes the `codapult-guard` binary:
+Review the generated project model, proposed rules, contracts, and baseline under
+`.codapult/guard/` before relying on the results. Then run Guard's architecture checks:
 
 ```bash
-pnpm exec codapult-guard init
+pnpm exec codapult-guard verify --no-project-checks --tools off
 ```
 
-The npm package is scoped as `@codapult/guard`; the executable intentionally remains
-`codapult-guard` for discoverability and consistency with the standalone product name.
+`verify` can run your configured project checks and detected adapters. The flags above limit this
+run to Guard's built-in checks. With npm, run `npx codapult-guard verify --no-project-checks --tools off`.
+See the [complete guide](docs/guard.md#install-and-initialize) for initialization and daily workflows.
 
-## 60-second quick start
+## Use Guard with an AI agent
 
-Run from the project root:
+Install a managed instruction block for your agent so it knows when to load Guard context and run
+verification:
 
 ```bash
-# 1. Build the initial project model and baseline
-pnpm exec codapult-guard init
-
-# 2. Inspect only new and changed architecture findings
-pnpm exec codapult-guard check --changed
-
-# 3. Prepare deterministic context for an AI review
-pnpm exec codapult-guard review --requirement docs/acceptance.md
-
-# 4. Run the configured completion gate
-pnpm exec codapult-guard verify --json
+pnpm exec codapult-guard install-agent codex
 ```
 
-`init` is protected and refuses to overwrite an existing baseline. Use `init --force` only when
-deliberately replacing the project memory. Use `analyze` to refresh discovered facts without
-resetting the baseline.
-
-## The operating model
-
-Guard separates facts, policy, verification, and decision:
-
-| Layer            | Contains                                                                           | How it is produced                             |
-| ---------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------- |
-| **Facts**        | AST, files, imports, dependencies, routes, calls, capabilities, graph, Git history | Deterministic local discovery                  |
-| **Policy**       | Rules, contracts, conventions, baseline                                            | Observed proposals plus explicit team approval |
-| **Verification** | Changed-file checks, impact analysis, contracts, project checks, review packet     | Local CLI, MCP, CI, and existing project tools |
-| **Decision**     | Pass, fail, warning, needs-review, not-configured                                  | Developer or AI host using Guard evidence      |
-
-Guard does not assume a fixed `UI → actions → services → repositories → database` architecture.
-It can discover that shape when the project exhibits it, but observed patterns become enforceable
-only after explicit approval.
-
-Policy paths are validated as project-relative paths. Guard rejects traversal, absolute paths, and
-symlinks escaping the project root; import-boundary checks include imports, re-exports, and literal
-dynamic imports.
-
-### Policy scope and state changes
-
-Guard stores policy at the project level, while each policy item can target a narrower boundary:
-
-| Policy item | Scope controls                                                         |
-| ----------- | ---------------------------------------------------------------------- |
-| Rule        | `files`, import patterns, and rule kind                                |
-| Contract    | `scope`, `entrypoints`, import/package constraints, and required calls |
-| Budget      | `scope`, metric, limit, severity, and written reason                   |
-| Baseline    | Exact finding fingerprints already accepted as legacy debt             |
-| Waiver      | One active finding fingerprint, with owner, reason, and expiry         |
-
-Routine checks do not change source code, rules, contracts, baseline, or waivers. Commands that
-change policy are explicit: `init`, `rules approve`, `contracts approve|reject`, `baseline accept|remove`, and
-`waiver add|renew|remove`. `analyze` refreshes derived project facts, while `verify` may run the
-project's configured commands and records a local run manifest; neither changes approved policy.
-
-For the complete mutation contract and host/CI controls, see
-[Policy mutation control](docs/policy-mutations.md).
-
-## What Guard discovers
-
-The model is framework-aware without being framework-dependent:
-
-| Area                    | Examples of discovered evidence                                                    |
-| ----------------------- | ---------------------------------------------------------------------------------- |
-| JavaScript / TypeScript | AST modules, declarations, calls, directives, aliases, re-exports, dynamic imports |
-| Next.js / React         | App Router routes, route methods, Server Actions, client/server boundaries         |
-| API boundaries          | Route handlers, API modules, entrypoints, impact paths                             |
-| Data                    | ORM packages, schemas, migrations, repositories, persistence boundaries            |
-| Capabilities            | Auth, payments, email, AI/RAG, queues, storage, cache, search, analytics, content  |
-| Operations              | Environment references, configs, deployment, observability, webhooks               |
-| Repository shape        | Workspaces, package scripts, dependencies, cycles, import hotspots, Git history    |
-| Testing                 | Test files, test scripts, workspace checks, changed files                          |
-
-Capabilities are evidence, not requirements. A Vite app, Express service, Hono project, Node
-package, monorepo, or Next.js SaaS can all use the same Guard core.
-
-## What Guard is — and is not
-
-Guard is an architecture control plane for AI-assisted development. It protects project-specific
-boundaries and change impact using local facts, approved policy, and deterministic verification.
-
-Guard is not a replacement for ESLint, TypeScript, tests, SAST, or a general-purpose PR bot. Those
-tools answer different questions; Guard connects their results with the architectural memory that
-an AI coding agent needs before and after changing a repository.
-
-## The normal loop
-
-```text
-init once → edit → check --changed → review → verify → commit / merge
-                         ↘ analyze after structural changes
-```
-
-1. `init` builds project memory and establishes the initial baseline.
-2. `check` scans the current project; `check --changed` is the fast change-scoped architecture gate.
-3. `review` prepares a bounded and redacted diff packet for an AI host; it does not call an LLM.
-4. `verify` runs Guard policy, configured project checks, adapters, runtime diagnostics, and
-   contract validation.
-5. `audit` inspects the complete current state, including findings accepted by the baseline.
-
-For a focused change explanation, use `codapult-guard impact <file...>` or the equivalent
-`codapult_guard_impact` MCP tool. It reports both directions of the dependency graph: what the
-changed module uses and which transitive callers may be affected. `review` includes the same
-impact packet plus typed Git changes (`added`, `modified`, `deleted`, and `renamed`) for the AI
-host.
-
-Guard state is stored in `.codapult/guard/`:
-
-```text
-.codapult/guard/
-├── project.json       discovered project model
-├── architecture.json  observed architecture and capabilities
-├── conventions.json   recurring project conventions
-├── rules.json         active and proposed deterministic rules
-├── contracts.json     project-specific boundaries and required calls
-├── proposals.json     evidence and approval history
-├── baseline.json      accepted pre-existing findings
-├── agent.json         AI-host completion-gate configuration
-├── waivers.json       time-bounded exceptions to active findings
-└── history/           project snapshots and local verification run manifests
-```
-
-Commit policy and baseline files when the team wants shared guardrails. Treat cache artifacts as
-disposable according to the project’s policy, and never commit secrets.
-
-Baseline fingerprints do not include line numbers, so formatting and line movement do not recreate
-the same finding. They do include the rule and affected file/import identity, so a rename or module
-move can produce a new fingerprint and should be reviewed explicitly before accepting it into the
-baseline.
-
-### Temporary waivers
-
-Baseline records legacy findings that existed when Guard was introduced. A waiver is different: it
-temporarily suppresses one active finding and must have an owner, reason, and expiry date.
-
-```bash
-codapult-guard waiver add <fingerprint> \
-  --owner platform-team \
-  --reason "Migration in progress" \
-  --expires 2026-12-28
-codapult-guard waiver list
-codapult-guard waiver renew <id> --expires 2027-01-31 --reason "Migration continues"
-codapult-guard waiver remove <id> --reason "Migration completed"
-```
-
-Guard warns when a waiver is within the configured warning window (14 days by default). Once it
-expires, the original finding is active again. Protected policy can forbid waiver changes through
-MCP so an agent can propose a waiver but cannot approve it itself. Waivers are intentionally
-fingerprint-specific; changing the violating code invalidates the waiver.
-
-Teams can optionally cap each new waiver or renewal with `waiverPolicy.maxDays` in `rules.json`:
-
-```json
-"waiverPolicy": { "warningDays": 14, "maxDays": 90 }
-```
-
-The cap applies to the requested grant from the current operation; it does not silently delete or
-rewrite existing waivers. Boundary findings with severity `error` fail `check`; warning findings
-and waiver-expiry reminders remain advisory.
-
-Run `codapult-guard doctor` to detect an explicitly downgraded client or package boundary. Doctor
-reports it as a warning and leaves the project policy unchanged.
-
-### Optional scoped budgets
-
-Budgets are policy, not a universal style rule. Add them only for a named risk boundary such as a
-service, route handler, or dependency-heavy module:
-
-```json
-{
-  "id": "service-lines",
-  "description": "Services must remain reviewable.",
-  "metric": "lines",
-  "scope": ["src/services"],
-  "limit": 300,
-  "severity": "warning",
-  "reason": "Keep service changes reviewable by one owner.",
-  "status": "active"
-}
-```
-
-Place budgets in the `budgets` array in `.codapult/guard/rules.json`. Supported metrics are
-`lines`, `bytes`, and `imports`. Generated files, schemas, migrations, and other paths are not
-checked unless they are explicitly included in `scope`; a wildcard such as `*` can intentionally
-cover the project root. Invalid, absolute, parent-directory, or nonexistent scopes fail the Guard
-gate. Changing a budget is a policy decision:
-review the diff and update its written `reason` rather than silently increasing the limit.
-
-## AI agents and MCP
-
-Guard is deliberately model-agnostic. It does not send source code to a remote LLM and does not
-edit source files by itself. The AI host owns the model call, permissions, repair loop, and final
-decision.
-
-Start the standalone MCP server over stdio:
-
-```bash
-pnpm exec codapult-guard mcp-server
-```
-
-#### Security and authentication
-
-The MCP server communicates over the host-managed local stdio process; it does not open a network
-listener or implement application-level authentication. The host and operating system control who
-can start the process and which workspace files it can access. Treat workspace MCP configuration
-and the project being inspected as trusted code, and grant the server only the filesystem access it
-needs. This is a local trust boundary, not a substitute for authentication when wrapping Guard in a
-network service.
-
-Register that command in the MCP client from the project root. For example, Cursor can use
-`.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "codapult-guard": {
-      "type": "stdio",
-      "command": "pnpm",
-      "args": ["exec", "codapult-guard", "mcp-server"],
-      "cwd": "${workspaceFolder}"
-    }
-  }
-}
-```
-
-For clients that accept a generic stdio server, use the same command and set its working
-directory to the project root. Guard reads local files only; no API key or model provider is
-required. Host-specific examples are in [`docs/integrations/`](docs/integrations/).
-
-Recommended agent loop:
-
-```text
-task finished
-  → codapult_guard_next_action
-  → codapult_guard_context
-  → codapult_guard_review(requirement, diff)
-  → codapult_guard_verify
-  → repair reported failures
-  → repeat until pass or bounded iteration limit
-```
-
-`codapult_guard_context` keeps the project state explicit for the host: `observations` are
-discovered facts only, `proposals.pendingRules` and `proposals.pendingContracts` are unapproved
-policy suggestions, `policy` contains only active rules/contracts plus baseline and waiver state,
-and `verification` reports whether a check has actually run. A context response with
-`verification.status: "not-run"` and `findings: null` is not a passing check.
-
-For Cursor, Claude Code, Codex, Gemini CLI, GitHub Copilot, and generic hosts, see
-[`docs/integrations/`](docs/integrations/).
-
-### MCP Registry
-
-Guard is published in the official [MCP Registry](https://registry.modelcontextprotocol.io/?q=io.github.codapult%2Fguard)
-under the server name `io.github.codapult/guard`. The Registry is the discovery layer for the
-published `@codapult/guard` npm package and its stdio MCP server; it does not replace npm
-installation or the host-specific configuration above. For deterministic setup, install the npm
-package directly and use the MCP configuration shown below.
-
-For workflows where the authoring agent must not approve its own policy proposals, set Guard to
-protected mode in `rules.json`:
-
-```json
-{
-  "approval": {
-    "mode": "protected",
-    "allowMcpApproval": false,
-    "requireDistinctActor": true
-  }
-}
-```
-
-MCP can then read and propose policy, while approval happens through the CLI or a protected CI/PR
-process. With `requireDistinctActor`, CLI and permitted MCP approvals require `GUARD_APPROVER`,
-and Guard rejects the same declared actor when a proposal was generated with `GUARD_PROPOSER`.
-These variables provide declared provenance only; external branch protection or signed identity
-remains responsible for proving who approved the change.
-
-### Verifying against protected policy
-
-In CI, verify pull requests against the policy from the protected base commit rather than the
-copy carried by the branch:
-
-```bash
-codapult-guard verify --policy-base "$BASE_SHA" --json
-```
-
-Guard then evaluates the changed source with the base commit's rules, contracts, baseline, waivers,
-and completion-gate configuration. The result reports `policy.source`, `policy.ref`,
-`policy.revision`, `policy.fingerprint`, and whether the checked-out policy differs from that
-base. A branch cannot relax its policy or disable the gate and use that relaxed copy for the same
-verification run.
-
-The supplied [`docs/guard-ci.yml`](docs/guard-ci.yml) fetches the full Git history and passes the
-pull request base SHA automatically. Protect `.codapult/guard/` with CODEOWNERS or the equivalent
-review control when policy changes require a separate approval. For example, a repository can add
-`.codapult/guard/* @architecture-owners` to `CODEOWNERS`. Guard reports the policy change; the
-hosting platform enforces reviewer authorization.
-
-Guard also reports changes to verification-sensitive files using built-in paths for CI workflows,
-package scripts and lockfiles, and common formatter, linter, typecheck, and test configurations.
-Projects can extend this list in the base revision's `.codapult/guard/rules.json`:
-
-```json
-{
-  "version": 1,
-  "rules": [],
-  "protectedPaths": [".husky/**", "config/security-checks/**"]
-}
-```
-
-For classified entries and warning-only paths, use the explicit `policySurface.paths` form in that
-same base policy:
-
-```json
-{
-  "version": 1,
-  "rules": [],
-  "policySurface": {
-    "paths": [
-      { "pattern": "config/security-checks/**", "kind": "custom", "severity": "error" },
-      { "pattern": "**/.custom-ignore", "kind": "ignore-config", "severity": "warning" }
-    ]
-  }
-}
-```
-
-Supported kinds are `ci-workflow`, `guard-policy`, `ownership`, `dependency-input`, `tool-config`, `ignore-config`,
-`suppression-source`, and `custom`. `error` entries fail when `--fail-on-protected-changes` is
-enabled; `warning` entries are reported without blocking. Both forms are read from the base policy
-during PR verification, so the PR cannot remove its own path coverage.
-
-The consumer workflow template supports two policy-change modes through the repository Actions
-variable `CODAPULT_GUARD_POLICY_MODE`:
-
-- `host-review` (default) runs the complete source verification against base-branch policy,
-  reports policy and protected-path changes, and marks them as requiring host review. It does not
-  treat Guard's code verdict as approval of those changes and omits the in-toto statement for them.
-  Configure CODEOWNERS and protected-branch/ruleset review requirements to authorize the merge.
-- `strict` adds `--fail-on-policy-change` and `--fail-on-protected-changes`. Any such change fails
-  the Guard check. Use this when policy changes must follow a separate owner-controlled merge path;
-  an approving review alone will not turn the failed Guard check green. Actual Guard failures and
-  weakened or incomplete CI-integrity contracts can fail in either mode.
-
-Set the variable under **Settings → Secrets and variables → Actions → Variables**. Only the exact
-values `host-review` and `strict` are accepted; a typo fails the workflow. Guard reports workflow
-edits, but a PR workflow cannot guarantee its own integrity. Protect the Guard workflow itself and
-require its expected status check in repository settings. The sample workflow also rejects changes
-to package manifests, common lockfiles, package-manager configuration, and workspace install inputs
-before selecting pnpm or installing dependencies. This preflight is defense in depth; repository
-rules must still protect the workflow and require the Guard check.
-
-Guard reports added `eslint-disable`, `@ts-ignore`, `@ts-nocheck`, `@ts-expect-error`, and
-`biome-ignore`, and `prettier-ignore` markers in the PR diff. It reports the file and marker
-without interpreting the tool-specific reason or whether the suppression is justified. Other
-tools can be covered by protecting their configuration/source paths and running them in a trusted
-CI workflow. The matched paths, markers, and scan completeness are recorded in the verification
-result and receipt.
-
-### Required verification stages
-
-`agent.json` declares which stages must complete for verification to pass:
-
-```json
-{
-  "version": 1,
-  "tools": "auto",
-  "tooling": {},
-  "completionGate": {
-    "enabled": true,
-    "maxIterations": 3,
-    "projectChecks": true,
-    "checks": ["lint", "typecheck", "test", "build"],
-    "requiredStages": ["architecture-policy", "project-checks", "runtime"]
-  }
-}
-```
-
-Supported stages are `runtime`, `project-checks`, `adapters`, `architecture-policy`,
-`policy-surface`, `ci-integrity`, and `verification-scope`. The compatibility default requires `architecture-policy`;
-projects opt into additional requirements. If a required stage is skipped or cannot be confirmed,
-the result is `incomplete`, the CLI exits nonzero, and the receipt names the incomplete stages.
-When base policy is used, `policy-surface` is required automatically. A configured CI integrity
-contract makes `ci-integrity` required automatically. `verification-scope` is always required:
-Guard hashes its discovered project inputs before checks and confirms that the scope stayed stable
-through the run.
-
-### GitHub Actions integrity contract
-
-Declare the exact workflow and required job in the base revision's `rules.json`:
-
-```json
-{
-  "version": 1,
-  "rules": [],
-  "githubActions": {
-    "workflows": [
-      {
-        "path": ".github/workflows/guard.yml",
-        "job": "guard",
-        "requiredRunIncludes": [
-          "pnpm exec codapult-guard verify",
-          "--policy-base",
-          "--fail-on-policy-change",
-          "--fail-on-protected-changes"
-        ],
-        "maxPermissions": { "contents": "read", "security-events": "write" }
-      }
-    ]
-  }
-}
-```
-
-Guard parses the declared workflow and checks its pull request trigger, configured filters, required
-job, required command fragments in the Guard invocation, conditional execution, `continue-on-error`,
-declared job dependencies, explicit permission ceilings, and full commit SHA pins for external
-actions. Local actions cannot meet immutable SHA pinning; if a workflow uses one, set
-`requireFullShaActions` to `false` and list its source under `protectedPaths` in the base policy.
-Guard compares each action ref with the contracted workflow at the base revision; additions,
-removals, and SHA changes are reported as `policy-weakened` for separate review even when the new
-ref is itself SHA-pinned. Missing protections are reported as `policy-weakened`; malformed or
-unreadable workflow data is `incomplete`. The result and receipt include base/current workflow
-digests, action refs and their changes, and issues. Guard does not
-evaluate arbitrary GitHub expressions or prove that repository settings require the check; branch
-protection or rulesets must still require the expected check source.
-The audit rejects `pull_request_target` on a contracted verification workflow because Guard cannot
-prove that it never executes untrusted PR content with that event's elevated context.
-
-The receipt records the effective Guard invocation and each project check's command and arguments.
-Credential-like values are redacted from command evidence; treat receipts as review artifacts, not
-as a substitute for trusted CI logs.
-
-To make policy changes fail this invocation explicitly, add:
-
-```bash
-codapult-guard verify --policy-base "$BASE_SHA" --fail-on-policy-change
-```
-
-This is useful for a dedicated policy-review gate. It is intentionally separate from using the
-base policy for source verification, so teams can choose how their protected review workflow
-handles an approved policy update.
-
-See [the extension map](docs/extensions.md) for the supported AI-host, CI/PR, policy-pack, tool
-adapter, approval-governance, and observability integrations.
-
-## CI
-
-Copy the consumer workflow into a project that has installed and initialized Guard:
-
-```bash
-cp node_modules/@codapult/guard/docs/guard-ci.yml .github/workflows/guard.yml
-```
-
-Or copy it from [`docs/guard-ci.yml`](docs/guard-ci.yml). It runs project verification and exports
-Guard findings as SARIF for GitHub code scanning. Pull requests install dependencies without
-lifecycle scripts and use deterministic Guard checks without executing PR-owned scripts; trusted
-pushes may run the configured project checks. It also handles `merge_group` events using the exact
-queue head and base SHAs, and does not run project scripts on merge-group candidates. The copied
-workflow is still editable by a PR, so use the separate
-[`docs/guard-trusted-merge-group.yml`](docs/guard-trusted-merge-group.yml) from a protected workflow
-repository in an organization ruleset when the merge-group check must itself have a protected
-workflow source. The [merge-queue setup guide](docs/guard.md#require-guard-on-github-merge-queues)
-explains both trust modes and the required host settings.
-
-The package repository separately runs its own unit, typecheck, build, and packaging checks in
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml), while the fixture workflow tests Guard on
-real project shapes.
-
-To add a separately signed Guard receipt, copy
-[`docs/guard-trusted-pr-attestation.yml`](docs/guard-trusted-pr-attestation.yml) to
-`.github/workflows/guard-trusted-pr-attestation.yml` and follow the
-[trusted-attestation setup guide](docs/guard.md#install-the-trusted-github-actions-workflow).
-Require its `Guard trusted verification` job in branch protection or a ruleset. This trusted
-`pull_request_target` workflow independently verifies same-repository and fork PRs with base-branch
-policy; the ordinary PR-editable `Guard` workflow is for feedback and SARIF, and must not be the only
-required Guard check. The trusted workflow does not run or attest project test/build results, so keep
-those checks required separately.
-
-## CLI surface
-
-| Command                    | Purpose                                                                                     |
-| -------------------------- | ------------------------------------------------------------------------------------------- |
-| `init`                     | Create project memory and the initial baseline.                                             |
-| `analyze`                  | Refresh facts without changing policy or baseline.                                          |
-| `propose`                  | Generate evidence-based rule and contract proposals.                                        |
-| `check [--changed]`        | Enforce active policy; `--changed` limits findings to changed and untracked files.          |
-| `audit`                    | Scan the complete current project, including baseline findings.                             |
-| `review`                   | Create a bounded semantic-review packet for an AI host.                                     |
-| `verify`                   | Run the configured completion gate.                                                         |
-| `governance`               | Audit declared proposal/approval provenance and decision-to-run reachability.               |
-| `doctor`                   | Diagnose invalid or missing Guard artifacts.                                                |
-| `history` / `history-diff` | Inspect project model, module graph, and architecture-edge evolution.                       |
-| `impact <files...>`        | Explain dependencies, transitive dependents, capabilities, and contracts affected by files. |
-| `policy explain <id>`      | Explain a policy item, its evidence, and approval history.                                  |
-| `rules` / `contracts`      | Approve rules; approve or reject contracts.                                                 |
-| `baseline`                 | Review or intentionally accept existing findings.                                           |
-| `waiver`                   | Manage owner-attributed, time-bounded exceptions to exact findings.                         |
-
-Use `analyze --refresh` after a structural change. `doctor --fix-cache` removes only the disposable
-discovery cache; it does not change rules, contracts, baseline, or source files.
-
-Guard state is safe for concurrent CLI/MCP readers and writers: derived facts are published as an
-atomic generation, policy updates use revisions, and short write contention is waited out. A
-process that dies while holding the state lock is detected by its local PID and the lock is
-recovered; use `--no-wait` when an integration needs immediate contention feedback.
-
-Run `pnpm exec codapult-guard <command> --help` for command-specific options.
-
-Every `verify` run also writes a local manifest under
-`.codapult/guard/history/runs/<run-id>.json`. It records stage durations, the outcome, and the
-policy gate that decided the result. It also records the effective policy revision and fingerprint;
-when a base ref was supplied, it records the ref and whether the working-tree policy differed.
-When an approved policy decision caused the current policy, the manifest also retains its decision
-ID, making the relationship traversable from approval to verification. The `governance` command
-audits this metadata and reports missing or overlapping declared actors. It contains no source code
-or external telemetry. These manifests make a failed run explainable without turning Guard into a
-production tracing system or an identity/signature ledger.
-
-The manifest also contains a `verification-receipt` object. It is a compact, machine-readable
-record of the commit, policy base and fingerprint, decision IDs, check statuses, finding counts,
-contract issues, waiver state, and Guard version. Its `verificationScope` contains SHA-256 hashes
-and paths for files discovered by Guard plus changed and deleted paths; the fingerprint binds that
-inventory to the effective policy and Guard version. The `verification-scope` stage is incomplete
-if Guard cannot hash the full scope or if the inputs changed during the run. The receipt excludes
-source contents and command output. It describes what Guard decided; it is not a cryptographic
-signature or proof of CI identity. When a policy base is supplied, it separates the base diff from
-dirty working-tree files so local verification cannot silently present an incomplete change set.
-For portable exchange, `verify --attestation-out <file>` exports a passing receipt as an unsigned
-in-toto Statement. The format is independent of the CI platform and signing mechanism; a trusted CI
-signer can sign it using the mechanism supported by that platform. The attestation guide includes a
-GitHub Actions example using Sigstore. See the [attestation guide](docs/guard.md#exporting-and-signing-a-verification-attestation).
-
-## Security and data handling
-
-- Deterministic discovery and checks run locally.
-- Review packets are bounded and redact common secrets before they are returned to an AI host.
-- Guard does not invoke an LLM or require a provider API key.
-- Project commands and external adapters run only when enabled by the project configuration.
-- Existing findings can be baselined, but new regressions remain visible.
-
-## Verification and proof
-
-The repository validates the product through multiple layers:
-
-- unit and integration tests for discovery, policy, baseline, verification, MCP, and output;
-- AST adversarial cases for aliases, re-exports, dynamic imports, and route boundaries;
-- golden end-to-end flow from violation to repair;
-- mutation regression checks across real Next.js, React/Vite, Node, Hono, monorepo, and Express
-  repositories;
-- npm pack checks to ensure the published artifact contains only the intended build output.
-
-Run the maintainer checks locally:
-
-```bash
-pnpm test
-pnpm test:guard:golden
-pnpm test:guard:fixtures
-pnpm test:guard:fixtures:regression
-pnpm release:check
-```
+Supported hosts and MCP setup are in the [AI-agent integration guide](docs/guard-agent-integration.md)
+and [host integration guides](docs/integrations/).
+
+## Choose a GitHub setup
+
+Choose a preset from the existing workflow templates and follow only the hosting steps for that
+level of protection. Most projects can start with standard PR checks.
+
+| Preset | Use it when | Guide |
+| --- | --- | --- |
+| **PR checks** | You want Guard findings and a required check on ordinary pull requests. | [GitHub PR checks](docs/github-setup-presets.md#github-pr-checks) |
+| **Trusted PR verification** | The Guard check must come from a protected workflow source, including for fork PRs. | [Trusted PR setup](docs/github-setup-presets.md#trusted-pr-verification) |
+| **Merge queue** | Your repository merges through a GitHub merge queue. | [Merge queue setup](docs/github-setup-presets.md#merge-queue) |
+
+If you are unsure, use **PR checks** first. It is useful CI feedback, but its workflow lives in the
+project being checked and can be changed by a pull request. Choose trusted verification when the
+check itself must be protected from that change.
+
+## What Guard does
+
+- Learns project-specific structure, dependencies, boundaries, and existing findings.
+- Checks approved architecture rules and contracts without imposing a universal architecture.
+- Shows change impact and prepares bounded, redacted context for AI review.
+- Runs configured project checks and adapters when enabled; it does not replace them.
+- Produces deterministic CLI, JSON, and SARIF results for local use and CI.
+
+Guard is local-first and does not call an LLM. The AI host owns model access, edits, and its repair
+loop. Guard complements TypeScript, ESLint or Biome, tests, SAST, and dependency scanners; it does
+not replace them.
 
 ## Documentation
 
-- [Complete Guard guide](docs/guard.md)
-- [AI-agent integration](docs/guard-agent-integration.md)
-- [Host integrations](docs/integrations/)
-- [CI consumer workflow](docs/guard-ci.yml)
-- [Fixture matrix](docs/guard-fixtures.md)
-- [Release process](docs/releasing.md)
+- [GitHub setup presets](docs/github-setup-presets.md) — choose and configure the CI level you need.
+- [Complete Guard guide](docs/guard.md) — commands, policy, results, security, and advanced workflows.
+- [AI-agent integration](docs/guard-agent-integration.md) — managed instructions and MCP workflow.
+- [Host integrations](docs/integrations/) — Codex, Cursor, Claude Code, Copilot, Gemini CLI, and generic MCP clients.
+- [Policy mutation controls](docs/policy-mutations.md) — approval and protected policy behavior.
+- [Extensions](docs/extensions.md) — adapters, output formats, and integration boundaries.
+
+## For contributors
+
+Maintainer checks and project fixture coverage are documented in the [fixture guide](docs/guard-fixtures.md)
+and [release guide](docs/releasing.md).
 
 ## More from Codapult
 
 Starting a SaaS from scratch? [Codapult](https://codapult.dev) is a production-ready Next.js SaaS
-foundation built for AI-assisted development — with MCP context, built-in AI, modular
-architecture, and the source code under your control.
+foundation built for AI-assisted development, with modular architecture, built-in AI, MCP context,
+and source code under your control.
 
 ## License
 

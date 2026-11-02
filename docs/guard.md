@@ -28,7 +28,10 @@ deterministic evidence.
 - [CI and machine-readable output](#ci-and-machine-readable-output)
 - [Security and data handling](#security-and-data-handling)
 - [Troubleshooting](#troubleshooting)
-- [Implementation boundaries](#implementation-boundaries)
+
+This is the full user guide and reference. For a short introduction, start with the
+[README](../README.md); to choose a GitHub configuration, use the
+[GitHub setup presets](github-setup-presets.md).
 
 ## The operating model
 
@@ -888,12 +891,11 @@ advanced since the workflow ran, require a new trusted workflow run and verify i
 The statement's `mergeSha`, when present, identifies the merge commit checked by Guard; the head and
 base SHA checks above bind the attestation to the PR revisions.
 
-For a first setup check, open a test PR from a branch in the same repository, wait for the trusted
-workflow to finish, confirm that `guard-trusted-pr-attestation` appears as an artifact on that run,
-download it, and run both verification commands above. The template intentionally
-fails closed when PR context is missing or ambiguous and cannot be identified as an unattached fork,
-when the Guard receipt is not a pass, when its scope is incomplete or unstable, or when the PR SHAs
-do not match the event. Fork PRs are verified but receive no signed attestation.
+For setup instructions and validation of both same-repository and fork PRs, see the
+[trusted PR verification profile](github-setup-presets.md#trusted-pr-verification). The template
+intentionally fails closed when PR context is missing or ambiguous and cannot be identified as an
+unattached fork, when the Guard receipt is not a pass, when its scope is incomplete or unstable, or
+when the PR SHAs do not match the event. Fork PRs are verified but receive no signed attestation.
 
 Signature verification proves which workflow signed the statement and that the statement file was
 not changed after signing. It does not, by itself, prove that arbitrary claims inside the statement
@@ -1108,19 +1110,13 @@ pnpm exec codapult-guard check --changed --sarif > guard-results.sarif
 The repository includes a copyable consumer workflow at [`docs/guard-ci.yml`](guard-ci.yml). On pull
 requests it installs dependencies without lifecycle scripts and runs Guard against the base policy
 without executing PR-owned project scripts; trusted pushes can run configured project checks. Its
-`CODAPULT_GUARD_POLICY_MODE` variable selects `host-review` (default) or `strict`; the README
-describes the difference and the required hosting configuration. Policy-sensitive changes are
-reported in the summary, and the unsigned in-toto statement is omitted for those runs. The workflow
+`CODAPULT_GUARD_POLICY_MODE` variable selects `host-review` (default) or `strict`. The
+[GitHub setup presets](github-setup-presets.md) explain when to use each mode and the required
+hosting configuration. Policy-sensitive changes are reported in the summary, and the unsigned
+in-toto statement is omitted for those runs. The workflow
 uploads SARIF with `github/codeql-action/upload-sarif` and also runs the unified verification gate.
 Projects using protected or forked pull requests should review their `security-events: write`
 permissions and artifact policy.
-
-For maintainers, the fixture and real-PR harnesses are documented in
-[`guard-fixtures.md`](guard-fixtures.md). The isolated golden flow is run with:
-
-```bash
-pnpm test:guard:golden
-```
 
 ## Security and data handling
 
@@ -1171,23 +1167,5 @@ This is intentional. Review packets are bounded, and sensitive-looking content i
 it reaches an AI reviewer. Narrow the change or inspect the source locally if more context is
 needed.
 
-### Native fixture checks fail because of Node
-
-Fixture projects retain their own engine requirements. Use a compatible Node version for the
-fixture rather than weakening Guard or changing the fixture's production configuration. Guard's
-runtime diagnostic reports the active and declared versions.
-
-## Implementation boundaries
-
-Guard currently provides deterministic discovery, policy checks, project-context packets, contract
-validation, completion-gate orchestration, MCP exposure, JSON/SARIF output, and host instruction
-templates. It intentionally does not:
-
-- call an LLM or choose architectural policy without approval;
-- replace specialist linters, type checkers, test runners, SAST, dependency scanners, or builds;
-- silently rewrite source code or automatically reset a baseline;
-- guarantee semantic correctness from filename/package-name heuristics alone;
-- implement host-specific agent hooks as runtime dependencies.
-
-That boundary keeps Guard local-first, model-agnostic, and project-specific while allowing existing
-tools and AI platforms to remain useful adapters around one shared project model.
+For Guard's integration boundaries and responsibilities, see
+[What remains outside Guard](extensions.md#what-remains-outside-guard).
