@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.13.3](https://github.com/codapult/codapult-guard/compare/v0.13.2...v0.13.3) (2026-11-02)
+
+### Bug Fixes
+
+* add terminalSafeJson function for safe JSON output ([6419c21](https://github.com/codapult/codapult-guard/commit/6419c216e77ec4d24cc4ca7b932362151fb4e907))
+
 ## [0.13.2](https://github.com/codapult/codapult-guard/compare/v0.13.1...v0.13.2) (2026-11-01)
 
 ### Bug Fixes
