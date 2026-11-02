@@ -63,16 +63,20 @@ pnpm exec codapult-guard install-agent codex
 Supported hosts and MCP setup are in the [AI-agent integration guide](docs/guard-agent-integration.md)
 and [host integration guides](docs/integrations/).
 
+The MCP server uses host-managed local stdio, with no network listener or application-level
+authentication. The host and operating system control process access and workspace permissions;
+see the [security model](docs/guard.md#security-and-authentication).
+
 ## Choose a GitHub setup
 
 Choose a preset from the existing workflow templates and follow only the hosting steps for that
 level of protection. Most projects can start with standard PR checks.
 
-| Preset | Use it when | Guide |
-| --- | --- | --- |
-| **PR checks** | You want Guard findings and a required check on ordinary pull requests. | [GitHub PR checks](docs/github-setup-presets.md#github-pr-checks) |
+| Preset                      | Use it when                                                                         | Guide                                                                    |
+| --------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| **PR checks**               | You want Guard findings and a required check on ordinary pull requests.             | [GitHub PR checks](docs/github-setup-presets.md#github-pr-checks)        |
 | **Trusted PR verification** | The Guard check must come from a protected workflow source, including for fork PRs. | [Trusted PR setup](docs/github-setup-presets.md#trusted-pr-verification) |
-| **Merge queue** | Your repository merges through a GitHub merge queue. | [Merge queue setup](docs/github-setup-presets.md#merge-queue) |
+| **Merge queue**             | Your repository merges through a GitHub merge queue.                                | [Merge queue setup](docs/github-setup-presets.md#merge-queue)            |
 
 If you are unsure, use **PR checks** first. It is useful CI feedback, but its workflow lives in the
 project being checked and can be changed by a pull request. Choose trusted verification when the
