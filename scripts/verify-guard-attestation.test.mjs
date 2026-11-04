@@ -28,7 +28,8 @@ function makeStatement(overrides = {}) {
         digest: { sha256: receipt.verificationScope.fingerprint },
       },
     ],
-    predicateType: 'https://codapult.dev/attestations/guard-verification/v1',
+    predicateType:
+      'https://github.com/codapult/codapult-guard/blob/main/docs/attestations/guard-verification-v1.md',
     predicate: { receipt },
     ...overrides.statement,
   };

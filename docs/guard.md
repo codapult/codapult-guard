@@ -652,6 +652,10 @@ version, and result. The in-toto `predicateType` URI versions the predicate sche
 from the receipt's numeric `version` field. Consumers should reject unsupported versions rather than
 guessing how to interpret them.
 
+The [Guard verification predicate v1 specification](attestations/guard-verification-v1.md)
+defines the subject, receipt fields, consumer validation rules, and claim limits, with an example
+Statement.
+
 On GitHub pull request events, the receipt also records `headSha` and `baseSha` from the event
 payload. `mergeSha` is recorded only when `GITHUB_SHA` identifies the checked-out merge result rather
 than the PR head. These commit identifiers describe the hosting event context; the content
@@ -876,7 +880,7 @@ Replace `ORG/REPO` and `PR_NUMBER`, then run:
 jq -e \
   --arg head "$EXPECTED_HEAD_SHA" \
   --arg base "$EXPECTED_BASE_SHA" \
-  '.predicateType == "https://codapult.dev/attestations/guard-verification/v1" and
+  '.predicateType == "https://github.com/codapult/codapult-guard/blob/main/docs/attestations/guard-verification-v1.md" and
    .predicate.receipt.outcome == "pass" and
    .predicate.receipt.subject.headSha == $head and
    .predicate.receipt.subject.baseSha == $base and

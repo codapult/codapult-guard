@@ -1,7 +1,7 @@
 import type { GuardVerificationReceipt } from '../history/runs.js';
 
 export const GUARD_VERIFICATION_PREDICATE_TYPE =
-  'https://codapult.dev/attestations/guard-verification/v1';
+  'https://github.com/codapult/codapult-guard/blob/main/docs/attestations/guard-verification-v1.md';
 
 export interface GuardVerificationInTotoStatement {
   _type: 'https://in-toto.io/Statement/v1';

@@ -6,7 +6,8 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 export const GUARD_STATEMENT_TYPE = 'https://in-toto.io/Statement/v1';
-export const GUARD_PREDICATE_TYPE = 'https://codapult.dev/attestations/guard-verification/v1';
+export const GUARD_PREDICATE_TYPE =
+  'https://github.com/codapult/codapult-guard/blob/main/docs/attestations/guard-verification-v1.md';
 
 function fail(message) {
   throw new Error(message);

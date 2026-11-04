@@ -218,7 +218,7 @@ jobs:
           } else {
             const statement = JSON.parse(readFileSync(process.env.GUARD_STATEMENT_FILE, 'utf8'));
             const statementReceipt = statement?.predicate?.receipt;
-            if (statement?._type !== 'https://in-toto.io/Statement/v1' || statement.predicateType !== 'https://codapult.dev/attestations/guard-verification/v1') {
+            if (statement?._type !== 'https://in-toto.io/Statement/v1' || statement.predicateType !== 'https://github.com/codapult/codapult-guard/blob/main/docs/attestations/guard-verification-v1.md') {
               throw new Error('in-toto statement or Guard predicate type is invalid.');
             }
             if (!Array.isArray(statement.subject) || statement.subject.length !== 1 || statement.subject[0]?.name !== 'codapult-guard:verification-context' || statement.subject[0]?.digest?.sha256 !== scope.fingerprint) {
