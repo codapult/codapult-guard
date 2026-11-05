@@ -1,6 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { relative, resolve } from 'node:path';
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import {
   GUARD_BASELINE_FILE,
   GUARD_BASELINE_META_FILE,
@@ -461,6 +468,54 @@ export function guardHistoryDiffCommand(
   process.exitCode = 0;
 }
 
+function assertAttestationOutputOutsideScope(
+  root: string,
+  outputPath: string,
+  scopeFiles: { path: string }[],
+): void {
+  const projectRoot = realpathSync(root);
+  const absoluteOutput = resolve(outputPath);
+  let outputIsSymbolicLink = false;
+  try {
+    outputIsSymbolicLink = lstatSync(absoluteOutput).isSymbolicLink();
+  } catch {
+    // A new output file has no lstat result yet.
+  }
+  if (outputIsSymbolicLink) {
+    throw new Error('Attestation output must not be a symbolic link.');
+  }
+  let physicalOutput: string;
+  try {
+    physicalOutput = realpathSync(absoluteOutput);
+  } catch {
+    physicalOutput = resolve(realpathSync(dirname(absoluteOutput)), basename(absoluteOutput));
+  }
+  const relativeOutput = relative(projectRoot, physicalOutput).replaceAll('\\', '/');
+  const outputIsInsideProject =
+    relativeOutput !== '..' && !relativeOutput.startsWith('../') && !isAbsolute(relativeOutput);
+  let outputIdentity: string | undefined;
+  try {
+    const stats = statSync(absoluteOutput);
+    if (stats.isFile()) outputIdentity = `${stats.dev}:${stats.ino}`;
+  } catch {
+    // A new output file has no filesystem identity yet.
+  }
+  if (
+    scopeFiles.some((file) => {
+      if (outputIsInsideProject && file.path === relativeOutput) return true;
+      if (outputIdentity === undefined) return false;
+      try {
+        const stats = statSync(resolve(projectRoot, file.path));
+        return stats.isFile() && `${stats.dev}:${stats.ino}` === outputIdentity;
+      } catch {
+        return false;
+      }
+    })
+  ) {
+    throw new Error('Attestation output must not overwrite a file in the verification scope.');
+  }
+}
+
 export function guardVerifyCommand(options: GuardVerifyOptions = {}): void {
   const root = getRoot();
   const requirement = readRequirement(root, options.requirement);
@@ -486,8 +541,14 @@ export function guardVerifyCommand(options: GuardVerifyOptions = {}): void {
   if (options.attestationOut) {
     try {
       if (!result.run.receipt) throw new Error('Guard did not produce a verification receipt.');
+      const outputPath = resolve(options.attestationOut);
+      assertAttestationOutputOutsideScope(
+        root,
+        outputPath,
+        result.run.receipt.verificationScope?.files ?? [],
+      );
       const statement = guardReceiptToInToto(result.run.receipt);
-      writeFileSync(resolve(options.attestationOut), `${JSON.stringify(statement, null, 2)}\n`);
+      writeFileSync(outputPath, `${JSON.stringify(statement, null, 2)}\n`);
       if (!options.json)
         info(`in-toto verification statement written to ${options.attestationOut}`);
     } catch (error) {

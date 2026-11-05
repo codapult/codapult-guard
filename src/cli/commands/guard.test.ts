@@ -1,7 +1,19 @@
+import { createRequire } from 'node:module';
 import { describe, expect, it, vi } from 'vitest';
 import { config } from '../../core/config.js';
+import { computeVerificationScopeFingerprint } from '../../core/verification/scope.js';
 
-vi.mock('node:fs', () => ({ existsSync: vi.fn(() => true), writeFileSync: vi.fn() }));
+const guardVersion = (
+  createRequire(import.meta.url)('../../../package.json') as {
+    version: string;
+  }
+).version;
+
+vi.mock('node:fs', () => ({
+  existsSync: vi.fn(() => true),
+  realpathSync: vi.fn((path: string) => path),
+  writeFileSync: vi.fn(),
+}));
 vi.mock('../../core/guard.js', () => ({
   GUARD_BASELINE_FILE: `.${config.appName}/guard/baseline.json`,
   GUARD_BASELINE_META_FILE: `.${config.appName}/guard/baseline-meta.json`,
@@ -116,6 +128,9 @@ describe('guard commands', () => {
     const { runGuardVerification } = await import('../../core/verification/verify.js');
     const { writeFileSync } = await import('node:fs');
     const result = runGuardVerification('/project');
+    const policy = { fingerprint: 'b'.repeat(64), source: 'working-tree' as const };
+    const tool = { name: '@codapult/guard', version: guardVersion };
+    const files = [{ path: 'package.json', status: 'present' as const, sha256: 'a'.repeat(64) }];
     result.run.receipt = {
       version: 1,
       kind: 'verification-receipt',
@@ -123,13 +138,36 @@ describe('guard commands', () => {
       generatedAt: '2026-10-31T00:00:00.000Z',
       outcome: 'pass',
       gate: 'none',
-      subject: { changedFiles: [], workingTreeDirty: false },
+      subject: {
+        commit: '1'.repeat(40),
+        changedFiles: [],
+        workingTreeDirty: false,
+      },
+      policy,
       verificationScope: {
         algorithm: 'sha256',
-        fingerprint: 'a'.repeat(64),
+        fingerprint: computeVerificationScopeFingerprint({
+          policyFingerprint: policy.fingerprint,
+          tool,
+          files,
+          source: {
+            repository: null,
+            commit: '1'.repeat(40),
+            headSha: null,
+            baseSha: null,
+            baseCommit: null,
+          },
+        }),
         complete: true,
         stable: true,
-        files: [],
+        source: {
+          repository: null,
+          commit: '1'.repeat(40),
+          headSha: null,
+          baseSha: null,
+          baseCommit: null,
+        },
+        files,
       },
       stages: { 'verification-scope': 'ok' },
       checks: {},
@@ -145,7 +183,7 @@ describe('guard commands', () => {
       },
       contractIssues: [],
       decisionIds: [],
-      tool: { name: '@codapult/guard', version: '0.10.0' },
+      tool,
     };
     vi.mocked(runGuardVerification).mockReturnValueOnce(result);
 
@@ -156,6 +194,14 @@ describe('guard commands', () => {
       expect.stringContaining('https://in-toto.io/Statement/v1'),
     );
     expect(process.exitCode).toBe(0);
+    process.exitCode = undefined;
+
+    vi.mocked(writeFileSync).mockClear();
+    vi.mocked(runGuardVerification).mockReturnValueOnce(result);
+    guardVerifyCommand({ json: true, attestationOut: '/project/package.json' });
+
+    expect(writeFileSync).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
     process.exitCode = undefined;
   });
 
