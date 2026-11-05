@@ -56,11 +56,19 @@ export interface GuardVerificationScope {
   fingerprint: string;
   complete: boolean;
   stable: boolean;
-  files: {
-    path: string;
-    status: 'present' | 'deleted' | 'unavailable';
-    sha256?: string | undefined;
-  }[];
+  source?: {
+    repository: string | null;
+    commit: string | null;
+    headSha: string | null;
+    baseSha: string | null;
+    baseCommit: string | null;
+  };
+  files: (
+    | { path: string; status: 'present'; sha256: string }
+    // Deleted entries may retain a digest in older local history records.
+    | { path: string; status: 'deleted'; sha256?: string | undefined }
+    | { path: string; status: 'unavailable'; sha256?: never }
+  )[];
 }
 
 export interface GuardVerificationCiIntegrity {
@@ -86,6 +94,7 @@ export interface GuardVerificationReceipt {
   outcome: GuardRunManifest['outcome'];
   gate: string;
   subject: {
+    repository?: string | undefined;
     commit?: string | undefined;
     baseRef?: string | undefined;
     baseCommit?: string | undefined;
@@ -96,7 +105,7 @@ export interface GuardVerificationReceipt {
     changedFiles: string[];
     baseChangedFiles?: string[] | undefined;
     workingTreeFiles?: string[] | undefined;
-    workingTreeDirty: boolean;
+    workingTreeDirty?: boolean | undefined;
   };
   policy?: GuardRunPolicy | undefined;
   verificationScope?: GuardVerificationScope | undefined;
@@ -226,8 +235,10 @@ function isGuardRunManifest(value: unknown): value is GuardRunManifest {
       (receipt.subject.workingTreeFiles === undefined ||
         (Array.isArray(receipt.subject.workingTreeFiles) &&
           receipt.subject.workingTreeFiles.every((file) => typeof file === 'string'))) &&
-      typeof receipt.subject.workingTreeDirty === 'boolean' &&
+      (receipt.subject.workingTreeDirty === undefined ||
+        typeof receipt.subject.workingTreeDirty === 'boolean') &&
       (receipt.subject.commit === undefined || typeof receipt.subject.commit === 'string') &&
+      (receipt.subject.repository === undefined || typeof receipt.subject.repository === 'string') &&
       (receipt.subject.baseRef === undefined || typeof receipt.subject.baseRef === 'string') &&
       (receipt.subject.baseCommit === undefined ||
         typeof receipt.subject.baseCommit === 'string') &&
@@ -245,6 +256,19 @@ function isGuardRunManifest(value: unknown): value is GuardRunManifest {
           /^[a-f0-9]{64}$/.test(receipt.verificationScope.fingerprint) &&
           typeof receipt.verificationScope.complete === 'boolean' &&
           typeof receipt.verificationScope.stable === 'boolean' &&
+          (receipt.verificationScope.source === undefined ||
+            (receipt.verificationScope.source !== null &&
+              typeof receipt.verificationScope.source === 'object' &&
+              (receipt.verificationScope.source.repository === null ||
+                typeof receipt.verificationScope.source.repository === 'string') &&
+              (receipt.verificationScope.source.commit === null ||
+                /^[a-f0-9]{40}$/.test(receipt.verificationScope.source.commit)) &&
+              (receipt.verificationScope.source.headSha === null ||
+                /^[a-f0-9]{40}$/.test(receipt.verificationScope.source.headSha)) &&
+              (receipt.verificationScope.source.baseSha === null ||
+                /^[a-f0-9]{40}$/.test(receipt.verificationScope.source.baseSha)) &&
+              (receipt.verificationScope.source.baseCommit === null ||
+                /^[a-f0-9]{40}$/.test(receipt.verificationScope.source.baseCommit)))) &&
           Array.isArray(receipt.verificationScope.files) &&
           receipt.verificationScope.files.every(
             (file) =>
@@ -254,9 +278,11 @@ function isGuardRunManifest(value: unknown): value is GuardRunManifest {
               (file.status === 'present' ||
                 file.status === 'deleted' ||
                 file.status === 'unavailable') &&
-              (file.status === 'unavailable'
-                ? file.sha256 === undefined
-                : typeof file.sha256 === 'string' && /^[a-f0-9]{64}$/.test(file.sha256)),
+              (file.status === 'present'
+                ? typeof file.sha256 === 'string' && /^[a-f0-9]{64}$/.test(file.sha256)
+                : file.status === 'deleted'
+                  ? file.sha256 === undefined || /^[a-f0-9]{64}$/.test(file.sha256)
+                  : file.sha256 === undefined),
           ))) &&
       (receipt.policySurface === undefined ||
         (receipt.policySurface !== null &&
@@ -589,7 +615,9 @@ export function finishGuardRun(
       ...receipt?.subject,
       ...(commit ? { commit } : {}),
       changedFiles: receipt?.subject.changedFiles ?? [],
-      workingTreeDirty: receipt?.subject.workingTreeDirty ?? false,
+      ...(receipt?.subject.workingTreeDirty !== undefined
+        ? { workingTreeDirty: receipt.subject.workingTreeDirty }
+        : {}),
     },
     ...(policy ? { policy } : {}),
     ...(receipt?.verificationScope ? { verificationScope: receipt.verificationScope } : {}),

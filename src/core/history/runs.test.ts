@@ -171,7 +171,11 @@ describe('Guard run observability', () => {
         fingerprint: 'a'.repeat(64),
         complete: true,
         stable: true,
-        files: [{ path: 'src/index.ts', status: 'present', sha256: 'b'.repeat(64) }],
+        files: [
+          { path: 'src/index.ts', status: 'present', sha256: 'b'.repeat(64) },
+          // Older local history used a digest here; the reader keeps those records available.
+          { path: 'src/removed.ts', status: 'deleted', sha256: 'c'.repeat(64) },
+        ],
       },
       stages: { verification: 'ok', 'verification-scope': 'ok' },
       requiredStages: ['verification-scope'],

@@ -44,6 +44,10 @@ import {
 } from '../history/runs.js';
 import { auditGitHubActions } from './github-actions.js';
 import { readGuardGitHubContext } from './github-context.js';
+import {
+  computeVerificationScopeFingerprint,
+  isMissingVerificationScopePathError,
+} from './scope.js';
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../../../package.json') as { version: string };
@@ -314,12 +318,34 @@ function workingTreeChangedFiles(root: string): string[] | undefined {
   ]);
 }
 
+function receiptWorkingTreeSnapshot(
+  root: string,
+  fallback: string[] = [],
+): { files: string[]; dirty?: boolean | undefined } {
+  const gitFiles = workingTreeChangedFiles(root);
+  const files = [...new Set(gitFiles ?? fallback)]
+    .map((file) => file.replace(/\\/g, '/'))
+    .filter((file) => Boolean(file) && !isGeneratedGuardArtifact(file))
+    .sort();
+  return { files, ...(gitFiles === undefined ? {} : { dirty: files.length > 0 }) };
+}
+
 function changedFilesSince(root: string, baseRef: string | undefined): string[] | undefined {
   if (!baseRef) return undefined;
   const committed = committedFilesSince(root, baseRef);
   const workingTree = workingTreeChangedFiles(root);
   if (!committed || !workingTree) return undefined;
   return [...new Set([...committed, ...workingTree])].sort();
+}
+
+function deletedFilesSince(root: string, baseRef: string | undefined): Set<string> | undefined {
+  if (!baseRef) return undefined;
+  const commands = [
+    ['diff', '--name-only', '--no-renames', '--diff-filter=D', '-z', `${baseRef}...HEAD`],
+    ['diff', '--name-only', '--no-renames', '--diff-filter=D', '-z', 'HEAD'],
+  ];
+  const paths = gitPaths(root, commands);
+  return paths === undefined ? undefined : new Set(paths);
 }
 
 interface GuardPolicySurface {
@@ -491,40 +517,8 @@ function resolveGitCommit(root: string, ref: string | undefined): string | undef
   }
 }
 
-function hasWorkingTreeChanges(root: string): boolean {
-  try {
-    return (
-      execFileSync('git', ['status', '--porcelain', '-z'], {
-        cwd: root,
-        stdio: 'pipe',
-        timeout: 5_000,
-      }).length > 0
-    );
-  } catch {
-    return true;
-  }
-}
-
 function sha256(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
-}
-
-function baseFileDigest(root: string, revisions: string[], path: string): string | undefined {
-  if (!path || path.startsWith('/') || path.split('/').includes('..')) return undefined;
-  for (const revision of revisions) {
-    try {
-      const content = execFileSync('git', ['show', `${revision}:${path}`], {
-        cwd: root,
-        stdio: 'pipe',
-        timeout: 5_000,
-        maxBuffer: 32_000_000,
-      });
-      return sha256(content);
-    } catch {
-      // A deleted working-tree file may exist at HEAD even when absent from the base ref.
-    }
-  }
-  return undefined;
 }
 
 function verificationScope(
@@ -532,10 +526,9 @@ function verificationScope(
   inventory: { path: string }[],
   changedPaths: string[],
   policy: GuardRunPolicy,
+  source: NonNullable<GuardVerificationScope['source']>,
+  confirmedDeletedPaths: Set<string> | undefined,
 ): GuardVerificationScope {
-  const revisions = [resolveGitCommit(root, 'HEAD'), resolveGitCommit(root, policy.ref)].filter(
-    (revision): revision is string => revision !== undefined,
-  );
   const paths = [
     ...new Set(
       [...inventory.map((file) => file.path), ...changedPaths]
@@ -545,41 +538,46 @@ function verificationScope(
   ].sort();
   let complete = true;
   const files = paths.map((path) => {
+    if (
+      !path ||
+      path.startsWith('/') ||
+      /^[a-z]:\//i.test(path) ||
+      path.split('/').includes('..')
+    ) {
+      complete = false;
+      return { path, status: 'unavailable' as const };
+    }
+    const fullPath = resolve(root, path);
+    let stats: ReturnType<typeof lstatSync>;
     try {
-      if (
-        !path ||
-        path.startsWith('/') ||
-        /^[a-z]:\//i.test(path) ||
-        path.split('/').includes('..')
-      ) {
+      stats = lstatSync(fullPath);
+    } catch (error) {
+      if (!isMissingVerificationScopePathError(error)) {
         complete = false;
         return { path, status: 'unavailable' as const };
       }
-      const fullPath = resolve(root, path);
-      const stats = lstatSync(fullPath);
-      if (!stats.isFile() || stats.isSymbolicLink()) {
-        complete = false;
-        return { path, status: 'unavailable' as const };
-      }
+      if (confirmedDeletedPaths?.has(path)) return { path, status: 'deleted' as const };
+      complete = false;
+      return { path, status: 'unavailable' as const };
+    }
+    if (!stats.isFile() || stats.isSymbolicLink()) {
+      complete = false;
+      return { path, status: 'unavailable' as const };
+    }
+    try {
       return { path, status: 'present' as const, sha256: sha256(readFileSync(fullPath)) };
     } catch {
-      const digest = baseFileDigest(root, revisions, path);
-      if (digest) return { path, status: 'deleted' as const, sha256: digest };
       complete = false;
       return { path, status: 'unavailable' as const };
     }
   });
-  const fingerprint = createHash('sha256')
-    .update(
-      JSON.stringify({
-        algorithm: 'sha256',
-        policyFingerprint: policy.fingerprint,
-        tool: { name: '@codapult/guard', version: packageJson.version },
-        files,
-      }),
-    )
-    .digest('hex');
-  return { algorithm: 'sha256', fingerprint, complete, stable: true, files };
+  const fingerprint = computeVerificationScopeFingerprint({
+    policyFingerprint: policy.fingerprint,
+    tool: { name: '@codapult/guard', version: packageJson.version },
+    files,
+    source,
+  });
+  return { algorithm: 'sha256', fingerprint, complete, stable: true, source, files };
 }
 
 function buildVerificationReceipt(
@@ -608,7 +606,8 @@ function buildVerificationReceipt(
   );
   const baseCommit = resolveGitCommit(root, policy.ref);
   const baseChangedFiles = committedFilesSince(root, policy.ref);
-  const workingTreeFiles = workingTreeChangedFiles(root) ?? impact.requestedFiles;
+  const workingTree = receiptWorkingTreeSnapshot(root, impact.requestedFiles);
+  const workingTreeFiles = workingTree.files;
   const receiptChecks: Record<string, GuardVerificationReceiptCheck> = {};
   for (const [name, result] of Object.entries(checks)) {
     receiptChecks[name] = receiptCheck(result);
@@ -625,6 +624,10 @@ function buildVerificationReceipt(
     version: 1,
     kind: 'verification-receipt',
     subject: {
+      ...(process.env.GITHUB_REPOSITORY
+        ? { repository: process.env.GITHUB_REPOSITORY }
+        : {}),
+      ...(scope.source?.commit ? { commit: scope.source.commit } : {}),
       ...(githubContext?.event ? { githubEvent: githubContext.event } : {}),
       ...(githubContext?.headSha ? { headSha: githubContext.headSha } : {}),
       ...(githubContext?.baseSha ? { baseSha: githubContext.baseSha } : {}),
@@ -634,7 +637,7 @@ function buildVerificationReceipt(
       ...(baseChangedFiles ? { baseChangedFiles } : {}),
       ...(workingTreeFiles.length > 0 ? { workingTreeFiles } : {}),
       changedFiles: [...new Set([...(baseChangedFiles ?? []), ...workingTreeFiles])].sort(),
-      workingTreeDirty: workingTreeFiles.length > 0,
+      ...(workingTree.dirty !== undefined ? { workingTreeDirty: workingTree.dirty } : {}),
     },
     policy,
     verificationScope: scope,
@@ -678,12 +681,19 @@ function buildPolicyGateReceipt(
     process.env.GITHUB_SHA,
   );
   const baseChangedFiles = committedFilesSince(root, policy.ref);
-  const workingTreeFiles = workingTreeChangedFiles(root) ?? [];
+  const workingTree = receiptWorkingTreeSnapshot(root);
+  const workingTreeFiles = workingTree.files;
   const baseCommit = resolveGitCommit(root, policy.ref);
   return {
     version: 1,
     kind: 'verification-receipt',
     subject: {
+      ...(process.env.GITHUB_REPOSITORY
+        ? { repository: process.env.GITHUB_REPOSITORY }
+        : {}),
+      ...(resolveGitCommit(root, 'HEAD')
+        ? { commit: resolveGitCommit(root, 'HEAD') }
+        : {}),
       ...(githubContext?.event ? { githubEvent: githubContext.event } : {}),
       ...(githubContext?.headSha ? { headSha: githubContext.headSha } : {}),
       ...(githubContext?.baseSha ? { baseSha: githubContext.baseSha } : {}),
@@ -693,7 +703,7 @@ function buildPolicyGateReceipt(
       ...(baseChangedFiles ? { baseChangedFiles } : {}),
       ...(workingTreeFiles.length > 0 ? { workingTreeFiles } : {}),
       changedFiles: [...new Set([...(baseChangedFiles ?? []), ...workingTreeFiles])].sort(),
-      workingTreeDirty: hasWorkingTreeChanges(root),
+      ...(workingTree.dirty !== undefined ? { workingTreeDirty: workingTree.dirty } : {}),
     },
     policy,
     policySurface,
@@ -1003,9 +1013,30 @@ export function runGuardVerification(
   const projectChecks = options.projectChecks ?? agentConfig.completionGate.projectChecks;
   const checks = projectChecks ? (options.checks ?? agentConfig.completionGate.checks) : [];
   const discoveryStartedAt = Date.now();
+  const githubContext = readGuardGitHubContext(
+    process.env.GITHUB_EVENT_NAME,
+    process.env.GITHUB_EVENT_PATH,
+    resolveGitCommit(root, 'HEAD'),
+    process.env.GITHUB_SHA,
+  );
+  const scopeSource: NonNullable<GuardVerificationScope['source']> = {
+    repository: process.env.GITHUB_REPOSITORY ?? null,
+    commit: resolveGitCommit(root, 'HEAD') ?? null,
+    headSha: githubContext?.headSha ?? null,
+    baseSha: githubContext?.baseSha ?? null,
+    baseCommit: resolveGitCommit(root, policy.ref) ?? null,
+  };
+  const confirmedDeletedPaths = deletedFilesSince(root, policy.ref);
   const workspaceModel = discoverProject(root);
   const scopeChangedPaths = changedFilesSince(root, policy.ref) ?? workspaceModel.git.changedFiles;
-  const initialScope = verificationScope(root, workspaceModel.files, scopeChangedPaths, policy);
+  const initialScope = verificationScope(
+    root,
+    workspaceModel.files,
+    scopeChangedPaths,
+    policy,
+    scopeSource,
+    confirmedDeletedPaths,
+  );
   const checksStartedAt = Date.now();
   const results = runProjectChecks(root, checks, { timeout: options.timeout });
   recordGuardRunStage(
@@ -1063,6 +1094,8 @@ export function runGuardVerification(
     finalWorkspaceModel.files,
     changedFilesSince(root, policy.ref) ?? finalWorkspaceModel.git.changedFiles,
     policy,
+    scopeSource,
+    confirmedDeletedPaths,
   );
   const scopeStable =
     initialScope.complete &&

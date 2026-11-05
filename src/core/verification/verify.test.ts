@@ -125,6 +125,8 @@ describe('runGuardVerification', () => {
       stages: { 'project-checks': 'skipped', adapters: 'skipped' },
       checks: {},
     });
+    expect(result.run.receipt?.subject.workingTreeDirty).toBeUndefined();
+    expect(result.run.receipt?.subject.workingTreeFiles).toBeUndefined();
   });
 
   it('records SHAs from the pull request attached to a trusted workflow_run event', () => {
@@ -332,9 +334,8 @@ describe('runGuardVerification', () => {
     expect(result.run.receipt?.tool.version).toMatch(/^\d+\.\d+\.\d+/);
   });
 
-  it('binds a deleted tracked file to its last committed bytes', () => {
-    const content = 'export const retired = true;\n';
-    const { root, base } = createGitPolicyRoot({ 'deleted.ts': content });
+  it('records a deleted tracked path without claiming its previous bytes were verified', () => {
+    const { root, base } = createGitPolicyRoot({ 'deleted.ts': 'export const retired = true;\n' });
     rmSync(join(root, 'deleted.ts'));
 
     const result = runGuardVerification(root, {
@@ -346,7 +347,6 @@ describe('runGuardVerification', () => {
     expect(result.run.receipt?.verificationScope?.files).toContainEqual({
       path: 'deleted.ts',
       status: 'deleted',
-      sha256: createHash('sha256').update(content).digest('hex'),
     });
     expect(result.run.receipt?.verificationScope).toMatchObject({ complete: true, stable: true });
   });
