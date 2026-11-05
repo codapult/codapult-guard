@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -8,6 +9,15 @@ import { fileURLToPath } from 'node:url';
 export const GUARD_STATEMENT_TYPE = 'https://in-toto.io/Statement/v1';
 export const GUARD_PREDICATE_TYPE =
   'https://github.com/codapult/codapult-guard/blob/main/docs/attestations/guard-verification-v1.md';
+const GUARD_VERIFICATION_STAGES = new Set([
+  'runtime',
+  'project-checks',
+  'adapters',
+  'architecture-policy',
+  'policy-surface',
+  'ci-integrity',
+  'verification-scope',
+]);
 
 function fail(message) {
   throw new Error(message);
@@ -22,7 +32,7 @@ function isSha(value) {
 }
 
 /** Validate the Guard statement after its file signature and signer identity have been verified. */
-export function validateGuardStatement(statement, { expectedHead, expectedBase }) {
+export function validateGuardStatement(statement, { expectedHead, expectedBase, expectedRepository }) {
   if (!isSha(expectedHead) || !isSha(expectedBase)) {
     fail('Expected head and base values must be full 40-character commit SHAs.');
   }
@@ -32,19 +42,12 @@ export function validateGuardStatement(statement, { expectedHead, expectedBase }
   if (statement.predicateType !== GUARD_PREDICATE_TYPE) {
     fail(`Unsupported Guard predicate type; expected ${GUARD_PREDICATE_TYPE}.`);
   }
-  if (!Array.isArray(statement.subject) || statement.subject.length !== 1) {
-    fail('Guard statement must contain exactly one subject.');
+  if (!Array.isArray(statement.subject) || statement.subject.length === 0) {
+    fail('Guard statement must contain its verification-context subject.');
   }
 
-  const fingerprint = statement.subject[0]?.digest?.sha256;
   const receipt = statement.predicate?.receipt;
   const scope = receipt?.verificationScope;
-  if (statement.subject[0]?.name !== 'codapult-guard:verification-context') {
-    fail('Guard statement subject name is invalid.');
-  }
-  if (typeof fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(fingerprint)) {
-    fail('Guard statement subject must contain a SHA-256 digest.');
-  }
   if (!isRecord(receipt) || receipt.version !== 1 || receipt.kind !== 'verification-receipt') {
     fail('Unsupported Guard verification receipt schema.');
   }
@@ -56,19 +59,124 @@ export function validateGuardStatement(statement, { expectedHead, expectedBase }
     fail('Guard receipt is not a successful verification run.');
   }
   if (
+    !Array.isArray(receipt.requiredStages) ||
+    receipt.requiredStages.length === 0 ||
+    !receipt.requiredStages.includes('verification-scope') ||
+    !Array.isArray(receipt.incompleteStages) ||
+    receipt.incompleteStages.length > 0 ||
+    !isRecord(receipt.stages) ||
+    receipt.requiredStages.some((stage) => typeof stage !== 'string' || stage.length === 0) ||
+    new Set(receipt.requiredStages).size !== receipt.requiredStages.length ||
+    receipt.requiredStages.some((stage) => !GUARD_VERIFICATION_STAGES.has(stage)) ||
+    receipt.requiredStages.some((stage) => receipt.stages[stage] !== 'ok')
+  ) {
+    fail('Guard receipt has incomplete required verification stages.');
+  }
+  if (
     !isRecord(scope) ||
     scope.algorithm !== 'sha256' ||
     scope.complete !== true ||
     scope.stable !== true ||
-    scope.fingerprint !== fingerprint
+    !isRecord(scope.source) ||
+    !/^[a-f0-9]{40}$/.test(scope.source.commit ?? '') ||
+    !/^[a-f0-9]{64}$/.test(scope.fingerprint ?? '') ||
+    !Array.isArray(scope.files) ||
+    !isRecord(receipt.policy) ||
+    !/^[a-f0-9]{64}$/.test(receipt.policy.fingerprint ?? '') ||
+    !isRecord(receipt.tool) ||
+    receipt.tool.name !== '@codapult/guard' ||
+    typeof receipt.tool.version !== 'string' ||
+    receipt.tool.version.length === 0
   ) {
-    fail('Guard receipt scope is incomplete, unstable, or does not match the statement subject.');
+    fail('Guard receipt scope is incomplete, unstable, or has unsupported fingerprint inputs.');
   }
   if (
+    scope.source.commit !== expectedHead ||
+    scope.source.headSha !== expectedHead ||
+    scope.source.baseSha !== expectedBase ||
+    scope.source.baseCommit !== expectedBase ||
+    (expectedRepository !== undefined &&
+      (typeof scope.source.repository !== 'string' ||
+        scope.source.repository.toLowerCase() !== expectedRepository.toLowerCase()))
+  ) {
+    fail('Guard scope is not bound to the expected repository and head/base revisions.');
+  }
+
+  const expectedFingerprint = createHash('sha256')
+    .update(
+      JSON.stringify({
+        algorithm: 'sha256',
+        policyFingerprint: receipt.policy.fingerprint,
+        tool: { name: receipt.tool.name, version: receipt.tool.version },
+        files: scope.files.map((file) =>
+          file.status === 'present'
+            ? { path: file.path, status: file.status, sha256: file.sha256 }
+            : { path: file.path, status: file.status },
+        ),
+        source: {
+          repository: scope.source.repository,
+          commit: scope.source.commit,
+          headSha: scope.source.headSha,
+          baseSha: scope.source.baseSha,
+          baseCommit: scope.source.baseCommit,
+        },
+      }),
+      'utf8',
+    )
+    .digest('hex');
+  if (scope.fingerprint !== expectedFingerprint) {
+    fail(
+      'Guard verification-scope fingerprint does not match its policy, tool, and file inventory.',
+    );
+  }
+
+  const expectedSubjects = [
+    { name: 'codapult-guard:verification-context', sha256: scope.fingerprint },
+  ];
+  let previousPath;
+  for (const file of scope.files) {
+    if (
+      !isRecord(file) ||
+      typeof file.path !== 'string' ||
+      file.path.length === 0 ||
+      file.path.includes('\\') ||
+      file.path.startsWith('/') ||
+      /^[a-z]:\//i.test(file.path) ||
+      file.path.split('/').includes('..') ||
+      !['present', 'deleted'].includes(file.status) ||
+      (file.status === 'present'
+        ? typeof file.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(file.sha256)
+        : file.sha256 !== undefined)
+    ) {
+      fail('Guard receipt contains an invalid file digest or status in a complete scope.');
+    }
+    if (previousPath !== undefined && file.path <= previousPath) {
+      fail('Guard receipt scope files are not uniquely sorted by path.');
+    }
+    previousPath = file.path;
+    if (file.status === 'present') {
+      expectedSubjects.push({ name: `file:${file.path}`, sha256: file.sha256 });
+    }
+  }
+  if (statement.subject.length !== expectedSubjects.length) {
+    fail('Guard statement subjects do not match the verification scope.');
+  }
+  for (const [index, expected] of expectedSubjects.entries()) {
+    const actual = statement.subject[index];
+    if (actual?.name !== expected.name || actual?.digest?.sha256 !== expected.sha256) {
+      fail('Guard statement subjects do not match the verification scope.');
+    }
+  }
+  if (
+    (receipt.subject?.repository ?? null) !== scope.source.repository ||
+    receipt.subject?.commit !== scope.source.commit ||
     !isSha(receipt.subject?.headSha) ||
     receipt.subject.headSha.toLowerCase() !== expectedHead.toLowerCase() ||
     !isSha(receipt.subject?.baseSha) ||
-    receipt.subject.baseSha.toLowerCase() !== expectedBase.toLowerCase()
+    receipt.subject.baseSha.toLowerCase() !== expectedBase.toLowerCase() ||
+    receipt.subject.headSha !== scope.source.headSha ||
+    receipt.subject.baseSha !== scope.source.baseSha ||
+    receipt.subject.baseCommit !== scope.source.baseCommit
   ) {
     fail('Guard receipt does not match the expected pull request head and base SHAs.');
   }
@@ -77,7 +185,7 @@ export function validateGuardStatement(statement, { expectedHead, expectedBase }
     runId: receipt.runId,
     headSha: receipt.subject.headSha,
     baseSha: receipt.subject.baseSha,
-    fingerprint,
+    fingerprint: scope.fingerprint,
   };
 }
 
@@ -151,6 +259,7 @@ export function main(args = process.argv.slice(2), run = spawnSync) {
   const receipt = validateGuardStatement(statement, {
     expectedHead: values.get('--expected-head'),
     expectedBase: values.get('--expected-base'),
+    expectedRepository: repo,
   });
   process.stdout.write(
     `Verified Guard receipt ${receipt.runId}: head ${receipt.headSha}, base ${receipt.baseSha}, scope sha256:${receipt.fingerprint}\n`,

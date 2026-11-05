@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { parse } from 'yaml';
@@ -72,8 +73,17 @@ interface TestReceipt {
   outcome: string;
   runId: string;
   gate: string;
-  subject: { headSha: string; baseSha: string };
-  policy: { source: string; ref: string; changedFromBase: boolean };
+  requiredStages: string[];
+  incompleteStages: string[];
+  stages: Record<string, string>;
+  subject: {
+    repository: string;
+    commit: string;
+    headSha: string;
+    baseSha: string;
+    baseCommit: string;
+  };
+  policy: { fingerprint: string; source: string; ref: string; changedFromBase: boolean };
   policySurface: {
     complete: boolean;
     workflowChanged: boolean;
@@ -86,7 +96,16 @@ interface TestReceipt {
     complete: boolean;
     stable: boolean;
     fingerprint: string;
+    source: {
+      repository: string | null;
+      commit: string | null;
+      headSha: string | null;
+      baseSha: string | null;
+      baseCommit: string | null;
+    };
+    files: { path: string; status: string; sha256?: string }[];
   };
+  tool: { name: string; version: string };
 }
 
 const workflow = parse(
@@ -101,6 +120,11 @@ const guardCiTemplate = parse(
 const trustedMergeGroupWorkflow = parse(
   readFileSync(new URL('../../../docs/guard-trusted-merge-group.yml', import.meta.url), 'utf8'),
 ) as TrustedMergeGroupWorkflow;
+const guardVersion = (
+  JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')) as {
+    version: string;
+  }
+).version;
 
 function embeddedScript(
   jobName: string,
@@ -121,9 +145,12 @@ function runEmbeddedScript(
   extraEnv: Record<string, string> = {},
 ): Record<string, string> {
   const appended: Record<string, string> = {};
-  const source = script.replace(/^import \{[^}]+\} from 'node:fs';\n/, '');
+  const written: Record<string, string> = {};
+  const source = script.replace(/^import \{[^}]+\} from 'node:(?:fs|crypto)';\n/gm, '');
   runInNewContext(source, {
     process: { env: extraEnv },
+    createHash,
+    Buffer,
     readFileSync: (path: string) => {
       const name = path.split('/').at(-1) ?? '';
       if (!(name in files)) throw new Error(`No test file mapped for ${name}`);
@@ -133,9 +160,13 @@ function runEmbeddedScript(
       const name = path.split('/').at(-1) ?? '';
       appended[name] = (appended[name] ?? '') + value;
     },
+    writeFileSync: (path: string, value: string) => {
+      const name = path.split('/').at(-1) ?? '';
+      written[name] = value;
+    },
     rmSync: () => undefined,
   });
-  return appended;
+  return { ...written, ...appended };
 }
 
 const contextScript = embeddedScript('inspect', 'Pull request number');
@@ -194,7 +225,9 @@ function receiptEnvironment(mode = 'strict'): Record<string, string> {
   return {
     BASE_SHA: 'b'.repeat(40),
     HEAD_SHA: 'a'.repeat(40),
+    GITHUB_REPOSITORY: 'codapult/example',
     GUARD_POLICY_MODE: mode,
+    GUARD_VERSION: guardVersion,
     GUARD_RESULT_FILE: 'guard-verification.json',
     GUARD_STATEMENT_FILE: 'guard-verification.intoto.json',
     GITHUB_OUTPUT: 'output.txt',
@@ -218,19 +251,62 @@ function testReceipt(
     suppressionMarkers?: string[];
     ciStatus?: string;
     noCiIntegrity?: boolean;
+    toolVersion?: string;
+    scopeFiles?: TestReceipt['verificationScope']['files'];
+    requiredStages?: string[];
+    incompleteStages?: string[];
+    stages?: Record<string, string>;
   } = {},
 ): TestReceipt {
+  const policyFingerprint = 'd'.repeat(64);
+  const tool = { name: '@codapult/guard', version: overrides.toolVersion ?? guardVersion };
+  const files: TestReceipt['verificationScope']['files'] = overrides.scopeFiles ?? [
+    { path: 'src/example.ts', status: 'present', sha256: 'e'.repeat(64) },
+    { path: 'src/removed.ts', status: 'deleted' },
+  ];
+  const source = {
+    repository: 'codapult/example',
+    commit: overrides.headSha ?? 'a'.repeat(40),
+    headSha: overrides.headSha ?? 'a'.repeat(40),
+    baseSha: overrides.baseSha ?? 'b'.repeat(40),
+    baseCommit: overrides.baseSha ?? 'b'.repeat(40),
+  };
+  const fingerprint = createHash('sha256')
+    .update(
+      JSON.stringify({
+        algorithm: 'sha256',
+        policyFingerprint,
+        tool,
+        files,
+        source: {
+          repository: source.repository,
+          commit: source.commit,
+          headSha: source.headSha,
+          baseSha: source.baseSha,
+          baseCommit: source.baseCommit,
+        },
+      }),
+      'utf8',
+    )
+    .digest('hex');
   return {
     version: overrides.receiptVersion ?? 1,
     kind: 'verification-receipt',
     outcome: overrides.outcome ?? 'pass',
     runId: 'run-123',
     gate: 'none',
+    requiredStages: overrides.requiredStages ?? ['verification-scope'],
+    incompleteStages: overrides.incompleteStages ?? [],
+    stages: overrides.stages ?? { 'verification-scope': 'ok' },
     subject: {
+      repository: 'codapult/example',
+      commit: overrides.headSha ?? 'a'.repeat(40),
       headSha: overrides.headSha ?? 'a'.repeat(40),
       baseSha: overrides.baseSha ?? 'b'.repeat(40),
+      baseCommit: overrides.baseSha ?? 'b'.repeat(40),
     },
     policy: {
+      fingerprint: policyFingerprint,
       source: overrides.policySource ?? 'git-ref',
       ref: overrides.policyRef ?? 'b'.repeat(40),
       changedFromBase: overrides.policyChanged ?? false,
@@ -253,8 +329,11 @@ function testReceipt(
       algorithm: overrides.scopeAlgorithm ?? 'sha256',
       complete: true,
       stable: true,
-      fingerprint: 'c'.repeat(64),
+      fingerprint,
+      source,
+      files,
     },
+    tool,
   };
 }
 
@@ -271,6 +350,11 @@ function statementFor(receipt: TestReceipt): {
         name: 'codapult-guard:verification-context',
         digest: { sha256: receipt.verificationScope.fingerprint },
       },
+      ...receipt.verificationScope.files.flatMap((file) =>
+        file.status === 'present' && file.sha256
+          ? [{ name: `file:${file.path}`, digest: { sha256: file.sha256 } }]
+          : [],
+      ),
     ],
     predicateType:
       'https://github.com/codapult/codapult-guard/blob/main/docs/attestations/guard-verification-v1.md',
@@ -594,13 +678,60 @@ describe('trusted PR verification workflow template', () => {
     expect(output['output.txt']).toBe('attestation=true\n');
   });
 
+  it('requires the receipt tool version to match the pinned Guard package version', () => {
+    expect(() =>
+      runEmbeddedScript(
+        receiptScript,
+        receiptFiles({ toolVersion: 'unexpected-version' }),
+        receiptEnvironment(),
+      ),
+    ).toThrow('pinned Guard package');
+  });
+
   it.each([
+    [
+      'duplicate scope paths',
+      [
+        { path: 'src/example.ts', status: 'present', sha256: 'e'.repeat(64) },
+        { path: 'src/example.ts', status: 'present', sha256: 'f'.repeat(64) },
+      ],
+    ],
+    [
+      'unsorted scope paths',
+      [
+        { path: 'src/z.ts', status: 'present', sha256: 'e'.repeat(64) },
+        { path: 'src/a.ts', status: 'present', sha256: 'f'.repeat(64) },
+      ],
+    ],
+  ])('rejects %s before attesting', (_description, scopeFiles) => {
+    expect(() =>
+      runEmbeddedScript(receiptScript, receiptFiles({ scopeFiles }), receiptEnvironment()),
+    ).toThrow('paths must be unique and sorted');
+  });
+
+  it.each([
+    ['empty required stages', { requiredStages: [], stages: {} }],
+    ['missing required scope stage', { requiredStages: ['architecture-policy'] }],
+    [
+      'unsupported required stage',
+      {
+        requiredStages: ['verification-scope', 'future-stage'],
+        stages: { 'verification-scope': 'ok', 'future-stage': 'ok' },
+      },
+    ],
     ['head SHA', { headSha: 'd'.repeat(40) }],
     ['base SHA', { baseSha: 'd'.repeat(40) }],
     ['policy source', { policySource: 'working-tree' }],
     ['policy base ref', { policyRef: 'd'.repeat(40) }],
     ['unknown schema', { receiptVersion: 2 }],
+    ['unexpected Guard version', { toolVersion: 'unexpected-version' }],
     ['unknown scope hash', { scopeAlgorithm: 'sha1' }],
+    [
+      'deleted scope path with a previous-content digest',
+      {
+        scopeFiles: [{ path: 'src/removed.ts', status: 'deleted', sha256: 'f'.repeat(64) }],
+      },
+    ],
     ['incomplete policy surface', { surfaceComplete: false }],
   ])('refuses attestation for invalid %s', (_case, overrides) => {
     expect(() =>
@@ -641,6 +772,135 @@ describe('trusted PR verification workflow template', () => {
         step.run?.includes('pnpm install --frozen-lockfile'),
       )?.run,
     ).toContain('--ignore-scripts');
+  });
+
+  it('signs the Guard predicate and exports DSSE envelopes as one-per-line JSONL', () => {
+    const attestSteps = workflow.jobs?.attest.steps ?? [];
+    const guardSign = attestSteps.find(
+      (step) => step.name === 'Sign the Guard verification predicate',
+    );
+    const exportStep = attestSteps.find(
+      (step) => step.name === 'Export the signed DSSE envelopes as JSONL',
+    );
+    const upload = attestSteps.find(
+      (step) => step.name === 'Upload the signed in-toto JSONL envelope',
+    );
+
+    expect(guardSign?.with?.['predicate-type']).toBe(
+      'https://github.com/codapult/codapult-guard/blob/main/docs/attestations/guard-verification-v1.md',
+    );
+    expect(guardSign?.with?.['subject-checksums']).toContain('guard-verification-subjects.sha256');
+    expect(exportStep?.run).toContain('dsseEnvelope');
+    expect(exportStep?.env?.STATEMENT_PATH).toBe(
+      '${{ github.workspace }}/guard-verification.intoto.json',
+    );
+    expect(upload?.with?.path).toContain('guard-verification.intoto.jsonl');
+    expect(upload?.with?.path).toContain('guard-verification.sigstore.jsonl');
+  });
+
+  it('enforces GitHub subject-count limits at the signing boundary', () => {
+    const prepareStep = workflow.jobs?.attest.steps?.find(
+      (step) => step.name === 'Prepare Guard predicate and subject checksums',
+    );
+    expect(prepareStep?.run).toContain('statement.subject.length > 1_024');
+    expect(prepareStep?.run).toContain('GitHub attestation subject limit of 1,024');
+
+    const tooManySubjects = JSON.stringify({
+      subject: Array.from({ length: 1_025 }, (_, index) => ({
+        name: `file:${index}`,
+        digest: { sha256: 'a'.repeat(64) },
+      })),
+      predicate: { receipt: {} },
+    });
+    expect(() =>
+      runEmbeddedScript(
+        embeddedScript('attest', 'GitHub attestation subject limit of 1,024'),
+        { 'guard-verification.intoto.json': tooManySubjects },
+        {
+          STATEMENT_PATH: 'guard-verification.intoto.json',
+          PREDICATE_PATH: 'predicate.json',
+          SUBJECT_CHECKSUMS_PATH: 'subjects.sha256',
+        },
+      ),
+    ).toThrow('GitHub attestation subject limit of 1,024');
+  });
+
+  it('enforces GitHub predicate-size limits at the signing boundary', () => {
+    const prepareStep = workflow.jobs?.attest.steps?.find(
+      (step) => step.name === 'Prepare Guard predicate and subject checksums',
+    );
+    expect(prepareStep?.run).toContain("Buffer.byteLength(predicate, 'utf8')");
+    expect(prepareStep?.run).toContain('16 * 1024 * 1024');
+
+    const oversizedStatement = JSON.stringify({
+      subject: [
+        { name: 'codapult-guard:verification-context', digest: { sha256: 'a'.repeat(64) } },
+      ],
+      predicate: { receipt: { detail: 'x'.repeat(16 * 1024 * 1024) } },
+    });
+    expect(() =>
+      runEmbeddedScript(
+        embeddedScript('attest', 'GitHub attestation limit of 16 MiB'),
+        { 'guard-verification.intoto.json': oversizedStatement },
+        {
+          STATEMENT_PATH: 'guard-verification.intoto.json',
+          PREDICATE_PATH: 'predicate.json',
+          SUBJECT_CHECKSUMS_PATH: 'subjects.sha256',
+        },
+      ),
+    ).toThrow('GitHub attestation limit of 16 MiB');
+  });
+
+  it('exports Guard and GitHub provenance DSSE envelopes as separate JSONL records', () => {
+    const receipt = testReceipt();
+    const statement = statementFor(receipt);
+    const statementText = JSON.stringify(statement);
+    const statementDigest = createHash('sha256').update(statementText).digest('hex');
+    const makeBundle = (payload: unknown) => ({
+      mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json',
+      dsseEnvelope: {
+        payloadType: 'application/vnd.in-toto+json',
+        payload: Buffer.from(JSON.stringify(payload)).toString('base64'),
+        signatures: [{ sig: 'test-signature' }],
+      },
+    });
+    const statementProvenance = {
+      _type: 'https://in-toto.io/Statement/v1',
+      subject: [{ name: 'guard-verification.intoto.json', digest: { sha256: statementDigest } }],
+      predicateType: 'https://slsa.dev/provenance/v1',
+      predicate: {},
+    };
+    const files = {
+      'guard-statement.json': statementText,
+      'guard-bundle.json': JSON.stringify(makeBundle(statement)),
+      'statement-bundle.json': JSON.stringify(makeBundle(statementProvenance)),
+    };
+
+    const output = runEmbeddedScript(
+      embeddedScript('attest', 'Expected a Sigstore bundle containing a DSSE in-toto envelope'),
+      files,
+      {
+        GUARD_BUNDLE_PATH: 'guard-bundle.json',
+        STATEMENT_BUNDLE_PATH: 'statement-bundle.json',
+        STATEMENT_PATH: 'guard-statement.json',
+        OUTPUT_PATH: 'guard-verification.intoto.jsonl',
+        BUNDLE_OUTPUT_PATH: 'guard-verification.sigstore.jsonl',
+      },
+    );
+    const lines = output['guard-verification.intoto.jsonl'].trim().split('\n');
+    const bundleLines = output['guard-verification.sigstore.jsonl'].trim().split('\n');
+    expect(lines).toHaveLength(2);
+    expect(bundleLines).toHaveLength(2);
+    expect(bundleLines.map((line) => JSON.parse(line))).toEqual([
+      makeBundle(statement),
+      makeBundle(statementProvenance),
+    ]);
+    expect(
+      JSON.parse(Buffer.from(JSON.parse(lines[0]).payload, 'base64').toString('utf8')),
+    ).toEqual(statement);
+    expect(
+      JSON.parse(Buffer.from(JSON.parse(lines[1]).payload, 'base64').toString('utf8')),
+    ).toEqual(statementProvenance);
   });
 
   it('pins every external action to a full commit SHA', () => {

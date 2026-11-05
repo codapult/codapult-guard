@@ -148,11 +148,13 @@ jobs:
         env:
           BASE_SHA: ${{ needs.inspect.outputs.base_sha }}
           HEAD_SHA: ${{ needs.inspect.outputs.head_sha }}
+          GUARD_VERSION: ${{ vars.CODAPULT_GUARD_VERSION }}
           GUARD_POLICY_MODE: ${{ vars.CODAPULT_GUARD_POLICY_MODE || 'strict' }}
           GUARD_RESULT_FILE: ${{ runner.temp }}/guard-verification.json
           GUARD_STATEMENT_FILE: ${{ runner.temp }}/guard-verification.intoto.json
         run: |
           node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
           import { appendFileSync, readFileSync, rmSync } from 'node:fs';
           const result = JSON.parse(readFileSync(process.env.GUARD_RESULT_FILE, 'utf8'));
           const receipt = result.run?.receipt;
@@ -160,6 +162,31 @@ jobs:
           if (result.outcome !== 'pass' || receipt?.outcome !== 'pass') throw new Error('Guard did not pass.');
           if (receipt.version !== 1 || receipt.kind !== 'verification-receipt' || typeof receipt.runId !== 'string' || receipt.runId.length === 0) {
             throw new Error('Guard receipt has an unsupported schema or no run ID.');
+          }
+          const supportedStages = new Set([
+            'runtime',
+            'project-checks',
+            'adapters',
+            'architecture-policy',
+            'policy-surface',
+            'ci-integrity',
+            'verification-scope',
+          ]);
+          if (
+            !Array.isArray(receipt.requiredStages) ||
+            receipt.requiredStages.length === 0 ||
+            !receipt.requiredStages.includes('verification-scope') ||
+            !Array.isArray(receipt.incompleteStages) ||
+            receipt.incompleteStages.length > 0 ||
+            !receipt.stages ||
+            typeof receipt.stages !== 'object' ||
+            Array.isArray(receipt.stages) ||
+            new Set(receipt.requiredStages).size !== receipt.requiredStages.length ||
+            receipt.requiredStages.some(
+              (stage) => !supportedStages.has(stage) || receipt.stages[stage] !== 'ok',
+            )
+          ) {
+            throw new Error('Guard receipt has incomplete or unsupported required stages.');
           }
           if (receipt.subject?.headSha !== process.env.HEAD_SHA || receipt.subject?.baseSha !== process.env.BASE_SHA) {
             throw new Error('Guard receipt does not match the triggering PR head and base SHAs.');
@@ -170,8 +197,73 @@ jobs:
           if (typeof receipt.policy.changedFromBase !== 'boolean') {
             throw new Error('Guard receipt does not state whether policy changed from the base.');
           }
-          if (scope?.algorithm !== 'sha256' || scope.complete !== true || scope.stable !== true || !/^[a-f0-9]{64}$/.test(scope.fingerprint ?? '')) {
+          if (scope?.algorithm !== 'sha256' || scope.complete !== true || scope.stable !== true || !/^[a-f0-9]{64}$/.test(scope.fingerprint ?? '') || !Array.isArray(scope.files)) {
             throw new Error('Guard receipt has no complete, stable verification scope.');
+          }
+          if (
+            scope.source?.repository !== process.env.GITHUB_REPOSITORY ||
+            scope.source?.commit !== process.env.HEAD_SHA ||
+            scope.source?.headSha !== process.env.HEAD_SHA ||
+            scope.source?.baseSha !== process.env.BASE_SHA ||
+            scope.source?.baseCommit !== process.env.BASE_SHA
+          ) {
+            throw new Error('Guard verification scope is not bound to this repository and PR revisions.');
+          }
+          if (
+            (receipt.subject?.repository ?? null) !== scope.source.repository ||
+            receipt.subject?.commit !== scope.source.commit ||
+            receipt.subject?.headSha !== scope.source.headSha ||
+            receipt.subject?.baseSha !== scope.source.baseSha ||
+            receipt.subject?.baseCommit !== scope.source.baseCommit
+          ) {
+            throw new Error('Guard receipt Git context does not match its fingerprinted source binding.');
+          }
+          if (
+            !/^[a-f0-9]{64}$/.test(receipt.policy?.fingerprint ?? '') ||
+            receipt.tool?.name !== '@codapult/guard' ||
+            receipt.tool?.version !== process.env.GUARD_VERSION ||
+            scope.files.some((file) =>
+              !file ||
+              typeof file.path !== 'string' ||
+              file.path.length === 0 ||
+              file.path.includes('\\') ||
+              file.path.startsWith('/') ||
+              /^[a-z]:\//i.test(file.path) ||
+              file.path.split('/').includes('..') ||
+              !['present', 'deleted'].includes(file.status) ||
+              (file.status === 'present'
+                ? !/^[a-f0-9]{64}$/.test(file.sha256 ?? '')
+                : file.sha256 !== undefined)
+            )
+          ) {
+            throw new Error('Guard receipt tool version or verification-scope fingerprint inputs do not match the pinned Guard package.');
+          }
+          let previousScopePath;
+          for (const file of scope.files) {
+            if (previousScopePath !== undefined && file.path <= previousScopePath) {
+              throw new Error('Guard verification-scope paths must be unique and sorted.');
+            }
+            previousScopePath = file.path;
+          }
+          const expectedFingerprint = createHash('sha256')
+            .update(JSON.stringify({
+              algorithm: 'sha256',
+              policyFingerprint: receipt.policy.fingerprint,
+              tool: { name: receipt.tool.name, version: receipt.tool.version },
+              files: scope.files.map((file) => file.status === 'present'
+                ? { path: file.path, status: file.status, sha256: file.sha256 }
+                : { path: file.path, status: file.status }),
+              source: {
+                repository: scope.source.repository,
+                commit: scope.source.commit,
+                headSha: scope.source.headSha,
+                baseSha: scope.source.baseSha,
+                baseCommit: scope.source.baseCommit,
+              },
+            }), 'utf8')
+            .digest('hex');
+          if (scope.fingerprint !== expectedFingerprint) {
+            throw new Error('Guard verification-scope fingerprint does not match its inventory.');
           }
           const surface = receipt.policySurface;
           if (
@@ -221,8 +313,14 @@ jobs:
             if (statement?._type !== 'https://in-toto.io/Statement/v1' || statement.predicateType !== 'https://github.com/codapult/codapult-guard/blob/main/docs/attestations/guard-verification-v1.md') {
               throw new Error('in-toto statement or Guard predicate type is invalid.');
             }
-            if (!Array.isArray(statement.subject) || statement.subject.length !== 1 || statement.subject[0]?.name !== 'codapult-guard:verification-context' || statement.subject[0]?.digest?.sha256 !== scope.fingerprint) {
-              throw new Error('in-toto statement subject does not match the verified scope.');
+            const expectedSubjects = [
+              { name: 'codapult-guard:verification-context', digest: { sha256: scope.fingerprint } },
+              ...scope.files
+                .filter((file) => file?.status === 'present')
+                .map((file) => ({ name: `file:${file.path}`, digest: { sha256: file.sha256 } })),
+            ];
+            if (JSON.stringify(statement.subject) !== JSON.stringify(expectedSubjects)) {
+              throw new Error('in-toto statement subjects do not match the verified scope.');
             }
             if (JSON.stringify(statementReceipt) !== JSON.stringify(receipt)) {
               throw new Error('in-toto statement does not match the verified receipt and scope.');
@@ -235,7 +333,7 @@ jobs:
         if: steps.result.outputs.attestation == 'true' && needs.inspect.outputs.fork != 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: guard-trusted-pr-attestation
+          name: guard-trusted-pr-statement
           path: ${{ runner.temp }}/guard-verification.intoto.json
           if-no-files-found: error
 
@@ -266,9 +364,119 @@ jobs:
       - name: Download the trusted verifier output
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: guard-trusted-pr-attestation
+          name: guard-trusted-pr-statement
 
-      - name: Sign the in-toto statement file
+      - name: Prepare Guard predicate and subject checksums
+        env:
+          STATEMENT_PATH: ${{ github.workspace }}/guard-verification.intoto.json
+          PREDICATE_PATH: ${{ runner.temp }}/guard-verification-predicate.json
+          SUBJECT_CHECKSUMS_PATH: ${{ runner.temp }}/guard-verification-subjects.sha256
+        run: |
+          node --input-type=module <<'NODE'
+          import { writeFileSync, readFileSync } from 'node:fs';
+          const statement = JSON.parse(readFileSync(process.env.STATEMENT_PATH, 'utf8'));
+          if (!Array.isArray(statement.subject) || statement.subject.length === 0 || !statement.predicate?.receipt) {
+            throw new Error('Guard statement has no subjects or predicate receipt.');
+          }
+          if (statement.subject.length > 1_024) {
+            throw new Error('Guard statement exceeds the GitHub attestation subject limit of 1,024.');
+          }
+          const predicate = JSON.stringify(statement.predicate);
+          if (Buffer.byteLength(predicate, 'utf8') > 16 * 1024 * 1024) {
+            throw new Error('Guard predicate exceeds the GitHub attestation limit of 16 MiB.');
+          }
+          const checksumLines = statement.subject.map((subject) => {
+            const digest = subject?.digest?.sha256;
+            const name = subject?.name;
+            if (!/^[a-f0-9]{64}$/.test(digest ?? '') || typeof name !== 'string' || name.includes('\0')) {
+              throw new Error('Guard statement contains an invalid subject digest or name.');
+            }
+            const escaped = /[\\\n]/.test(name);
+            const checksumName = name.replaceAll('\\', '\\\\').replaceAll('\n', '\\n');
+            return `${escaped ? '\\' : ''}${digest}  ${checksumName}`;
+          });
+          writeFileSync(process.env.PREDICATE_PATH, `${predicate}\n`);
+          writeFileSync(process.env.SUBJECT_CHECKSUMS_PATH, `${checksumLines.join('\n')}\n`);
+          NODE
+
+      - name: Sign the Guard statement file provenance
+        id: sign_statement
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: guard-verification.intoto.json
+
+      - name: Sign the Guard verification predicate
+        id: sign_guard
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: ${{ runner.temp }}/guard-verification-subjects.sha256
+          predicate-type: https://github.com/codapult/codapult-guard/blob/main/docs/attestations/guard-verification-v1.md
+          predicate-path: ${{ runner.temp }}/guard-verification-predicate.json
+
+      - name: Export the signed DSSE envelopes as JSONL
+        env:
+          GUARD_BUNDLE_PATH: ${{ steps.sign_guard.outputs.bundle-path }}
+          STATEMENT_BUNDLE_PATH: ${{ steps.sign_statement.outputs.bundle-path }}
+          STATEMENT_PATH: ${{ github.workspace }}/guard-verification.intoto.json
+          OUTPUT_PATH: ${{ runner.temp }}/guard-verification.intoto.jsonl
+          BUNDLE_OUTPUT_PATH: ${{ runner.temp }}/guard-verification.sigstore.jsonl
+        run: |
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const readBundleEnvelope = (path) => {
+            const bundle = JSON.parse(readFileSync(path, 'utf8'));
+            const envelope = bundle?.dsseEnvelope;
+            if (
+              !String(bundle?.mediaType ?? '').startsWith('application/vnd.dev.sigstore.bundle.') ||
+              !envelope ||
+              envelope.payloadType !== 'application/vnd.in-toto+json' ||
+              typeof envelope.payload !== 'string' ||
+              !Array.isArray(envelope.signatures) ||
+              envelope.signatures.length === 0
+            ) {
+              throw new Error(`Expected a Sigstore bundle containing a DSSE in-toto envelope: ${path}`);
+            }
+            return {
+              bundle,
+              envelope,
+              statement: JSON.parse(Buffer.from(envelope.payload, 'base64').toString('utf8')),
+            };
+          };
+          const sortKeys = (value) => Array.isArray(value)
+            ? value.map(sortKeys)
+            : value && typeof value === 'object'
+              ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortKeys(value[key])]))
+              : value;
+          const guardAttestation = readBundleEnvelope(process.env.GUARD_BUNDLE_PATH);
+          const fileAttestation = readBundleEnvelope(process.env.STATEMENT_BUNDLE_PATH);
+          const expectedStatement = JSON.parse(readFileSync(process.env.STATEMENT_PATH, 'utf8'));
+          if (JSON.stringify(sortKeys(guardAttestation.statement)) !== JSON.stringify(sortKeys(expectedStatement))) {
+            throw new Error('Guard DSSE envelope does not contain the verified Guard statement.');
+          }
+          const statementDigest = createHash('sha256')
+            .update(readFileSync(process.env.STATEMENT_PATH))
+            .digest('hex');
+          if (!fileAttestation.statement.subject?.some((subject) => subject?.digest?.sha256 === statementDigest)) {
+            throw new Error('Statement provenance envelope does not identify the downloaded Guard statement file.');
+          }
+          writeFileSync(
+            process.env.OUTPUT_PATH,
+            `${JSON.stringify(guardAttestation.envelope)}\n${JSON.stringify(fileAttestation.envelope)}\n`,
+            'utf8',
+          );
+          writeFileSync(
+            process.env.BUNDLE_OUTPUT_PATH,
+            `${JSON.stringify(guardAttestation.bundle)}\n${JSON.stringify(fileAttestation.bundle)}\n`,
+            'utf8',
+          );
+          NODE
+
+      - name: Upload the signed in-toto JSONL envelope
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: guard-trusted-pr-attestation
+          path: |
+            ${{ runner.temp }}/guard-verification.intoto.jsonl
+            ${{ runner.temp }}/guard-verification.sigstore.jsonl
+          if-no-files-found: error

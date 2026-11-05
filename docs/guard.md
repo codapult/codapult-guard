@@ -618,7 +618,9 @@ stages produce `incomplete`, a nonzero CLI exit, and a list in the receipt. Usin
 automatically requires the policy-surface comparison. Declaring a GitHub Actions integrity
 contract automatically requires the CI audit. Verification scope is always required: Guard hashes
 discovered project files and changed paths before running checks, then verifies that the scope
-remained stable through the run.
+has the same complete fingerprint after verification. This catches changes that remain at the end
+of the run, but it cannot rule out a transient change that is reverted between the two observations.
+Use an immutable snapshot or isolated checkout when that stronger guarantee is required.
 
 For GitHub Actions, `rules.json` may declare exact workflow paths, a required job, required command
 fragments, expected dependencies, permission ceilings, and whether external actions must use full
@@ -636,19 +638,23 @@ in the base policy so a PR cannot change the code being invoked.
 The receipt records the effective Guard invocation and project check commands/arguments, with
 credential-like values redacted.
 
-The receipt's `verificationScope` contains SHA-256 hashes and paths for files discovered by Guard,
-plus changed and deleted paths. Its fingerprint binds the inventory to the effective policy and
-Guard version. If a path cannot be hashed or the inventory changes during verification, the
+The receipt's `verificationScope` contains paths and SHA-256 hashes for present files discovered by
+Guard, plus changed and deleted paths. Deleted entries identify the path and status but make no
+claim about its previous contents. Its fingerprint binds the inventory to the effective policy and
+Guard version. If a present path cannot be hashed or the inventory changes during verification, the
 `verification-scope` stage is incomplete and the overall result cannot pass. The receipt includes
 hashes and paths but no source contents; it is not signed and does not prove who ran Guard.
+`subject.workingTreeDirty` is omitted when Git status cannot be determined; an omitted value is not a
+claim that the working tree is clean.
 
 ### Exporting and signing a verification attestation
 
 `verify --attestation-out <file>` writes a versioned in-toto Statement containing the verification
 receipt. It is emitted only when the result is `pass` and the scope is complete and stable. The
-Statement subject digest is the SHA-256 fingerprint of the verified content and policy scope; its
-predicate embeds the receipt, including per-file digests, policy fingerprint, base commit, Guard
-version, and result. The in-toto `predicateType` URI versions the predicate schema independently
+Statement subject includes the aggregate verification-context fingerprint and a SHA-256 subject
+for each present file. Its predicate embeds the receipt, including the file inventory, policy
+fingerprint, base commit, Guard version, and result. The aggregate fingerprint can be independently
+recomputed from the receipt. The in-toto `predicateType` URI versions the predicate schema independently
 from the receipt's numeric `version` field. Consumers should reject unsupported versions rather than
 guessing how to interpret them.
 
@@ -822,34 +828,43 @@ checked; it does not replace host-side merge policy.
 #### Verify a signed receipt
 
 Find the trusted workflow run for the PR in the Actions tab. Download its
-`guard-trusted-pr-attestation` artifact, which contains `guard-verification.intoto.json`. You can
-also download it with GitHub CLI. Install `gh`, authenticate it to GitHub, and use an account that
+`guard-trusted-pr-attestation` artifact, which contains `guard-verification.intoto.jsonl` and
+`guard-verification.sigstore.jsonl`. Each line in the `.intoto.jsonl` file is an independent DSSE
+Envelope: one carries the Guard verification predicate, and another carries GitHub provenance for
+the unsigned Statement file. The `.sigstore.jsonl` companion contains the complete Sigstore Bundle
+for each Envelope, including verification material needed for offline Sigstore verification. The
+separate `guard-trusted-pr-statement` artifact contains that JSON Statement. You can download both with
+GitHub CLI. Install `gh`, authenticate it to GitHub, and use an account that
 can read the repository's workflow runs and pull requests:
 
 ```bash
 gh run download RUN_ID --repo ORG/REPO \
   --name guard-trusted-pr-attestation \
-  --dir .guard-attestation
+  --dir .guard-attestation/signed
+gh run download RUN_ID --repo ORG/REPO \
+  --name guard-trusted-pr-statement \
+  --dir .guard-attestation/statement
 ```
 
 Verify the signature, repository, signer workflow, and protected source ref:
 
 ```bash
-gh attestation verify .guard-attestation/guard-verification.intoto.json \
+gh attestation verify .guard-attestation/statement/guard-verification.intoto.json \
   --repo ORG/REPO \
   --signer-workflow ORG/REPO/.github/workflows/guard-trusted-pr-attestation.yml \
   --source-ref refs/heads/main
 ```
 
 The command above verifies the signed artifact file and its GitHub workflow identity. To also check
-the embedded Guard receipt's schema version, passing outcome, complete and stable scope, scope digest,
-and the exact PR head and base SHAs, copy the bundled consumer script and run it after downloading
+the embedded Guard receipt's schema version, passing outcome, required verification stages,
+complete and stable scope, scope digest, and the exact PR head and base SHAs, copy the bundled
+consumer script and run it after downloading
 the artifact:
 
 ```bash
 cp node_modules/@codapult/guard/docs/verify-guard-attestation.mjs .guard-attestation/
 node .guard-attestation/verify-guard-attestation.mjs \
-  .guard-attestation/guard-verification.intoto.json \
+  .guard-attestation/statement/guard-verification.intoto.json \
   --repo ORG/REPO \
   --signer-workflow ORG/REPO/.github/workflows/guard-trusted-pr-attestation.yml \
   --source-ref refs/heads/main \
@@ -859,9 +874,9 @@ node .guard-attestation/verify-guard-attestation.mjs \
 
 The script calls `gh attestation verify` with the repository, signer workflow, and source-ref
 constraints before inspecting the statement. It exits nonzero if signature verification fails or if
-the embedded statement is unsupported, unsuccessful, incomplete, unstable, or bound to different
-PR SHAs. Obtain the expected head and base values from the current PR; do not copy them from the
-receipt being checked.
+the embedded statement is unsupported, unsuccessful, has a required stage that did not pass, is
+incomplete or unstable, or is bound to different PR SHAs. Obtain the expected head and base values
+from the current PR; do not copy them from the receipt being checked.
 
 Replace `ORG/REPO` and `main` with the repository and protected default branch. This command checks
 that the attestation is for the exact downloaded statement file and that the signer identity matches
@@ -881,19 +896,48 @@ jq -e \
   --arg head "$EXPECTED_HEAD_SHA" \
   --arg base "$EXPECTED_BASE_SHA" \
   '.predicateType == "https://github.com/codapult/codapult-guard/blob/main/docs/attestations/guard-verification-v1.md" and
-   .predicate.receipt.outcome == "pass" and
-   .predicate.receipt.subject.headSha == $head and
-   .predicate.receipt.subject.baseSha == $base and
-   .predicate.receipt.verificationScope.complete == true and
-   .predicate.receipt.verificationScope.stable == true and
-   .subject[0].digest.sha256 == .predicate.receipt.verificationScope.fingerprint' \
-  .guard-attestation/guard-verification.intoto.json >/dev/null
+   (.predicate.receipt as $r |
+     ["runtime", "project-checks", "adapters", "architecture-policy", "policy-surface", "ci-integrity", "verification-scope"] as $supported |
+     $r.outcome == "pass" and
+     $r.subject.headSha == $head and
+     $r.subject.baseSha == $base and
+     ($r.requiredStages | type == "array" and length > 0 and index("verification-scope") != null) and
+     ($r.stages | type == "object") and
+     ($r.requiredStages | all(.[]; . as $stage | ($supported | index($stage)) != null and $r.stages[$stage] == "ok")) and
+     $r.incompleteStages == [] and
+     $r.verificationScope.complete == true and
+     $r.verificationScope.stable == true and
+     .subject[0].digest.sha256 == $r.verificationScope.fingerprint)' \
+  .guard-attestation/statement/guard-verification.intoto.json >/dev/null
 ```
+
+This `jq` check is a compact cross-check of the PR revisions and required stages. Use the bundled
+JavaScript consumer to validate the full subject inventory and recompute the verification-scope
+fingerprint.
 
 The comparison must use the exact PR revisions being reviewed. If the PR head or target branch has
 advanced since the workflow ran, require a new trusted workflow run and verify its receipt instead.
 The statement's `mergeSha`, when present, identifies the merge commit checked by Guard; the head and
 base SHA checks above bind the attestation to the PR revisions.
+
+To verify the Guard predicate Envelope itself against a checked-out file, choose a present file
+listed in the receipt and run:
+
+```bash
+gh attestation verify src/example.ts \
+  --repo ORG/REPO \
+  --bundle .guard-attestation/signed/guard-verification.sigstore.jsonl \
+  --predicate-type https://github.com/codapult/codapult-guard/blob/main/docs/attestations/guard-verification-v1.md \
+  --signer-workflow ORG/REPO/.github/workflows/guard-trusted-pr-attestation.yml \
+  --source-ref refs/heads/main
+```
+
+This verifies the current file digest against its Guard subject and checks the Guard predicate's
+Sigstore signature and workflow identity. `gh attestation verify --bundle` expects Sigstore Bundles,
+so use the `.sigstore.jsonl` companion here. The `.intoto.jsonl` file contains the standard
+one-DSSE-Envelope-per-line representation for consumers that process DSSE directly. The two files
+carry the same records in different containers; consumers can select and process each record
+independently, including records with other predicate types, subjects, or signer identities.
 
 For setup instructions and validation of both same-repository and fork PRs, see the
 [trusted PR verification profile](github-setup-presets.md#trusted-pr-verification). The template
