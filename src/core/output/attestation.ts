@@ -53,7 +53,7 @@ export function guardReceiptToInToto(
       policyFingerprint: receipt.policy.fingerprint,
       tool: receipt.tool,
       files: scope.files,
-      ...(scope.source ? { source: scope.source } : {}),
+      source: scope.source,
     }) !== scope.fingerprint
   ) {
     throw new Error(

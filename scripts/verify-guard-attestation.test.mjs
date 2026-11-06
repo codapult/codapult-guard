@@ -52,9 +52,11 @@ function makeStatement(overrides = {}) {
           algorithm: 'sha256',
           policyFingerprint: receipt.policy.fingerprint,
           tool: { name: receipt.tool.name, version: receipt.tool.version },
-          files: receipt.verificationScope.files.map((file) => file.status === 'present'
-            ? { path: file.path, status: file.status, sha256: file.sha256 }
-            : { path: file.path, status: file.status }),
+          files: receipt.verificationScope.files.map((file) =>
+            file.status === 'present'
+              ? { path: file.path, status: file.status, sha256: file.sha256 }
+              : { path: file.path, status: file.status },
+          ),
           source: {
             repository: receipt.verificationScope.source.repository,
             commit: receipt.verificationScope.source.commit,

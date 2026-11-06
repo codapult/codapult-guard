@@ -624,9 +624,7 @@ function buildVerificationReceipt(
     version: 1,
     kind: 'verification-receipt',
     subject: {
-      ...(process.env.GITHUB_REPOSITORY
-        ? { repository: process.env.GITHUB_REPOSITORY }
-        : {}),
+      ...(process.env.GITHUB_REPOSITORY ? { repository: process.env.GITHUB_REPOSITORY } : {}),
       ...(scope.source?.commit ? { commit: scope.source.commit } : {}),
       ...(githubContext?.event ? { githubEvent: githubContext.event } : {}),
       ...(githubContext?.headSha ? { headSha: githubContext.headSha } : {}),
@@ -688,12 +686,8 @@ function buildPolicyGateReceipt(
     version: 1,
     kind: 'verification-receipt',
     subject: {
-      ...(process.env.GITHUB_REPOSITORY
-        ? { repository: process.env.GITHUB_REPOSITORY }
-        : {}),
-      ...(resolveGitCommit(root, 'HEAD')
-        ? { commit: resolveGitCommit(root, 'HEAD') }
-        : {}),
+      ...(process.env.GITHUB_REPOSITORY ? { repository: process.env.GITHUB_REPOSITORY } : {}),
+      ...(resolveGitCommit(root, 'HEAD') ? { commit: resolveGitCommit(root, 'HEAD') } : {}),
       ...(githubContext?.event ? { githubEvent: githubContext.event } : {}),
       ...(githubContext?.headSha ? { headSha: githubContext.headSha } : {}),
       ...(githubContext?.baseSha ? { baseSha: githubContext.baseSha } : {}),

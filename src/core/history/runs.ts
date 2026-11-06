@@ -56,13 +56,15 @@ export interface GuardVerificationScope {
   fingerprint: string;
   complete: boolean;
   stable: boolean;
-  source?: {
-    repository: string | null;
-    commit: string | null;
-    headSha: string | null;
-    baseSha: string | null;
-    baseCommit: string | null;
-  };
+  source?:
+    | {
+        repository: string | null;
+        commit: string | null;
+        headSha: string | null;
+        baseSha: string | null;
+        baseCommit: string | null;
+      }
+    | undefined;
   files: (
     | { path: string; status: 'present'; sha256: string }
     // Deleted entries may retain a digest in older local history records.
@@ -238,7 +240,8 @@ function isGuardRunManifest(value: unknown): value is GuardRunManifest {
       (receipt.subject.workingTreeDirty === undefined ||
         typeof receipt.subject.workingTreeDirty === 'boolean') &&
       (receipt.subject.commit === undefined || typeof receipt.subject.commit === 'string') &&
-      (receipt.subject.repository === undefined || typeof receipt.subject.repository === 'string') &&
+      (receipt.subject.repository === undefined ||
+        typeof receipt.subject.repository === 'string') &&
       (receipt.subject.baseRef === undefined || typeof receipt.subject.baseRef === 'string') &&
       (receipt.subject.baseCommit === undefined ||
         typeof receipt.subject.baseCommit === 'string') &&

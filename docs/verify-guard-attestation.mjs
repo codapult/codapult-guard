@@ -32,7 +32,10 @@ function isSha(value) {
 }
 
 /** Validate the Guard statement after its file signature and signer identity have been verified. */
-export function validateGuardStatement(statement, { expectedHead, expectedBase, expectedRepository }) {
+export function validateGuardStatement(
+  statement,
+  { expectedHead, expectedBase, expectedRepository },
+) {
   if (!isSha(expectedHead) || !isSha(expectedBase)) {
     fail('Expected head and base values must be full 40-character commit SHAs.');
   }

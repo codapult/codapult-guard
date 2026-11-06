@@ -31,7 +31,6 @@ describe('computeVerificationScopeFingerprint', () => {
       }),
     ).toBe('cfce79d9ad299eb4f24139bcaaac30a606a7bb672d3a026e14722bf11ce0fced');
   });
-
 });
 
 describe('isMissingVerificationScopePathError', () => {

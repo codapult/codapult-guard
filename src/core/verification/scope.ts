@@ -10,13 +10,15 @@ export interface VerificationScopeFingerprintInput {
   policyFingerprint: string;
   tool: { name: string; version: string };
   files: VerificationScopeFileDigest[];
-  source?: {
-    repository: string | null;
-    commit: string | null;
-    headSha: string | null;
-    baseSha: string | null;
-    baseCommit: string | null;
-  };
+  source?:
+    | {
+        repository: string | null;
+        commit: string | null;
+        headSha: string | null;
+        baseSha: string | null;
+        baseCommit: string | null;
+      }
+    | undefined;
 }
 
 export function isMissingVerificationScopePathError(error: unknown): boolean {

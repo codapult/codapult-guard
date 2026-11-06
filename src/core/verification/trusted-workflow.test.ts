@@ -856,7 +856,7 @@ describe('trusted PR verification workflow template', () => {
     const statement = statementFor(receipt);
     const statementText = JSON.stringify(statement);
     const statementDigest = createHash('sha256').update(statementText).digest('hex');
-    const makeBundle = (payload: unknown) => ({
+    const makeBundle = (payload: unknown): object => ({
       mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json',
       dsseEnvelope: {
         payloadType: 'application/vnd.in-toto+json',
@@ -891,14 +891,16 @@ describe('trusted PR verification workflow template', () => {
     const bundleLines = output['guard-verification.sigstore.jsonl'].trim().split('\n');
     expect(lines).toHaveLength(2);
     expect(bundleLines).toHaveLength(2);
-    expect(bundleLines.map((line) => JSON.parse(line))).toEqual([
+    expect(bundleLines.map((line) => JSON.parse(line) as object)).toEqual([
       makeBundle(statement),
       makeBundle(statementProvenance),
     ]);
     expect(
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access
       JSON.parse(Buffer.from(JSON.parse(lines[0]).payload, 'base64').toString('utf8')),
     ).toEqual(statement);
     expect(
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access
       JSON.parse(Buffer.from(JSON.parse(lines[1]).payload, 'base64').toString('utf8')),
     ).toEqual(statementProvenance);
   });
