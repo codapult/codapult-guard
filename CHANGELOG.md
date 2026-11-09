@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.0](https://github.com/codapult/codapult-guard/compare/v0.13.3...v0.14.0) (2026-11-09)
+
+### Features
+
+* add Guard verification predicate v1 specification and update predicate type ([8debb93](https://github.com/codapult/codapult-guard/commit/8debb932d970562195346daa5db152196fd10d56))
+* bind verification scope to source revisions ([621da2a](https://github.com/codapult/codapult-guard/commit/621da2a445d7c51fef8f9a094ff861e67e8037d6))
+* emit file-addressable Guard in-toto subjects ([c7db2be](https://github.com/codapult/codapult-guard/commit/c7db2be3217305ab12ff5229fa740fbe5bd86903))
+
 ## [0.13.3](https://github.com/codapult/codapult-guard/compare/v0.13.2...v0.13.3) (2026-11-02)
 
 ### Bug Fixes
