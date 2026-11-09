@@ -19,12 +19,10 @@ jobs:
     steps:
       - name: Read the associated pull request context
         id: pr
-        env:
-          EVENT_PATH: ${{ github.event_path }}
         run: |
           node --input-type=module <<'NODE'
           import { appendFileSync, readFileSync } from 'node:fs';
-          const event = JSON.parse(readFileSync(process.env.EVENT_PATH, 'utf8'));
+          const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
           const pullRequest = event.pull_request;
           const isRepository = (value) => typeof value === 'string' && /^[^/\s]+\/[^/\s]+$/.test(value);
           const number = pullRequest?.number;
