@@ -748,6 +748,11 @@ The base Guard policy must define a GitHub Actions integrity contract for the or
 The trusted check fails closed when that audit is missing or incomplete. Keep the contract scoped to
 the workflow(s) it audits; the trusted verifier is protected by the default-branch workflow source,
 the verification receipt, strict policy-sensitive change handling, and host-side owner review.
+The contract must be present in the default-branch policy before a PR triggers the trusted workflow.
+During first-time installation, the policy contract and trusted workflow can be added in the same PR:
+GitHub loads `pull_request_target` workflows from the default branch, so the newly added workflow does
+not run until after that PR is merged. If the trusted workflow is already on the default branch, add
+and merge the policy contract first; the trusted check evaluates policy from the PR base.
 
 The `Guard trusted verification` job uses only `contents: read`; the separate signer receives the
 attestation permissions. Missing or ambiguous PR context, mismatched revisions, unavailable base
