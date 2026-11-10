@@ -217,7 +217,7 @@ function runContext(event: unknown): string | undefined {
   return runEmbeddedScript(
     contextScript,
     { 'event.json': JSON.stringify(event) },
-    { EVENT_PATH: 'event.json', GITHUB_OUTPUT: 'output.txt' },
+    { GITHUB_EVENT_PATH: 'event.json', GITHUB_OUTPUT: 'output.txt' },
   )['output.txt'];
 }
 
