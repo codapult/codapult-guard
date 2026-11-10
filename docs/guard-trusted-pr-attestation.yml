@@ -62,13 +62,21 @@ jobs:
         with:
           ref: refs/pull/${{ needs.inspect.outputs.number }}/head
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Fetch the exact base commit and verify the checkout
         env:
           BASE_SHA: ${{ needs.inspect.outputs.base_sha }}
           HEAD_SHA: ${{ needs.inspect.outputs.head_sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git fetch --no-tags origin "$BASE_SHA"
+          auth_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          unset GH_TOKEN
+          GIT_CONFIG_COUNT=1 \
+          GIT_CONFIG_KEY_0=http.extraheader \
+          GIT_CONFIG_VALUE_0="$auth_header" \
+            git fetch --no-tags origin "$BASE_SHA"
+          unset auth_header
           actual_head=$(git rev-parse HEAD)
           if [ "$actual_head" != "$HEAD_SHA" ]; then
             echo "Checked out $actual_head, expected PR head $HEAD_SHA" >&2
@@ -346,7 +354,7 @@ jobs:
           cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
           ## Guard fork PR verification
 
-          The trusted verifier checked this PR's exact head and base revisions using policy from the base revision. No signed attestation was created for this fork PR. The required `Guard trusted verification` check reports the verifier result above.
+          The trusted verifier checked this PR's exact head and base revisions using policy from the base revision. No signed attestation is created for fork PRs. The required `Guard trusted verification` check reports the verifier result above.
           SUMMARY
 
   attest:

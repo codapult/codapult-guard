@@ -769,7 +769,10 @@ In **Settings → Rules → Rulesets** or branch protection, require the exact `
 verification` check from GitHub Actions. The template does not configure branch protection for you.
 Protect the default branch and require owner review for changes to the trusted workflow and Guard
 policy. Keep ordinary project checks required separately. The trusted check is authoritative for
-Guard verification; the ordinary `Guard` workflow is not a substitute because a PR can edit it.
+Guard verification; it does not require signing or uploading an attestation, which happen in a
+separate job and may be skipped for fork PRs or policy-sensitive changes in `host-review` mode. The
+ordinary `Guard` workflow is not a substitute because a PR can edit it. Consumers that need signed
+evidence must verify it separately.
 Although this template does not execute project files, Guard still parses attacker-controlled source
 and configuration. Use GitHub-hosted ephemeral runners and keep verifier and signer permissions at
 the template's minimum; parser vulnerabilities remain a residual risk.
