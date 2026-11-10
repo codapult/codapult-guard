@@ -36,3 +36,6 @@ follow the host-specific setup on the relevant page.
 The kits are documentation-level adapters, not runtime dependencies. Install the managed
 instruction for a supported host with `codapult-guard install-agent <target>`, configure the MCP
 server in that host, and keep `codapult-guard verify --json` in CI as the independent gate.
+
+For a reusable GitHub Actions setup and real DSSE envelope / Sigstore Bundle JSONL examples, see
+the [trusted Guard attestation guide](github-actions-attestation-example.md).

@@ -660,7 +660,8 @@ guessing how to interpret them.
 
 The [Guard verification predicate v1 specification](attestations/guard-verification-v1.md)
 defines the subject, receipt fields, consumer validation rules, and claim limits, with an example
-Statement.
+Statement. The [GitHub Actions attestation guide](integrations/github-actions-attestation-example.md)
+provides reusable setup instructions and real signed DSSE envelope and Sigstore Bundle examples.
 
 On GitHub pull request events, the receipt also records `headSha` and `baseSha` from the event
 payload. `mergeSha` is recorded only when `GITHUB_SHA` identifies the checked-out merge result rather
@@ -689,11 +690,12 @@ statement digest to the expected repository, workflow identity, source revision,
 The [trusted PR workflow template](guard-trusted-pr-attestation.yml) runs on
 `pull_request_target`. GitHub loads this workflow from the repository's default branch, so a PR
 cannot replace the workflow that creates the `Guard trusted verification` status. The verifier
-reads the PR event, checks out the exact PR head from the base repository's pull ref, fetches the
-exact PR base commit, and runs a pinned Guard release against policy loaded from that base commit.
+reads the PR event, checks out the exact PR head from the base repository's pull ref without
+persisting checkout credentials, fetches the exact PR base commit with a step-scoped read token, and
+runs a pinned Guard release against policy loaded from that base commit.
 It does not execute PR scripts, install PR dependencies, or use artifacts from a PR-controlled
-workflow. It verifies fork PRs too; only same-repository PRs receive a signed statement. The signer
-is a separate job.
+workflow. It verifies fork PRs too. Eligible same-repository PRs receive a signed statement; fork
+PRs and policy-sensitive PRs in `host-review` mode do not. The signer is a separate job.
 
 This required check covers **Guard's architecture and policy verification only**. It skips project
 checks and does not attest tests, builds, deployments, or other jobs. Keep project checks as separate
