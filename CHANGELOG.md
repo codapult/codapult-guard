@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1](https://github.com/codapult/codapult-guard/compare/v0.14.0...v0.14.1) (2026-11-10)
+
+### Bug Fixes
+
+* update environment variable name for event path in runContext function ([a76e665](https://github.com/codapult/codapult-guard/commit/a76e6650722396af3da0e8b6a333875ecb6df344))
+* update event path variable for pull request context reading ([b45e694](https://github.com/codapult/codapult-guard/commit/b45e694b26b413e7ab0c330604e0e2d598659b78))
+
 ## [0.14.0](https://github.com/codapult/codapult-guard/compare/v0.13.3...v0.14.0) (2026-11-09)
 
 ### Features
