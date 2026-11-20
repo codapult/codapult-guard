@@ -19,17 +19,18 @@ available completion hook surface.
 - [Gemini CLI](gemini-cli.md)
 - [Generic shell/CI](generic.md)
 
-| Host               | Project instruction                | MCP setup                                              | Local completion automation           |
-| ------------------ | ---------------------------------- | ------------------------------------------------------ | ------------------------------------- |
-| Codex CLI          | `AGENTS.md`                        | `codex mcp add` / `~/.codex/config.toml`               | Instruction-driven; CI gate           |
-| Cursor Agent       | `.cursor/rules/codapult-guard.mdc` | `.cursor/mcp.json`                                     | `.cursor/hooks.json` `stop` follow-up |
-| Claude Code        | `CLAUDE.md`                        | project `.mcp.json`                                    | `.claude/settings.json` `Stop` hook   |
-| Gemini CLI         | `GEMINI.md`                        | `.gemini/settings.json`                                | Instruction-driven; CI gate           |
-| Copilot Chat / CLI | `.github/copilot-instructions.md`  | `.vscode/mcp.json`, `.mcp.json`, or `.github/mcp.json` | Surface-specific; CI gate             |
+| Host               | Project instruction                | MCP setup                                                | Local completion automation           |
+| ------------------ | ---------------------------------- | -------------------------------------------------------- | ------------------------------------- |
+| Codex CLI / IDE    | `AGENTS.md`                        | `.codex/config.toml` (project) or `codex mcp add` (user) | Instruction-driven; CI gate           |
+| Cursor Agent / CLI | `.cursor/rules/codapult-guard.mdc` | `.cursor/mcp.json` or MCP settings UI                    | `.cursor/hooks.json` `stop` follow-up |
+| Claude Code        | `CLAUDE.md`                        | project `.mcp.json`                                      | `.claude/settings.json` `Stop` hook   |
+| Gemini CLI         | `GEMINI.md`                        | `.gemini/settings.json`                                  | Instruction-driven; CI gate           |
+| Copilot Chat / CLI | `.github/copilot-instructions.md`  | `.vscode/mcp.json`, `.mcp.json`, or `.github/mcp.json`   | Surface-specific; CI gate             |
 
-All integrations use the same MCP tools and completion-gate contract. None of them grants the
-agent permission to edit files; that remains the user's host configuration. Guard is discoverable
-in the [official MCP Registry](https://registry.modelcontextprotocol.io/?q=io.github.codapult%2Fguard)
+All integrations use the same MCP tools and completion-gate contract. MCP configuration starts a
+local process, so review and trust the repository before enabling a project-scoped server. Guard
+does not grant the agent permission to edit files; that remains the user's host configuration.
+Guard is discoverable in the [official MCP Registry](https://registry.modelcontextprotocol.io/?q=io.github.codapult%2Fguard)
 as `io.github.codapult/guard`; Registry publication does not create one universal installer, so
 follow the host-specific setup on the relevant page.
 

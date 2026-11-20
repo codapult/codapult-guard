@@ -5,16 +5,15 @@ network listener. Access is controlled by Cursor and the operating system; only 
 for a trusted workspace and grant it the filesystem access it needs. See the [Guard security
 model](../guard.md#security-and-authentication) before using it in a shared environment.
 
-This page targets Cursor Agent in a trusted local workspace. Cursor supports project MCP
-configuration in `.cursor/mcp.json`, project rules in `.cursor/rules/`, and project hooks in
-`.cursor/hooks.json`.
+This page targets Cursor Agent in a trusted local workspace. The editor and Cursor CLI share MCP
+configuration. Cursor supports project MCP configuration in `.cursor/mcp.json`, project rules in
+`.cursor/rules/`, and project hooks in `.cursor/hooks.json`.
 
 ## 1. Install Guard
 
-Guard is listed in the official MCP Registry as `io.github.codapult/guard`. In a client that can
-import Registry entries, search for that identifier and select the npm/stdio server. Cursor's
-native MCP directory and one-click install are separate from the official MCP Registry; if Guard
-is not offered there, use the project configuration below.
+Guard is published in the official MCP Registry as `io.github.codapult/guard`. Cursor also has its
+own MCP directory; availability there is separate from Registry publication. Use Cursor's MCP
+settings UI if Guard is listed, or add the project configuration below.
 
 Install the package in the repository:
 
@@ -36,16 +35,16 @@ Create `.cursor/mcp.json`:
     "codapult-guard": {
       "type": "stdio",
       "command": "pnpm",
-      "args": ["exec", "codapult-guard", "mcp-server"],
-      "cwd": "${workspaceFolder}"
+      "args": ["exec", "codapult-guard", "mcp-server"]
     }
   }
 }
 ```
 
-Reload Cursor and verify that `codapult-guard` appears in the MCP tools list. Keep the project
-configuration in version control only if the team agrees to trust and run the local server for
-every contributor.
+Reload Cursor and verify that `codapult-guard` appears in the MCP tools list, or run
+`agent mcp list` in Cursor CLI. A project MCP config runs a local command for users who trust the
+workspace; review it before enabling it and commit it only when the team intends to share that
+setup.
 
 ## 2. Add the Guard rule
 
