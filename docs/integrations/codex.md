@@ -89,14 +89,19 @@ const result = spawnSync('pnpm', ['exec', 'codapult-guard', 'verify', '--json'],
 if (result.status === 0) process.exit(0);
 
 const detail = (
-  result.stdout || result.stderr || result.error?.message || 'Guard verification failed.'
+  result.stdout ||
+  result.stderr ||
+  result.error?.message ||
+  'Guard verification failed.'
 )
   .trim()
   .slice(-3_000);
 const message = `Guard verification failed. Fix the findings and run verification again.\n\n${detail}`;
 
 if (input.stop_hook_active) {
-  process.stdout.write(JSON.stringify({ systemMessage: `${message}\n\nAutomatic retry limit reached.` }));
+  process.stdout.write(
+    JSON.stringify({ systemMessage: `${message}\n\nAutomatic retry limit reached.` }),
+  );
   process.exit(0);
 }
 
