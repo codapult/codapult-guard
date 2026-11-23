@@ -21,7 +21,7 @@ available completion hook surface.
 
 | Host               | Project instruction                | MCP setup                                                | Local completion automation           |
 | ------------------ | ---------------------------------- | -------------------------------------------------------- | ------------------------------------- |
-| Codex CLI / IDE    | `AGENTS.md`                        | `.codex/config.toml` (project) or `codex mcp add` (user) | Instruction-driven; CI gate           |
+| Codex CLI / IDE    | `AGENTS.md`                        | `.codex/config.toml` (project) or `codex mcp add` (user) | `.codex/hooks.json` `Stop` hook        |
 | Cursor Agent / CLI | `.cursor/rules/codapult-guard.mdc` | `.cursor/mcp.json` or MCP settings UI                    | `.cursor/hooks.json` `stop` follow-up |
 | Claude Code        | `CLAUDE.md`                        | project `.mcp.json`                                      | `.claude/settings.json` `Stop` hook   |
 | Gemini CLI         | `GEMINI.md`                        | `.gemini/settings.json`                                  | Instruction-driven; CI gate           |
